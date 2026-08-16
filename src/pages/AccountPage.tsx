@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import {
   User,
   ShoppingBag,
@@ -8,6 +8,8 @@ import {
   LogOut,
   Mail,
   Lock,
+  Eye,
+  EyeOff,
   RefreshCw,
   AlertCircle,
   ShieldCheck,
@@ -25,6 +27,7 @@ import { getAuthRedirectUrl } from '../utils/authRedirect';
 
 export const AccountPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, signOut, showToast } = useShop();
   const { loading: isAuthLoading, role, profile, authError } = useAuth();
 
@@ -32,6 +35,7 @@ export const AccountPage: React.FC = () => {
   const [isForgotPassword, setIsForgotPassword] = useState<boolean>(false);
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [fullName, setFullName] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -209,18 +213,20 @@ export const AccountPage: React.FC = () => {
           console.log('Profile role:', userRole || 'none');
 
           // 4. Wait for profile query to finish before performing any redirect
+          const returnUrl = (location.state as any)?.returnUrl || new URLSearchParams(location.search).get('returnUrl') || '/';
+
           if (userRole === 'admin') {
             console.log('Redirecting to: /admin');
             showToast('Signed in successfully as Admin!');
             navigate('/admin', { replace: true });
           } else if (userRole === 'customer') {
-            console.log('Redirecting to: /');
+            console.log(`Redirecting customer to: ${returnUrl}`);
             showToast('Signed in successfully!');
-            navigate('/', { replace: true });
+            navigate(returnUrl, { replace: true });
           } else {
-            console.log('No admin role found. Defaulting redirect to: /');
+            console.log(`No admin role found. Redirecting to: ${returnUrl}`);
             showToast('Signed in successfully!');
-            navigate('/', { replace: true });
+            navigate(returnUrl, { replace: true });
           }
         }
       } catch (err: any) {
@@ -235,12 +241,13 @@ export const AccountPage: React.FC = () => {
       setTimeout(() => {
         showToast(`Signed in in Demo Mode as ${email}`);
         setIsSubmitting(false);
+        const returnUrl = (location.state as any)?.returnUrl || new URLSearchParams(location.search).get('returnUrl') || '/';
         if (localStorage.getItem('kud_store_demo_admin') === 'true') {
           console.log('Redirecting to: /admin');
           navigate('/admin', { replace: true });
         } else {
-          console.log('Redirecting to: /');
-          navigate('/', { replace: true });
+          console.log(`Redirecting to: ${returnUrl}`);
+          navigate(returnUrl, { replace: true });
         }
       }, 500);
     }
@@ -532,15 +539,27 @@ export const AccountPage: React.FC = () => {
                     )}
                   </div>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       required
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-[#ff6452] outline-none"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 rounded-md transition-colors"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
                   </div>
                 </div>
 

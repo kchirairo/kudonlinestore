@@ -1,5 +1,5 @@
 import { Order, OrderItem, ShippingAddress, PaymentStatus, OrderStatus } from '../types';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, executeWithColumnFallback } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 
 const LOCAL_ORDERS_KEY = 'kud_store_orders_history';
@@ -222,11 +222,10 @@ export const orderService = {
       user_id: orderPayload.user_id,
     });
 
-    const { data: createdOrderRow, error: orderInsertError } = await supabase
-      .from('orders')
-      .insert(orderPayload)
-      .select('*')
-      .single();
+    const { data: createdOrderRow, error: orderInsertError } = await executeWithColumnFallback(
+      (payload) => supabase.from('orders').insert(payload).select('*').single(),
+      orderPayload
+    );
 
     if (orderInsertError || !createdOrderRow) {
       console.error('[ORDER CREATION] Database error inserting into public.orders:', orderInsertError);
@@ -252,7 +251,10 @@ export const orderService = {
         variant: item.variant || null,
       }));
 
-      const { error: itemsInsertError } = await supabase.from('order_items').insert(itemsToInsert);
+      const { error: itemsInsertError } = await executeWithColumnFallback(
+        (itemsPayload) => supabase.from('order_items').insert(itemsPayload),
+        itemsToInsert as any
+      );
       if (itemsInsertError) {
         console.warn('[ORDER CREATION] Notice inserting order_items:', itemsInsertError.message);
       } else {

@@ -267,6 +267,13 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Cart Functions
   const addToCart = (product: Product, quantity = 1, selectedSizeOrVariant?: string) => {
+    if (!user) {
+      showToast('Please sign in to add products to your cart', 'info');
+      const returnPath = window.location.pathname + window.location.search;
+      window.location.href = `/account?returnUrl=${encodeURIComponent(returnPath || '/')}`;
+      return;
+    }
+
     const variant = selectedSizeOrVariant || product.sizeOrVariant || '';
     setCart((prev) => {
       const existingIndex = prev.findIndex(

@@ -28,6 +28,24 @@ CREATE TABLE IF NOT EXISTS public.products (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Ensure existing products tables receive all standard columns seamlessly
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS brand TEXT DEFAULT 'KUD Store';
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS original_price NUMERIC;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS size_or_variant TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS condition TEXT DEFAULT 'Brand New';
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS images JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS in_stock BOOLEAN DEFAULT true;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 20;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS sku TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS rating NUMERIC DEFAULT 5.0;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS review_count INTEGER DEFAULT 0;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- Indexes for lightning-fast product filtering and searching
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.products (category);
 CREATE INDEX IF NOT EXISTS idx_products_is_active ON public.products (is_active);

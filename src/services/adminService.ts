@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, executeWithColumnFallback } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import {
   AdminStats,
@@ -678,56 +678,39 @@ export const adminService = {
     imageUrls = imageUrls.filter((url) => typeof url === 'string' && url.trim().length > 0);
     const primaryImageUrl = imageUrls[0] || '';
 
-    const newProduct: Product = {
-      id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    // 2. Persist directly to Supabase public.products without generating an 'id'
+    // PostgreSQL / Supabase will generate the UUID automatically via gen_random_uuid().
+    const standardPayload: Record<string, any> = {
       name: (productData.name || 'New Product').trim(),
       brand: (productData.brand || 'KUD Store').trim(),
-      price: Number(productData.price) || 0,
-      originalPrice: productData.originalPrice ? Number(productData.originalPrice) : undefined,
       category: productData.category || 'Beauty',
-      sizeOrVariant: productData.sizeOrVariant || '',
-      condition: productData.condition || 'Brand New',
-      description: productData.description || '',
-      images: imageUrls.length > 0 ? imageUrls : ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'],
-      inStock: (productData.stock ?? 1) > 0,
-      stock: Number(productData.stock) || 0,
-      sku: productData.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-      isFeatured: Boolean(productData.isFeatured),
-      isActive: productData.isActive !== false,
-      createdAt: new Date().toISOString(),
-    };
-
-    // 2. Persist directly to Supabase public.products
-    const standardPayload = {
-      id: newProduct.id,
-      name: newProduct.name,
-      brand: newProduct.brand,
-      price: newProduct.price,
-      original_price: newProduct.originalPrice || null,
-      category: newProduct.category,
-      size_or_variant: newProduct.sizeOrVariant || null,
-      condition: newProduct.condition,
-      description: newProduct.description,
+      price: Number(productData.price) || 0,
+      original_price: productData.originalPrice ? Number(productData.originalPrice) : null,
+      description: productData.description ? productData.description.trim() : null,
       image_url: primaryImageUrl || null,
-      images: newProduct.images,
-      in_stock: newProduct.inStock,
-      stock: newProduct.stock,
-      sku: newProduct.sku,
-      is_featured: newProduct.isFeatured,
-      is_active: newProduct.isActive,
-      created_at: newProduct.createdAt,
+      stock: Number(productData.stock) || 0,
+      condition: productData.condition || 'New',
+      is_active: productData.isActive !== false,
     };
 
-    const { error } = await supabase.from('products').insert(standardPayload);
+    console.log('[AdminService] Inserting product into Supabase public.products (id omitted for gen_random_uuid):', standardPayload);
 
-    if (error) {
+    const { data: createdRow, error } = await executeWithColumnFallback(
+      (payload) => supabase.from('products').insert(payload).select('*').single(),
+      standardPayload
+    );
+
+    if (error || !createdRow) {
       console.error('[AdminService] Supabase insert product failed:', error);
       return {
         success: false,
-        error: `Supabase database error: ${error.message}${error.hint ? ` (${error.hint})` : ''}`,
+        error: `Supabase database error: ${error?.message || 'Failed to insert product'}${error?.hint ? ` (${error.hint})` : ''}`,
       };
     }
 
+    console.log('[AdminService] Product successfully created with Supabase UUID:', createdRow.id);
+
+    const newProduct = mapSupabaseProduct(createdRow);
     return { success: true, data: newProduct };
   },
 
@@ -786,7 +769,7 @@ export const adminService = {
       stock: productData.stock !== undefined ? Number(productData.stock) : current.stock,
     };
 
-    const updatePayload: any = {
+    const updatePayload: Record<string, any> = {
       name: updatedProduct.name,
       brand: updatedProduct.brand,
       price: updatedProduct.price,
@@ -804,10 +787,10 @@ export const adminService = {
       is_active: updatedProduct.isActive,
     };
 
-    const { error } = await supabase
-      .from('products')
-      .update(updatePayload)
-      .eq('id', id);
+    const { error } = await executeWithColumnFallback(
+      (payload) => supabase.from('products').update(payload).eq('id', id),
+      updatePayload
+    );
 
     if (error) {
       console.error('[AdminService] Supabase update product failed:', error);
@@ -838,7 +821,7 @@ export const adminService = {
     const errors: string[] = [];
 
     for (const item of updates) {
-      const payload: any = {};
+      const payload: Record<string, any> = {};
       if (item.changes.price !== undefined) payload.price = Number(item.changes.price);
       if (item.changes.originalPrice !== undefined) {
         payload.original_price = item.changes.originalPrice ? Number(item.changes.originalPrice) : null;
@@ -852,7 +835,10 @@ export const adminService = {
       if (item.changes.category) payload.category = item.changes.category;
       if (item.changes.sku) payload.sku = item.changes.sku;
 
-      const { error } = await supabase.from('products').update(payload).eq('id', item.id);
+      const { error } = await executeWithColumnFallback(
+        (p) => supabase.from('products').update(p).eq('id', item.id),
+        payload
+      );
       if (error) {
         errors.push(`ID ${item.id}: ${error.message}`);
       } else {
@@ -954,20 +940,19 @@ export const adminService = {
 
     if (isSupabaseConfigured() && supabase) {
       try {
-        const payload: any = {
+        const payload: Record<string, any> = {
           id: newCategory.id,
           name: newCategory.name,
           slug: newCategory.slug,
-          isActive: newCategory.isActive,
           is_active: newCategory.isActive,
-          sortOrder: newCategory.sortOrder,
           sort_order: newCategory.sortOrder,
-          productCount: newCategory.productCount,
-          product_count: newCategory.productCount,
           created_at: newCategory.createdAt,
         };
 
-        const { error } = await supabase.from('categories').insert(payload);
+        const { error } = await executeWithColumnFallback(
+          (p) => supabase.from('categories').insert(p),
+          payload
+        );
         if (error) {
           console.warn('Supabase category insert error:', error.message);
         }
@@ -989,19 +974,16 @@ export const adminService = {
   ): Promise<{ success: boolean; error?: string }> {
     if (isSupabaseConfigured() && supabase) {
       try {
-        const updatePayload: any = {};
+        const updatePayload: Record<string, any> = {};
         if (categoryData.name !== undefined) updatePayload.name = categoryData.name;
         if (categoryData.slug !== undefined) updatePayload.slug = categoryData.slug;
-        if (categoryData.isActive !== undefined) {
-          updatePayload.isActive = categoryData.isActive;
-          updatePayload.is_active = categoryData.isActive;
-        }
-        if (categoryData.sortOrder !== undefined) {
-          updatePayload.sortOrder = categoryData.sortOrder;
-          updatePayload.sort_order = categoryData.sortOrder;
-        }
+        if (categoryData.isActive !== undefined) updatePayload.is_active = categoryData.isActive;
+        if (categoryData.sortOrder !== undefined) updatePayload.sort_order = categoryData.sortOrder;
 
-        const { error } = await supabase.from('categories').update(updatePayload).eq('id', id);
+        const { error } = await executeWithColumnFallback(
+          (p) => supabase.from('categories').update(p).eq('id', id),
+          updatePayload
+        );
         if (error) {
           console.warn('Supabase category update error:', error.message);
         }

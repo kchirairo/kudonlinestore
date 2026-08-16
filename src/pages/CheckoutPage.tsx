@@ -1,16 +1,21 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle, RefreshCw } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG, PAYMENT_METHODS } from '../constants/config';
 import { orderService } from '../services/orderService';
-import { ShippingAddress } from '../types';
+import { adminService } from '../services/adminService';
+import { ShippingAddress, PaymentGatewayConfig } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SEOHead } from '../components/SEOHead';
 
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { cart, cartSubtotal, deliveryFee, clearCart, user, showToast } = useShop();
+
+  const [paymentConfig, setPaymentConfig] = useState<PaymentGatewayConfig | null>(null);
+  const [isLoadingConfig, setIsLoadingConfig] = useState<boolean>(true);
 
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
     fullName: user?.fullName || '',
@@ -31,6 +36,68 @@ export const CheckoutPage: React.FC = () => {
     cardCvv: '',
   });
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+
+  // 1. Guard against guest checkouts: require login
+  useEffect(() => {
+    if (!user) {
+      showToast('Please sign in to proceed with checkout', 'info');
+      navigate('/account', { state: { returnUrl: '/checkout' }, replace: true });
+    }
+  }, [user, navigate, showToast]);
+
+  // 2. Fetch active payment gateway configuration
+  useEffect(() => {
+    let isMounted = true;
+    const loadConfig = async () => {
+      try {
+        const config = await adminService.getPaymentSettings();
+        if (isMounted) {
+          setPaymentConfig(config);
+          
+          // Determine initial payment method from active providers
+          const available: string[] = [];
+          if (config.yoco?.enabled ?? true) available.push('yoco');
+          if (config.payfast?.enabled) available.push('payfast');
+          if (config.ozow?.enabled) available.push('ozow');
+          if (config.cod?.enabled ?? true) available.push('cod');
+
+          if (available.length > 0 && !available.includes(paymentMethod)) {
+            setPaymentMethod(available[0]);
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading payment configuration:', err);
+      } finally {
+        if (isMounted) setIsLoadingConfig(false);
+      }
+    };
+
+    loadConfig();
+
+    // Check if user returned from a cancelled/failed payment
+    const status = searchParams.get('status');
+    if (status === 'cancelled') {
+      setCancelNotice('Your payment was cancelled. Your items remain safely in your cart.');
+    } else if (status === 'failed') {
+      setCancelNotice('Your payment attempt was unsuccessful. You may try again with another method.');
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [searchParams]);
+
+  // Calculate active payment methods visible to customer
+  const availablePaymentMethods = PAYMENT_METHODS.filter((method) => {
+    if (!paymentConfig) return true; // Default fallback while loading
+    if (method.id === 'yoco') return paymentConfig.yoco?.enabled ?? true;
+    if (method.id === 'card') return (paymentConfig.yoco?.enabled ?? true) || paymentConfig.payfast?.enabled;
+    if (method.id === 'payfast') return paymentConfig.payfast?.enabled ?? false;
+    if (method.id === 'ozow') return paymentConfig.ozow?.enabled ?? false;
+    if (method.id === 'cod') return paymentConfig.cod?.enabled ?? true;
+    return true;
+  });
 
   const discountAmount = 0; // standard checkout
   const totalAmount = cartSubtotal + deliveryFee - discountAmount;
@@ -226,9 +293,16 @@ export const CheckoutPage: React.FC = () => {
         <span>Return to Cart</span>
       </button>
 
-      <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-8">
+      <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-6">
         Checkout
       </h1>
+
+      {cancelNotice && (
+        <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-sm font-medium flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <span>{cancelNotice}</span>
+        </div>
+      )}
 
       <form onSubmit={handlePlaceOrder} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Delivery & Payment Details */}
@@ -365,169 +439,175 @@ export const CheckoutPage: React.FC = () => {
             </div>
 
             <div className="space-y-3">
-              {PAYMENT_METHODS.map((method) => (
-                <div
-                  key={method.id}
-                  className={`p-4 rounded-2xl border transition-all ${
-                    paymentMethod === method.id
-                      ? 'border-[#ff6452] bg-rose-50/30'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <label className="flex items-center justify-between cursor-pointer">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value={method.id}
-                        checked={paymentMethod === method.id}
-                        onChange={() => setPaymentMethod(method.id)}
-                        className="accent-[#ff6452]"
-                      />
-                      <div>
-                        <p className="text-sm font-bold text-gray-900">{method.name}</p>
-                        <p className="text-xs text-gray-500">{method.desc}</p>
-                      </div>
-                    </div>
-                  </label>
-
-                  {/* Card Details Inputs */}
-                  {paymentMethod === 'card' && method.id === 'card' && (
-                    <div className="mt-4 pt-4 border-t border-rose-100/60 space-y-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                          Cardholder Name *
-                        </label>
-                        <input
-                          type="text"
-                          name="cardHolder"
-                          placeholder="e.g. T Mokoena"
-                          value={cardDetails.cardHolder}
-                          onChange={handleCardInputChange}
-                          className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                          Card Number *
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            name="cardNumber"
-                            maxLength={19}
-                            placeholder="4532 •••• •••• 8912"
-                            value={cardDetails.cardNumber}
-                            onChange={handleCardInputChange}
-                            className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono"
-                          />
-                          <CreditCard className="w-4 h-4 text-gray-400 absolute right-3 top-2.5" />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                            Expiry (MM/YY) *
-                          </label>
-                          <input
-                            type="text"
-                            name="cardExpiry"
-                            maxLength={5}
-                            placeholder="08/28"
-                            value={cardDetails.cardExpiry}
-                            onChange={handleCardInputChange}
-                            className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono text-center"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                            CVV / CVC *
-                          </label>
-                          <input
-                            type="password"
-                            name="cardCvv"
-                            maxLength={4}
-                            placeholder="•••"
-                            value={cardDetails.cardCvv}
-                            onChange={handleCardInputChange}
-                            className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono text-center"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Instant EFT Bank Selection */}
-                  {paymentMethod === 'ozow' && method.id === 'ozow' && (
-                    <div className="mt-4 pt-4 border-t border-rose-100/60 space-y-2">
-                      <p className="text-xs font-bold text-gray-700">Select your South African Bank:</p>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {[
-                          'Capitec Bank',
-                          'FNB',
-                          'Standard Bank',
-                          'ABSA',
-                          'Nedbank',
-                          'TymeBank',
-                        ].map((bank) => (
-                          <button
-                            type="button"
-                            key={bank}
-                            onClick={() => setSelectedBank(bank)}
-                            className={`py-2 px-3 rounded-xl text-xs font-bold border text-center transition-all ${
-                              selectedBank === bank
-                                ? 'bg-[#ff6452] text-white border-[#ff6452]'
-                                : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
-                            }`}
-                          >
-                            {bank}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[11px] text-gray-400 pt-1">
-                        🔒 You will authorize Instant EFT securely via {selectedBank} Capitec Pay / Ozow portal.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Yoco Gateway info */}
-                  {paymentMethod === 'yoco' && method.id === 'yoco' && (
-                    <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
-                      <p className="font-semibold text-gray-800 flex items-center gap-1.5">
-                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                        Secure Yoco Hosted Checkout
-                      </p>
-                      <p>
-                        You will be redirected securely to Yoco to complete payment with Visa, Mastercard, or Instant EFT. No card numbers are handled on our site.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* PayFast Gateway info */}
-                  {paymentMethod === 'payfast' && method.id === 'payfast' && (
-                    <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
-                      <p className="font-semibold text-gray-800">
-                        PayFast PCI-DSS Level 1 Gateway Integration
-                      </p>
-                      <p>
-                        Your payment is processed securely via PayFast South Africa. Supports Debit Card, Credit Card, Masterpass & Mobicred.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* COD Info */}
-                  {paymentMethod === 'cod' && method.id === 'cod' && (
-                    <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
-                      <p className="font-semibold text-gray-800">
-                        💵 Pay Cash Upon Courier Delivery
-                      </p>
-                      <p>
-                        Please keep exact cash ({STORE_CONFIG.STORE_CURRENCY}{totalAmount.toLocaleString()}) ready for courier drop-off. Order will be marked as &quot;Pending Payment&quot; until delivered.
-                      </p>
-                    </div>
-                  )}
+              {availablePaymentMethods.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-gray-50 border border-gray-200 text-center text-sm text-gray-500">
+                  Online payment providers are currently being configured by the store administrator. Please try again in a few minutes.
                 </div>
-              ))}
+              ) : (
+                availablePaymentMethods.map((method) => (
+                  <div
+                    key={method.id}
+                    className={`p-4 rounded-2xl border transition-all ${
+                      paymentMethod === method.id
+                        ? 'border-[#ff6452] bg-rose-50/30'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="radio"
+                          name="paymentMethod"
+                          value={method.id}
+                          checked={paymentMethod === method.id}
+                          onChange={() => setPaymentMethod(method.id)}
+                          className="accent-[#ff6452]"
+                        />
+                        <div>
+                          <p className="text-sm font-bold text-gray-900">{method.name}</p>
+                          <p className="text-xs text-gray-500">{method.desc}</p>
+                        </div>
+                      </div>
+                    </label>
+
+                    {/* Card Details Inputs */}
+                    {paymentMethod === 'card' && method.id === 'card' && (
+                      <div className="mt-4 pt-4 border-t border-rose-100/60 space-y-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                            Cardholder Name *
+                          </label>
+                          <input
+                            type="text"
+                            name="cardHolder"
+                            placeholder="e.g. T Mokoena"
+                            value={cardDetails.cardHolder}
+                            onChange={handleCardInputChange}
+                            className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                            Card Number *
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              name="cardNumber"
+                              maxLength={19}
+                              placeholder="4532 •••• •••• 8912"
+                              value={cardDetails.cardNumber}
+                              onChange={handleCardInputChange}
+                              className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono"
+                            />
+                            <CreditCard className="w-4 h-4 text-gray-400 absolute right-3 top-2.5" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                              Expiry (MM/YY) *
+                            </label>
+                            <input
+                              type="text"
+                              name="cardExpiry"
+                              maxLength={5}
+                              placeholder="08/28"
+                              value={cardDetails.cardExpiry}
+                              onChange={handleCardInputChange}
+                              className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono text-center"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                              CVV / CVC *
+                            </label>
+                            <input
+                              type="password"
+                              name="cardCvv"
+                              maxLength={4}
+                              placeholder="•••"
+                              value={cardDetails.cardCvv}
+                              onChange={handleCardInputChange}
+                              className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-xs focus:border-[#ff6452] outline-none bg-white font-mono text-center"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Instant EFT Bank Selection */}
+                    {paymentMethod === 'ozow' && method.id === 'ozow' && (
+                      <div className="mt-4 pt-4 border-t border-rose-100/60 space-y-2">
+                        <p className="text-xs font-bold text-gray-700">Select your South African Bank:</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {[
+                            'Capitec Bank',
+                            'FNB',
+                            'Standard Bank',
+                            'ABSA',
+                            'Nedbank',
+                            'TymeBank',
+                          ].map((bank) => (
+                            <button
+                              type="button"
+                              key={bank}
+                              onClick={() => setSelectedBank(bank)}
+                              className={`py-2 px-3 rounded-xl text-xs font-bold border text-center transition-all ${
+                                selectedBank === bank
+                                  ? 'bg-[#ff6452] text-white border-[#ff6452]'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
+                              {bank}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-gray-400 pt-1">
+                          🔒 You will authorize Instant EFT securely via {selectedBank} Capitec Pay / Ozow portal.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Yoco Gateway info */}
+                    {paymentMethod === 'yoco' && method.id === 'yoco' && (
+                      <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
+                        <p className="font-semibold text-gray-800 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                          Secure Yoco Hosted Checkout
+                        </p>
+                        <p>
+                          You will be redirected securely to Yoco to complete payment with Visa, Mastercard, or Instant EFT. No card numbers are handled on our site.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* PayFast Gateway info */}
+                    {paymentMethod === 'payfast' && method.id === 'payfast' && (
+                      <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
+                        <p className="font-semibold text-gray-800">
+                          PayFast PCI-DSS Level 1 Gateway Integration
+                        </p>
+                        <p>
+                          Your payment is processed securely via PayFast South Africa. Supports Debit Card, Credit Card, Masterpass & Mobicred.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* COD Info */}
+                    {paymentMethod === 'cod' && method.id === 'cod' && (
+                      <div className="mt-3 pt-3 border-t border-rose-100/60 text-xs text-gray-500 space-y-1">
+                        <p className="font-semibold text-gray-800">
+                          💵 Pay Cash Upon Courier Delivery
+                        </p>
+                        <p>
+                          Please keep exact cash ({STORE_CONFIG.STORE_CURRENCY}{totalAmount.toLocaleString()}) ready for courier drop-off. Order will be marked as &quot;Pending Payment&quot; until delivered.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

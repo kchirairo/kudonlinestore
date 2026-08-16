@@ -8,7 +8,7 @@ import { SEOHead } from '../components/SEOHead';
 
 export const CartPage: React.FC = () => {
   const navigate = useNavigate();
-  const { cart, updateQuantity, removeFromCart, cartSubtotal, deliveryFee, showToast } = useShop();
+  const { cart, updateQuantity, removeFromCart, cartSubtotal, deliveryFee, showToast, user } = useShop();
 
   const [couponCode, setCouponCode] = useState<string>('');
   const [discountAmount, setDiscountAmount] = useState<number>(0);
@@ -224,7 +224,14 @@ export const CartPage: React.FC = () => {
             </div>
 
             <button
-              onClick={() => navigate('/checkout')}
+              onClick={() => {
+                if (!user) {
+                  showToast('Please sign in to proceed to checkout', 'info');
+                  navigate('/account', { state: { returnUrl: '/checkout' } });
+                  return;
+                }
+                navigate('/checkout');
+              }}
               className="w-full py-4 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#ff6452]/20 transition-all active:scale-[0.98] mt-2 cursor-pointer"
             >
               <span>Proceed to Checkout</span>

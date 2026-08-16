@@ -26,7 +26,7 @@ import { generateProductJsonLd, categoryToSlug, getSiteUrl } from '../utils/seo'
 export const ProductDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { addToCart, isFavourite, toggleFavourite, showToast } = useShop();
+  const { addToCart, isFavourite, toggleFavourite, showToast, user } = useShop();
 
   const [product, setProduct] = useState<Product | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
@@ -128,10 +128,20 @@ export const ProductDetailsPage: React.FC = () => {
       : `Buy ${product.name} (${product.brand || 'KUD'}) online at ${STORE_CONFIG.STORE_NAME} South Africa for R${product.price}. Nationwide fast courier delivery & secure Yoco checkout.`;
 
   const handleAddToCart = () => {
+    if (!user) {
+      showToast('Please sign in to add items to your cart', 'info');
+      navigate('/account', { state: { returnUrl: `/product/${product.id}` } });
+      return;
+    }
     addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
   };
 
   const handleBuyNow = () => {
+    if (!user) {
+      showToast('Please sign in to purchase items', 'info');
+      navigate('/account', { state: { returnUrl: `/product/${product.id}` } });
+      return;
+    }
     addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
     navigate('/cart');
   };
@@ -292,11 +302,6 @@ export const ProductDetailsPage: React.FC = () => {
                 {product.originalPrice && (
                   <span className="text-lg text-gray-400 line-through font-semibold">
                     {STORE_CONFIG.STORE_CURRENCY}{product.originalPrice.toLocaleString()}
-                  </span>
-                )}
-                {product.sku && (
-                  <span className="text-xs text-gray-400 ml-auto font-mono">
-                    SKU: {product.sku}
                   </span>
                 )}
               </div>

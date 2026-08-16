@@ -13,7 +13,7 @@ export const OrderDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { showToast } = useShop();
+  const { showToast, clearCart } = useShop();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -43,11 +43,12 @@ export const OrderDetailsPage: React.FC = () => {
     orderService.getOrderById(id).then((res) => {
       if (isPaymentSuccess) {
         setIsPaymentJustSuccess(true);
+        clearCart();
       }
       setOrder(res);
       setIsLoading(false);
     });
-  }, [id, searchParams]);
+  }, [id, searchParams, clearCart]);
 
   if (isLoading) {
     return (
