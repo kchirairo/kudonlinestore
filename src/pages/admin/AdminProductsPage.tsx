@@ -32,6 +32,7 @@ import { adminService } from '../../services/adminService';
 import { Product, ProductCategory } from '../../types';
 import { ConfirmationModal } from '../../components/admin/ConfirmationModal';
 import { BulkEditModal } from '../../components/admin/BulkEditModal';
+import { DatabaseErrorBanner } from '../../components/DatabaseErrorBanner';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
 import { exportProductsToCSV } from '../../utils/csvExport';
@@ -50,6 +51,7 @@ export const AdminProductsPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -83,6 +85,7 @@ export const AdminProductsPage: React.FC = () => {
 
   const fetchProducts = async () => {
     setIsLoading(true);
+    setDbError(null);
     try {
       const data = await adminService.getProducts({
         search: searchQuery,
@@ -100,8 +103,12 @@ export const AdminProductsPage: React.FC = () => {
       setProducts(filtered);
 
       // Fetch categories list
-      const cats = await adminService.getCategories();
-      setCategories(cats.map((c) => c.name));
+      try {
+        const cats = await adminService.getCategories();
+        setCategories(cats.map((c) => c.name));
+      } catch {
+        // Categories list failure is non-fatal
+      }
 
       // Reset selection of IDs that no longer exist
       setSelectedIds((prev) => {
@@ -112,8 +119,10 @@ export const AdminProductsPage: React.FC = () => {
         });
         return next;
       });
-    } catch (err) {
-      console.error('Failed to load products:', err);
+    } catch (err: any) {
+      console.error('[AdminProductsPage] Failed to load products:', err);
+      setDbError(err?.message || 'Failed to connect to Supabase products table.');
+      setProducts([]);
     } finally {
       setIsLoading(false);
     }
@@ -773,13 +782,21 @@ export const AdminProductsPage: React.FC = () => {
       </div>
 
       {/* Products Content */}
+      {dbError && (
+        <DatabaseErrorBanner
+          error={dbError}
+          onRetry={fetchProducts}
+          isRetrying={isLoading}
+        />
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="h-44 bg-gray-200 rounded-3xl" />
           ))}
         </div>
-      ) : products.length === 0 ? (
+      ) : dbError ? null : products.length === 0 ? (
         <div className="bg-white rounded-3xl p-12 border border-gray-100 text-center space-y-4">
           <Package className="w-12 h-12 text-gray-300 mx-auto" />
           <div className="space-y-1">

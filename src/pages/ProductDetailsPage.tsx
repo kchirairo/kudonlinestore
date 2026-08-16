@@ -17,6 +17,7 @@ import { useShop } from '../context/ShopContext';
 import { Product } from '../types';
 import { STORE_CONFIG } from '../constants/config';
 import { DetailSkeleton } from '../components/LoadingSkeleton';
+import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { SEOHead } from '../components/SEOHead';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { ProductCard } from '../components/ProductCard';
@@ -30,30 +31,67 @@ export const ProductDetailsPage: React.FC = () => {
   const [product, setProduct] = useState<Product | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [selectedVariant, setSelectedVariant] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
 
-  useEffect(() => {
+  const fetchProduct = () => {
     if (!id) return;
     setIsLoading(true);
+    setDbError(null);
     setSelectedImageIndex(0);
-    productService.getProductById(id).then((res) => {
-      setProduct(res);
-      if (res?.sizeOrVariant) {
-        setSelectedVariant(res.sizeOrVariant);
-      }
-      setIsLoading(false);
+    productService
+      .getProductById(id)
+      .then((res) => {
+        setProduct(res);
+        if (res?.sizeOrVariant) {
+          setSelectedVariant(res.sizeOrVariant);
+        }
+        setIsLoading(false);
 
-      if (res?.category) {
-        productService.getProducts({ category: res.category }).then((related) => {
-          setRelatedProducts(related.filter((p) => p.id !== res.id).slice(0, 4));
-        });
-      }
-    });
+        if (res?.category) {
+          productService
+            .getProducts({ category: res.category })
+            .then((related) => {
+              setRelatedProducts(related.filter((p) => p.id !== res.id).slice(0, 4));
+            })
+            .catch(() => {});
+        }
+      })
+      .catch((err: any) => {
+        console.error('[ProductDetailsPage] Error loading product:', err);
+        setDbError(err?.message || 'Failed to fetch product from Supabase.');
+        setIsLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchProduct();
   }, [id]);
 
   if (isLoading) return <DetailSkeleton />;
+
+  if (dbError) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16">
+        <SEOHead
+          title="Database Error | KUD Store"
+          description="Could not load product details due to database connection issue."
+          noindex={true}
+        />
+        <DatabaseErrorBanner error={dbError} onRetry={fetchProduct} isRetrying={isLoading} />
+        <div className="text-center mt-6">
+          <Link
+            to="/"
+            className="inline-block px-6 py-2.5 bg-gray-900 text-white font-bold rounded-full text-sm hover:bg-gray-800 transition-colors"
+          >
+            Back to Store
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!product) {
     return (

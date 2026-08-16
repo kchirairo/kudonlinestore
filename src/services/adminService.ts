@@ -13,9 +13,8 @@ import {
   StoreBrandingConfig,
   PromoBannerConfig,
 } from '../types';
-import { DEMO_PRODUCTS } from '../data/demoProducts';
-import { mapSupabaseProduct } from './productService';
-import { orderService } from './orderService';
+import { mapSupabaseProduct, productService } from './productService';
+import { mapSupabaseOrder, orderService } from './orderService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
 import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER } from '../constants/config';
 import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUpload';
@@ -23,7 +22,6 @@ import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUplo
 // Storage keys for settings and mock tables if Supabase is unconfigured or empty
 const LOCAL_CATEGORIES_KEY = 'kud_store_admin_categories';
 const LOCAL_CUSTOMERS_KEY = 'kud_store_admin_customers';
-const LOCAL_PRODUCTS_KEY = 'kud_store_admin_products';
 const LOCAL_PAYMENT_SETTINGS_KEY = 'kud_store_payment_gateways_config';
 const LOCAL_BRANDING_KEY = 'kud_store_branding_config';
 const LOCAL_PROMO_BANNER_KEY = 'kud_store_promo_banner_config';
@@ -108,9 +106,27 @@ export const adminService = {
    * Fetch high-level Admin Dashboard statistics
    */
   async getAdminStats(): Promise<AdminStats> {
-    let orders: Order[] = await this.getOrders();
-    let products: Product[] = await this.getProducts();
-    let customers: Customer[] = await this.getCustomers();
+    let orders: Order[] = [];
+    let products: Product[] = [];
+    let customers: Customer[] = [];
+
+    try {
+      orders = await this.getOrders();
+    } catch (err) {
+      console.warn('[AdminService] getOrders failed in getAdminStats:', err);
+    }
+
+    try {
+      products = await this.getProducts();
+    } catch (err) {
+      console.warn('[AdminService] getProducts failed in getAdminStats:', err);
+    }
+
+    try {
+      customers = await this.getCustomers();
+    } catch (err) {
+      console.warn('[AdminService] getCustomers failed in getAdminStats:', err);
+    }
 
     // Total sales from paid/completed orders
     const paidOrders = orders.filter(
@@ -180,32 +196,7 @@ export const adminService = {
         const { data, error } = await query;
 
         if (!error && data && data.length > 0) {
-          orders = data.map((o: any) => ({
-            id: o.id,
-            user_id: o.user_id,
-            created_at: o.created_at,
-            total_amount: o.total_amount,
-            subtotal_amount: o.subtotal_amount,
-            delivery_fee: o.delivery_fee,
-            discount_amount: o.discount_amount,
-            status: o.status,
-            payment_status: o.payment_status,
-            payment_method: o.payment_method,
-            shipping_address: o.shipping_address,
-            customer_name: o.shipping_address?.fullName || o.customer_name || 'Customer',
-            customer_email: o.shipping_address?.email || o.customer_email || 'n/a',
-            items: (o.order_items || []).map((item: any) => ({
-              id: item.id,
-              product_id: item.product_id,
-              product_name: item.product_name,
-              product_brand: item.product_brand,
-              product_image: item.product_image,
-              quantity: item.quantity,
-              unit_price: item.unit_price,
-              total_price: item.total_price,
-              variant: item.variant,
-            })),
-          }));
+          orders = data.map((o: any) => mapSupabaseOrder(o));
         }
       } catch (err) {
         console.warn('Supabase fetch orders error, resorting to local:', err);
@@ -579,7 +570,8 @@ export const adminService = {
   },
 
   /**
-   * Fetch products for admin view
+   * Fetch products for admin view directly from Supabase public.products table.
+   * Supabase public.products is the ONLY source of truth.
    */
   async getProducts(filters?: {
     category?: string;
@@ -587,42 +579,8 @@ export const adminService = {
     search?: string;
     sortBy?: 'newest' | 'price-asc' | 'price-desc' | 'stock';
   }): Promise<Product[]> {
-    let products: Product[] = [];
-
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase.from('products').select('*, product_images(*)');
-        if (!error && data && data.length > 0) {
-          products = data.map(mapSupabaseProduct);
-        } else {
-          // Fallback simple query
-          const { data: fallbackData } = await supabase.from('products').select('*');
-          if (fallbackData && fallbackData.length > 0) {
-            products = fallbackData.map(mapSupabaseProduct);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase fetch products error:', err);
-      }
-    }
-
-    const local = safeGetItem<any[]>(LOCAL_PRODUCTS_KEY, []);
-    if (local.length > 0) {
-      const localMapped = local.map(mapSupabaseProduct);
-      const productMap = new Map<string, Product>();
-      // First add remote products
-      products.forEach((p) => productMap.set(p.id, p));
-      // Then overlay local products so newest local additions/edits take precedence
-      localMapped.forEach((p) => productMap.set(p.id, p));
-      products = Array.from(productMap.values());
-    } else if (products.length === 0) {
-      products = DEMO_PRODUCTS.map((p) => ({
-        ...p,
-        isActive: true,
-        stock: p.inStock ? 30 : 0,
-        sku: `SKU-${p.id.toUpperCase()}`,
-      }));
-    }
+    const raw = await productService.getAllRawProducts();
+    let products: Product[] = [...raw];
 
     // Client-side filtering
     if (filters?.search) {
@@ -638,7 +596,9 @@ export const adminService = {
     }
 
     if (filters?.category && filters.category !== 'All') {
-      products = products.filter((p) => p.category === filters.category);
+      products = products.filter(
+        (p) => p.category.toLowerCase() === filters.category!.toLowerCase()
+      );
     }
 
     if (filters?.activeOnly) {
@@ -659,12 +619,10 @@ export const adminService = {
   },
 
   /**
-   * Get product by ID
+   * Get product by ID directly from Supabase public.products table
    */
   async getProductById(id: string): Promise<Product | null> {
-    const products = await this.getProducts();
-    const found = products.find((p) => p.id === id);
-    return found || null;
+    return productService.getProductById(id);
   },
 
   /**
@@ -687,12 +645,16 @@ export const adminService = {
   },
 
   /**
-   * Create new product
+   * Create new product and insert directly into Supabase public.products
    */
   async createProduct(
     productData: Partial<Product>,
     imageFile?: File | File[]
   ): Promise<{ success: boolean; data?: Product; error?: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return { success: false, error: 'Supabase client is not configured. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.' };
+    }
+
     let imageUrls = productData.images ? [...productData.images] : [];
 
     // 1. Upload exact selected images first and wait for completion
@@ -706,11 +668,7 @@ export const adminService = {
               imageUrls.push(uploadedUrl);
             }
           } catch (uploadErr: any) {
-            console.error('Image upload failed:', uploadErr);
-            return {
-              success: false,
-              error: uploadErr?.message || `Failed to upload image "${file.name}". Please check storage permissions.`,
-            };
+            console.warn('Image upload notice:', uploadErr);
           }
         }
       }
@@ -723,14 +681,14 @@ export const adminService = {
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       name: (productData.name || 'New Product').trim(),
-      brand: (productData.brand || 'KUD').trim(),
+      brand: (productData.brand || 'KUD Store').trim(),
       price: Number(productData.price) || 0,
       originalPrice: productData.originalPrice ? Number(productData.originalPrice) : undefined,
       category: productData.category || 'Beauty',
       sizeOrVariant: productData.sizeOrVariant || '',
       condition: productData.condition || 'Brand New',
       description: productData.description || '',
-      images: imageUrls,
+      images: imageUrls.length > 0 ? imageUrls : ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'],
       inStock: (productData.stock ?? 1) > 0,
       stock: Number(productData.stock) || 0,
       sku: productData.sku || `SKU-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
@@ -739,79 +697,42 @@ export const adminService = {
       createdAt: new Date().toISOString(),
     };
 
-    // 2. Persist to Supabase if configured
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const standardPayload = {
-          id: newProduct.id,
-          name: newProduct.name,
-          brand: newProduct.brand,
-          price: newProduct.price,
-          original_price: newProduct.originalPrice || null,
-          category: newProduct.category,
-          size_or_variant: newProduct.sizeOrVariant || null,
-          condition: newProduct.condition,
-          description: newProduct.description,
-          image_url: primaryImageUrl || null,
-          images: newProduct.images,
-          in_stock: newProduct.inStock,
-          stock: newProduct.stock,
-          sku: newProduct.sku,
-          is_featured: newProduct.isFeatured,
-          is_active: newProduct.isActive,
-          created_at: newProduct.createdAt,
-        };
+    // 2. Persist directly to Supabase public.products
+    const standardPayload = {
+      id: newProduct.id,
+      name: newProduct.name,
+      brand: newProduct.brand,
+      price: newProduct.price,
+      original_price: newProduct.originalPrice || null,
+      category: newProduct.category,
+      size_or_variant: newProduct.sizeOrVariant || null,
+      condition: newProduct.condition,
+      description: newProduct.description,
+      image_url: primaryImageUrl || null,
+      images: newProduct.images,
+      in_stock: newProduct.inStock,
+      stock: newProduct.stock,
+      sku: newProduct.sku,
+      is_featured: newProduct.isFeatured,
+      is_active: newProduct.isActive,
+      created_at: newProduct.createdAt,
+    };
 
-        const { error } = await supabase.from('products').insert(standardPayload);
+    const { error } = await supabase.from('products').insert(standardPayload);
 
-        if (error) {
-          console.warn('Supabase standard insert failed, attempting flexible column insert:', error.message);
-          // Fallback payload without optional columns
-          const fallbackPayload: any = {
-            id: newProduct.id,
-            name: newProduct.name,
-            brand: newProduct.brand,
-            price: newProduct.price,
-            category: newProduct.category,
-            description: newProduct.description,
-            image_url: primaryImageUrl || null,
-            in_stock: newProduct.inStock,
-            stock: newProduct.stock,
-          };
-          const { error: fallbackError } = await supabase.from('products').insert(fallbackPayload);
-          if (fallbackError) {
-            console.warn('Supabase fallback insert reported:', fallbackError.message);
-          }
-        } else {
-          // Sync into product_images table if present
-          try {
-            if (newProduct.images.length > 0) {
-              const imageInserts = newProduct.images.map((url, idx) => ({
-                product_id: newProduct.id,
-                image_url: url,
-                display_order: idx,
-              }));
-              await supabase.from('product_images').insert(imageInserts);
-            }
-          } catch {
-            // Ignore if product_images table is not used
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase product insert exception:', err);
-      }
+    if (error) {
+      console.error('[AdminService] Supabase insert product failed:', error);
+      return {
+        success: false,
+        error: `Supabase database error: ${error.message}${error.hint ? ` (${error.hint})` : ''}`,
+      };
     }
-
-    // 3. Save locally to ensure instant updates and offline support
-    const existing = safeGetItem<Product[]>(LOCAL_PRODUCTS_KEY, []);
-    const updatedLocal = [newProduct, ...existing.filter((p) => p.id !== newProduct.id)];
-    safeSetItem(LOCAL_PRODUCTS_KEY, updatedLocal);
 
     return { success: true, data: newProduct };
   },
 
   /**
-   * Update existing product
+   * Update existing product directly in Supabase public.products
    */
   async updateProduct(
     id: string,
@@ -819,6 +740,10 @@ export const adminService = {
     newImageFile?: File | File[],
     imagesToDeleteFromStorage?: string[]
   ): Promise<{ success: boolean; data?: Product; error?: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return { success: false, error: 'Supabase client is not configured.' };
+    }
+
     let current = await this.getProductById(id);
     if (!current) {
       return { success: false, error: 'Product not found' };
@@ -836,11 +761,7 @@ export const adminService = {
               updatedImages.push(uploadedUrl);
             }
           } catch (uploadErr: any) {
-            console.error('Image upload failed during update:', uploadErr);
-            return {
-              success: false,
-              error: uploadErr?.message || `Failed to upload image "${file.name}".`,
-            };
+            console.warn('Image upload warning during update:', uploadErr);
           }
         }
       }
@@ -865,65 +786,42 @@ export const adminService = {
       stock: productData.stock !== undefined ? Number(productData.stock) : current.stock,
     };
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const updatePayload: any = {
-          name: updatedProduct.name,
-          brand: updatedProduct.brand,
-          price: updatedProduct.price,
-          original_price: updatedProduct.originalPrice || null,
-          category: updatedProduct.category,
-          size_or_variant: updatedProduct.sizeOrVariant || null,
-          condition: updatedProduct.condition,
-          description: updatedProduct.description,
-          image_url: primaryImageUrl || null,
-          images: updatedProduct.images,
-          in_stock: updatedProduct.inStock,
-          stock: updatedProduct.stock,
-          sku: updatedProduct.sku,
-          is_featured: updatedProduct.isFeatured,
-          is_active: updatedProduct.isActive,
-        };
+    const updatePayload: any = {
+      name: updatedProduct.name,
+      brand: updatedProduct.brand,
+      price: updatedProduct.price,
+      original_price: updatedProduct.originalPrice || null,
+      category: updatedProduct.category,
+      size_or_variant: updatedProduct.sizeOrVariant || null,
+      condition: updatedProduct.condition,
+      description: updatedProduct.description,
+      image_url: primaryImageUrl || null,
+      images: updatedProduct.images,
+      in_stock: updatedProduct.inStock,
+      stock: updatedProduct.stock,
+      sku: updatedProduct.sku,
+      is_featured: updatedProduct.isFeatured,
+      is_active: updatedProduct.isActive,
+    };
 
-        const { error } = await supabase
-          .from('products')
-          .update(updatePayload)
-          .eq('id', id);
+    const { error } = await supabase
+      .from('products')
+      .update(updatePayload)
+      .eq('id', id);
 
-        if (!error) {
-          // Sync into product_images table if present
-          try {
-            await supabase.from('product_images').delete().eq('product_id', id);
-            if (updatedProduct.images.length > 0) {
-              const imageInserts = updatedProduct.images.map((url, idx) => ({
-                product_id: id,
-                image_url: url,
-                display_order: idx,
-              }));
-              await supabase.from('product_images').insert(imageInserts);
-            }
-          } catch {
-            // Ignore if product_images table is not used
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase product update exception:', err);
-      }
+    if (error) {
+      console.error('[AdminService] Supabase update product failed:', error);
+      return {
+        success: false,
+        error: `Supabase update error: ${error.message}${error.hint ? ` (${error.hint})` : ''}`,
+      };
     }
-
-    // Save locally
-    const existing = safeGetItem<Product[]>(LOCAL_PRODUCTS_KEY, []);
-    const updatedLocal = existing.map((p) => (p.id === id ? updatedProduct : p));
-    if (!updatedLocal.some((p) => p.id === id)) {
-      updatedLocal.unshift(updatedProduct);
-    }
-    safeSetItem(LOCAL_PRODUCTS_KEY, updatedLocal);
 
     return { success: true, data: updatedProduct };
   },
 
   /**
-   * Bulk update multiple products (stock, price, originalPrice, status, category, etc.)
+   * Bulk update multiple products directly in Supabase
    */
   async bulkUpdateProducts(
     updates: Array<{ id: string; changes: Partial<Product> }>
@@ -932,83 +830,57 @@ export const adminService = {
       return { success: true, updatedCount: 0 };
     }
 
-    const allProducts = await this.getProducts();
-    const productMap = new Map<string, Product>(allProducts.map((p) => [p.id, { ...p }]));
+    if (!isSupabaseConfigured() || !supabase) {
+      return { success: false, updatedCount: 0, error: 'Supabase client is not configured.' };
+    }
+
     let updatedCount = 0;
-    const modifiedProducts: Product[] = [];
+    const errors: string[] = [];
 
     for (const item of updates) {
-      const existing = productMap.get(item.id);
-      if (existing) {
-        const nextStock =
-          item.changes.stock !== undefined ? Number(item.changes.stock) : existing.stock;
-        const nextInStock =
-          item.changes.inStock !== undefined
-            ? item.changes.inStock
-            : nextStock !== undefined
-            ? nextStock > 0
-            : existing.inStock;
+      const payload: any = {};
+      if (item.changes.price !== undefined) payload.price = Number(item.changes.price);
+      if (item.changes.originalPrice !== undefined) {
+        payload.original_price = item.changes.originalPrice ? Number(item.changes.originalPrice) : null;
+      }
+      if (item.changes.stock !== undefined) {
+        payload.stock = Number(item.changes.stock);
+        payload.in_stock = Number(item.changes.stock) > 0;
+      }
+      if (item.changes.inStock !== undefined) payload.in_stock = Boolean(item.changes.inStock);
+      if (item.changes.isActive !== undefined) payload.is_active = Boolean(item.changes.isActive);
+      if (item.changes.category) payload.category = item.changes.category;
+      if (item.changes.sku) payload.sku = item.changes.sku;
 
-        const updated: Product = {
-          ...existing,
-          ...item.changes,
-          stock: nextStock,
-          inStock: nextInStock,
-          price: item.changes.price !== undefined ? Number(item.changes.price) : existing.price,
-          originalPrice:
-            item.changes.originalPrice !== undefined
-              ? item.changes.originalPrice === null || item.changes.originalPrice === 0
-                ? undefined
-                : Number(item.changes.originalPrice)
-              : existing.originalPrice,
-        };
-
-        productMap.set(item.id, updated);
-        modifiedProducts.push(updated);
+      const { error } = await supabase.from('products').update(payload).eq('id', item.id);
+      if (error) {
+        errors.push(`ID ${item.id}: ${error.message}`);
+      } else {
         updatedCount++;
       }
     }
 
-    // Persist to Supabase if configured
-    if (isSupabaseConfigured() && supabase && modifiedProducts.length > 0) {
-      try {
-        for (const prod of modifiedProducts) {
-          const payload: any = {
-            price: prod.price,
-            original_price: prod.originalPrice || null,
-            stock: prod.stock,
-            in_stock: prod.inStock,
-            is_active: prod.isActive,
-          };
-          if (prod.category) payload.category = prod.category;
-          if (prod.sku) payload.sku = prod.sku;
-
-          await supabase.from('products').update(payload).eq('id', prod.id);
-        }
-      } catch (err) {
-        console.warn('Supabase bulk update warning:', err);
-      }
+    if (errors.length > 0 && updatedCount === 0) {
+      return { success: false, updatedCount: 0, error: errors.join(', ') };
     }
-
-    // Save all to localStorage
-    const newProductList = Array.from(productMap.values());
-    safeSetItem(LOCAL_PRODUCTS_KEY, newProductList);
 
     return { success: true, updatedCount };
   },
 
   /**
-   * Delete product and optionally remove associated images from Storage
+   * Delete product directly from Supabase public.products
    */
   async deleteProduct(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return { success: false, error: 'Supabase client is not configured.' };
+    }
+
     const current = await this.getProductById(id);
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        await supabase.from('products').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase product delete exception:', err);
-      }
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (error) {
+      console.error('[AdminService] Supabase delete product failed:', error);
+      return { success: false, error: `Supabase delete error: ${error.message}` };
     }
 
     // Clean up product images in background
@@ -1017,10 +889,6 @@ export const adminService = {
         console.warn('Could not clean up images from storage for product:', id, err);
       });
     }
-
-    const allProducts = await this.getProducts();
-    const filtered = allProducts.filter((p) => p.id !== id);
-    safeSetItem(LOCAL_PRODUCTS_KEY, filtered);
 
     return { success: true };
   },
@@ -1154,7 +1022,7 @@ export const adminService = {
 
   async deleteCategory(id: string): Promise<{ success: boolean; error?: string }> {
     // Check if category has products first
-    const products = await this.getProducts();
+    const products = await this.getProducts().catch(() => []);
     const category = (await this.getCategories()).find((c) => c.id === id);
     if (category) {
       const hasProducts = products.some(

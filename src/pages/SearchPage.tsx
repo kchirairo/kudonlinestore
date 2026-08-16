@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useShop } from '../context/ShopContext';
 import { productService } from '../services/productService';
 import { Product } from '../types';
 import { ProductGrid } from '../components/ProductGrid';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
 import { EmptyState } from '../components/EmptyState';
+import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { SEOHead } from '../components/SEOHead';
 import { STORE_CONFIG } from '../constants/config';
 import { Search, X, SlidersHorizontal, ArrowUpDown } from 'lucide-react';
@@ -15,33 +16,55 @@ export const SearchPage: React.FC = () => {
 
   const [results, setResults] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState<boolean>(false);
 
-  useEffect(() => {
-    let isMounted = true;
-
+  const fetchSearchResults = useCallback(() => {
+    setDbError(null);
     if (!searchQuery.trim()) {
-      productService.getProducts(filters).then((res) => {
-        if (isMounted) setResults(res);
-      });
+      setIsLoading(true);
+      productService
+        .getProducts(filters)
+        .then((res) => {
+          setResults(res);
+          setIsLoading(false);
+        })
+        .catch((err: any) => {
+          console.error('[SearchPage] Error fetching products:', err);
+          setDbError(err?.message || 'Database error querying products.');
+          setResults([]);
+          setIsLoading(false);
+        });
       return;
     }
 
     setIsLoading(true);
     const handler = setTimeout(() => {
-      productService.searchProducts(searchQuery, filters).then((res) => {
-        if (isMounted) {
+      productService
+        .searchProducts(searchQuery, filters)
+        .then((res) => {
           setResults(res);
           setIsLoading(false);
-        }
-      });
+        })
+        .catch((err: any) => {
+          console.error('[SearchPage] Error searching products:', err);
+          setDbError(err?.message || 'Database error querying products.');
+          setResults([]);
+          setIsLoading(false);
+        });
     }, 250);
 
     return () => {
-      isMounted = false;
       clearTimeout(handler);
     };
   }, [searchQuery, filters]);
+
+  useEffect(() => {
+    const cleanup = fetchSearchResults();
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [fetchSearchResults]);
 
   const activeFilterCount =
     (filters.category && filters.category !== 'All' ? 1 : 0) +
@@ -146,10 +169,19 @@ export const SearchPage: React.FC = () => {
         )}
       </div>
 
+      {/* Database Error Banner */}
+      {dbError && (
+        <DatabaseErrorBanner
+          error={dbError}
+          onRetry={fetchSearchResults}
+          isRetrying={isLoading}
+        />
+      )}
+
       {/* Product List or Empty */}
       {isLoading ? (
         <ProductGridSkeleton count={6} />
-      ) : results.length > 0 ? (
+      ) : dbError ? null : results.length > 0 ? (
         <ProductGrid products={results} />
       ) : (
         <EmptyState

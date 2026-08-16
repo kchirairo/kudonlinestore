@@ -1,14 +1,14 @@
 import { Product, FilterOptions } from '../types';
-import { DEMO_PRODUCTS } from '../data/demoProducts';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, supabaseUrl } from '../lib/supabase';
 
-const LOCAL_PRODUCTS_KEY = 'kud_store_admin_products';
-
-// Helper function to map database row fields to TypeScript Product model
+/**
+ * Helper function to map database row fields to TypeScript Product model.
+ * Handles both snake_case and camelCase field variations.
+ */
 export function mapSupabaseProduct(p: any): Product {
   let images: string[] = [];
 
-  // 1. Array of strings in 'images'
+  // 1. Array of strings or objects in 'images'
   if (Array.isArray(p.images) && p.images.length > 0) {
     images = p.images
       .map((img: any) => (typeof img === 'string' ? img.trim() : (img?.image_url || img?.url || '')))
@@ -89,100 +89,138 @@ export function mapSupabaseProduct(p: any): Product {
     images = ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
   }
 
+  // Determine active status: active unless explicitly set to false/inactive/draft/archived
+  const isActive =
+    p.isActive !== false &&
+    p.is_active !== false &&
+    p.active !== false &&
+    p.status !== 'inactive' &&
+    p.status !== 'draft' &&
+    p.status !== 'archived';
+
+  // Determine in-stock status
+  const inStock =
+    p.inStock !== undefined
+      ? Boolean(p.inStock)
+      : p.in_stock !== undefined
+      ? Boolean(p.in_stock)
+      : p.is_in_stock !== undefined
+      ? Boolean(p.is_in_stock)
+      : p.stock !== undefined
+      ? Number(p.stock) > 0
+      : true;
+
+  const stockNumber =
+    p.stock !== undefined
+      ? Number(p.stock)
+      : p.inventory_quantity !== undefined
+      ? Number(p.inventory_quantity)
+      : inStock
+      ? 20
+      : 0;
+
   return {
     id: String(p.id),
-    name: p.name || 'Product',
-    brand: p.brand || 'KUD',
-    price: Number(p.price) || 0,
+    name: p.name || p.title || 'Product',
+    brand: p.brand || p.vendor || 'KUD Store',
+    price: Number(p.price || p.regular_price || p.unit_price) || 0,
     originalPrice:
       p.originalPrice !== undefined
         ? Number(p.originalPrice)
         : p.original_price !== undefined
         ? Number(p.original_price)
+        : p.compare_at_price !== undefined
+        ? Number(p.compare_at_price)
+        : p.slash_price !== undefined
+        ? Number(p.slash_price)
         : undefined,
-    category: p.category || 'Beauty',
-    sizeOrVariant: p.sizeOrVariant || p.size_or_variant || '',
+    category: p.category || p.category_name || (typeof p.categories === 'string' ? p.categories : 'Beauty'),
+    sizeOrVariant: p.sizeOrVariant || p.size_or_variant || p.variant || p.size || '',
     condition: p.condition || 'Brand New',
-    description: p.description || '',
+    description: p.description || p.desc || p.details || '',
     images,
-    inStock: p.inStock ?? p.in_stock ?? true,
-    stock: p.stock ?? (p.inStock ?? p.in_stock ? 20 : 0),
-    sku: p.sku || `SKU-${String(p.id).toUpperCase()}`,
-    isFeatured: p.isFeatured ?? p.is_featured ?? false,
-    isActive: p.isActive ?? p.is_active ?? true,
-    createdAt: p.createdAt || p.created_at || new Date().toISOString(),
+    inStock,
+    stock: stockNumber,
+    sku: p.sku || p.product_sku || (p.id ? `SKU-${String(p.id).substring(0, 8).toUpperCase()}` : ''),
+    isFeatured: Boolean(p.isFeatured ?? p.is_featured ?? p.featured),
+    isActive,
+    rating: p.rating !== undefined ? Number(p.rating) : 5.0,
+    reviewCount: p.review_count !== undefined ? Number(p.review_count) : p.reviewCount !== undefined ? Number(p.reviewCount) : 0,
+    createdAt: p.createdAt || p.created_at || p.inserted_at || new Date().toISOString(),
   };
 }
 
-// Get locally saved products from admin edits/creations
-function getLocalAdminProducts(): Product[] {
-  try {
-    const stored = localStorage.getItem(LOCAL_PRODUCTS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    }
-  } catch {
-    // Ignore JSON parse errors
-  }
-  return [];
-}
-
 export const productService = {
+  /**
+   * Fetches fresh products directly from Supabase public.products table.
+   * Supabase public.products is the ONLY source of truth.
+   */
   async getAllRawProducts(): Promise<Product[]> {
-    let remoteProducts: Product[] = [];
-
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase.from('products').select('*, product_images(*)');
-        if (!error && data && data.length > 0) {
-          remoteProducts = data.map(mapSupabaseProduct);
-        } else {
-          const { data: fallbackData } = await supabase.from('products').select('*');
-          if (fallbackData && fallbackData.length > 0) {
-            remoteProducts = fallbackData.map(mapSupabaseProduct);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase product query error:', err);
-      }
+    if (!isSupabaseConfigured() || !supabase) {
+      const err = 'Supabase client is not configured in environment (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).';
+      console.error(`[ProductService] ${err}`);
+      console.log(`[Supabase Storefront] Project URL: ${supabaseUrl || 'NOT_CONFIGURED'}`);
+      console.error(`[Supabase Storefront] Error:`, err);
+      return [];
     }
 
-    const localProducts = getLocalAdminProducts();
+    // 1. Log Supabase project URL (Key is omitted for security)
+    console.log(`[Supabase Storefront] Project URL: ${supabaseUrl}`);
 
-    // If both remote and local are empty, use DEMO_PRODUCTS
-    if (remoteProducts.length === 0 && localProducts.length === 0) {
-      return DEMO_PRODUCTS.map((p) => ({
-        ...p,
-        isActive: true,
-        stock: p.inStock ? 25 : 0,
-        sku: `SKU-${p.id.toUpperCase()}`,
-      }));
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    // 4. Log any Supabase error
+    if (error) {
+      console.warn('[Supabase Storefront] Supabase notification for public.products:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      return [];
     }
 
-    // Merge remote and local products. Local products take precedence or get appended
-    const mergedMap = new Map<string, Product>();
+    const count = data ? data.length : 0;
+    // 2. Log number of products returned
+    console.log(`[Supabase Storefront] Number of products returned: ${count}`);
 
-    // First add remote
-    remoteProducts.forEach((p) => mergedMap.set(p.id, p));
+    // 3. Log names & IDs of returned products
+    console.log(
+      `[Supabase Storefront] Returned products (ID & Name):`,
+      (data || []).map((p: any) => ({
+        id: p.id,
+        name: p.name || p.title,
+        price: p.price,
+        is_active: p.is_active ?? p.isActive ?? true,
+        category: p.category,
+      }))
+    );
 
-    // Then override/add local
-    localProducts.forEach((p) => mergedMap.set(p.id, p));
+    if (!data || data.length === 0) {
+      return [];
+    }
 
-    return Array.from(mergedMap.values());
+    return data.map(mapSupabaseProduct);
   },
 
+  /**
+   * Fetches active storefront products with optional search, category, brand, and price filters.
+   * Fetches fresh data from Supabase on every call.
+   */
   async getProducts(filters?: FilterOptions): Promise<Product[]> {
-    let result = await this.getAllRawProducts();
+    const raw = await this.getAllRawProducts();
 
-    // Filter active products
-    result = result.filter((p) => p.isActive !== false);
+    // Filter active products - do not incorrectly filter out newly created products
+    let result = raw.filter((p) => p.isActive !== false);
 
     // Apply category filter
     if (filters?.category && filters.category !== 'All') {
-      result = result.filter((p) => p.category === filters.category);
+      result = result.filter(
+        (p) => p.category?.trim().toLowerCase() === filters.category!.trim().toLowerCase()
+      );
     }
 
     // Apply brand filter
@@ -203,7 +241,9 @@ export const productService = {
 
     // Apply condition
     if (filters?.condition && filters.condition !== 'All') {
-      result = result.filter((p) => p.condition === filters.condition);
+      result = result.filter(
+        (p) => p.condition.toLowerCase() === filters.condition!.toLowerCase()
+      );
     }
 
     // Apply inStockOnly
@@ -240,19 +280,42 @@ export const productService = {
     return result;
   },
 
+  /**
+   * Lookup single product by ID directly from Supabase public.products
+   */
   async getProductById(id: string): Promise<Product | null> {
-    const all = await this.getAllRawProducts();
-    const found = all.find((p) => p.id === id);
-    return found || null;
-  },
+    if (!id) return null;
 
-  async searchProducts(queryStr: string, filters?: FilterOptions): Promise<Product[]> {
-    const q = queryStr.trim().toLowerCase();
-    if (!q) {
-      return this.getProducts(filters);
+    if (!isSupabaseConfigured() || !supabase) {
+      console.error('[ProductService] Supabase client is not configured.');
+      return null;
     }
 
-    let all = await this.getProducts(filters);
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn(`[Supabase Storefront] Notice fetching product by ID "${id}":`, error.message);
+      return null;
+    }
+
+    if (!data) return null;
+    return mapSupabaseProduct(data);
+  },
+
+  /**
+   * Search active storefront products from live Supabase data
+   */
+  async searchProducts(queryStr: string, filters?: FilterOptions): Promise<Product[]> {
+    const q = queryStr.trim().toLowerCase();
+    const all = await this.getProducts(filters);
+    if (!q) {
+      return all;
+    }
+
     return all.filter(
       (p) =>
         p.isActive !== false &&

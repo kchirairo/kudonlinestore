@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { productService } from '../services/productService';
 import { Product, ProductCategory, FilterOptions } from '../types';
@@ -6,6 +6,7 @@ import { STORE_CONFIG } from '../constants/config';
 import { ProductGrid } from '../components/ProductGrid';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
 import { EmptyState } from '../components/EmptyState';
+import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SEOHead } from '../components/SEOHead';
 import { FilterPanel } from '../components/FilterPanel';
@@ -36,32 +37,39 @@ export const CategoryDetailsPage: React.FC = () => {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState<boolean>(false);
   const [filters, setFilters] = useState<FilterOptions>({
     category: resolvedCategory,
     sortBy: 'newest',
   });
 
-  useEffect(() => {
-    let isMounted = true;
+  const fetchCategoryProducts = useCallback(() => {
     setIsLoading(true);
+    setDbError(null);
 
     const activeFilters: FilterOptions = {
       ...filters,
       category: resolvedCategory,
     };
 
-    productService.getProducts(activeFilters).then((res) => {
-      if (isMounted) {
+    productService
+      .getProducts(activeFilters)
+      .then((res) => {
         setProducts(res);
         setIsLoading(false);
-      }
-    });
+      })
+      .catch((err: any) => {
+        console.error('[CategoryDetailsPage] Error fetching category products:', err);
+        setDbError(err?.message || 'Failed to fetch products from Supabase.');
+        setProducts([]);
+        setIsLoading(false);
+      });
+  }, [resolvedCategory, filters]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [slug, resolvedCategory, filters]);
+  useEffect(() => {
+    fetchCategoryProducts();
+  }, [fetchCategoryProducts]);
 
   const canonicalUrl = `${getSiteUrl()}/category/${categoryMeta.slug}`;
   const categoryJsonLd = generateCategoryJsonLd(categoryMeta.name, products, canonicalUrl);
@@ -188,10 +196,19 @@ export const CategoryDetailsPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Database Error Banner */}
+        {dbError && (
+          <DatabaseErrorBanner
+            error={dbError}
+            onRetry={fetchCategoryProducts}
+            isRetrying={isLoading}
+          />
+        )}
+
         {/* Product Grid */}
         {isLoading ? (
           <ProductGridSkeleton count={8} />
-        ) : products.length > 0 ? (
+        ) : dbError ? null : products.length > 0 ? (
           <ProductGrid products={products} />
         ) : (
           <EmptyState

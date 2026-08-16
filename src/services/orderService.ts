@@ -4,7 +4,59 @@ import { safeSetItem, safeGetItem } from '../utils/storage';
 
 const LOCAL_ORDERS_KEY = 'kud_store_orders_history';
 
+/**
+ * Maps raw database row from public.orders (with joined or fetched order_items) to frontend Order model.
+ */
+export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Order {
+  const shippingAddress: ShippingAddress = {
+    fullName: row.customer_name || row.shipping_address?.fullName || 'Valued Customer',
+    email: row.customer_email || row.shipping_address?.email || '',
+    phone: row.customer_phone || row.shipping_address?.phone || '',
+    addressLine: row.delivery_address || row.shipping_address?.addressLine || '',
+    city: row.delivery_city || row.shipping_address?.city || '',
+    province: row.delivery_province || row.shipping_address?.province || '',
+    postalCode: row.delivery_postal_code || row.shipping_address?.postalCode || '',
+  };
+
+  const parsedItems: OrderItem[] =
+    Array.isArray(row.order_items) && row.order_items.length > 0
+      ? row.order_items.map((it: any) => ({
+          id: it.id || String(Math.random()),
+          order_id: it.order_id || row.id,
+          product_id: it.product_id || '',
+          product_name: it.product_name || it.name || '',
+          product_brand: it.product_brand || it.brand || '',
+          product_image: it.product_image || it.image || '',
+          quantity: Number(it.quantity) || 1,
+          unit_price: Number(it.unit_price ?? it.price ?? 0),
+          total_price: Number(it.total_price ?? it.total ?? ((Number(it.unit_price ?? it.price ?? 0)) * (Number(it.quantity) || 1))),
+          variant: it.variant || it.size_or_variant || undefined,
+        }))
+      : fallbackItems;
+
+  return {
+    id: row.id,
+    order_number: row.order_number || `KUD-${String(row.id).slice(0, 6).toUpperCase()}`,
+    user_id: row.user_id || undefined,
+    customer_name: row.customer_name || shippingAddress.fullName,
+    customer_email: row.customer_email || shippingAddress.email,
+    created_at: row.created_at || new Date().toISOString(),
+    total_amount: Number(row.total ?? row.total_amount ?? 0),
+    subtotal_amount: Number(row.subtotal ?? row.subtotal_amount ?? 0),
+    delivery_fee: Number(row.shipping_fee ?? row.delivery_fee ?? 0),
+    discount_amount: Number(row.discount ?? row.discount_amount ?? 0),
+    status: (row.status || 'pending') as OrderStatus,
+    payment_status: (row.payment_status || 'pending') as PaymentStatus,
+    payment_method: row.payment_method || 'yoco',
+    shipping_address: shippingAddress,
+    items: parsedItems,
+  };
+}
+
 export const orderService = {
+  /**
+   * Helper to invoke the Yoco checkout Edge Function after creating the order in public.orders
+   */
   async createYocoCheckoutOrder(
     items: OrderItem[],
     shippingAddress: ShippingAddress,
@@ -64,6 +116,10 @@ export const orderService = {
     };
   },
 
+  /**
+   * Creates an order in Supabase public.orders matching existing table columns
+   * and subsequently inserts order items into public.order_items using the returned order ID.
+   */
   async createOrder(
     items: OrderItem[],
     shippingAddress: ShippingAddress,
@@ -73,39 +129,55 @@ export const orderService = {
     paymentMethod: string,
     userId?: string
   ): Promise<Order> {
-    const totalAmount = subtotal + deliveryFee - discountAmount;
-    const orderNumber = `KUD-${Math.floor(100000 + Math.random() * 900000)}`;
+    // 1. Calculate financial values accurately
+    const calcSubtotal = Number(subtotal) || 0;
+    const calcShippingFee = Number(deliveryFee) || 0;
+    const calcDiscount = Number(discountAmount) || 0;
+    const calcTotal = Math.max(0, calcSubtotal + calcShippingFee - calcDiscount);
 
-    // Determine initial order status and payment status based on payment gateway
+    // 2. Generate unique order number
+    const uniqueOrderNumber = `KUD-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    // 3. Determine payment provider
     const pmLower = paymentMethod.toLowerCase();
-    const isOnlinePayment =
-      pmLower.includes('yoco') ||
-      pmLower.includes('card') ||
-      pmLower.includes('eft') ||
-      pmLower.includes('payfast') ||
-      pmLower.includes('ozow');
+    const paymentProvider =
+      pmLower.includes('yoco') || pmLower.includes('card')
+        ? 'yoco'
+        : pmLower.includes('ozow') || pmLower.includes('eft')
+        ? 'ozow'
+        : pmLower.includes('payfast')
+        ? 'payfast'
+        : 'cod';
 
-    const initialOrderStatus: OrderStatus = isOnlinePayment ? 'pending' : 'confirmed';
-    const initialPaymentStatus: PaymentStatus = 'pending';
+    // 4. Retrieve authenticated user ID from supabase.auth.getUser()
+    let authUserId: string | null = null;
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (!authError && authData?.user?.id) {
+          authUserId = authData.user.id;
+        }
+      } catch (authErr) {
+        console.warn('[orderService] Notice querying authenticated user:', authErr);
+      }
+    }
+    if (!authUserId && userId && userId !== 'guest') {
+      authUserId = userId;
+    }
 
     if (!isSupabaseConfigured() || !supabase) {
-      if (isOnlinePayment) {
-        throw new Error(
-          'Database connection is not configured. Online payments require a persistent database connection.'
-        );
-      }
-      // Offline fallback for non-online payments (e.g. COD) when Supabase is unconfigured
       const localUuid = crypto.randomUUID();
       const localOrder: Order = {
         id: localUuid,
-        user_id: userId || 'guest',
+        order_number: uniqueOrderNumber,
+        user_id: authUserId || 'guest',
         created_at: new Date().toISOString(),
-        subtotal_amount: subtotal,
-        delivery_fee: deliveryFee,
-        discount_amount: discountAmount,
-        total_amount: totalAmount,
-        status: initialOrderStatus,
-        payment_status: initialPaymentStatus,
+        subtotal_amount: calcSubtotal,
+        delivery_fee: calcShippingFee,
+        discount_amount: calcDiscount,
+        total_amount: calcTotal,
+        status: 'pending',
+        payment_status: 'pending',
         payment_method: paymentMethod,
         shipping_address: shippingAddress,
         items,
@@ -116,116 +188,110 @@ export const orderService = {
       return localOrder;
     }
 
-    const payload: any = {
-      order_number: orderNumber,
-      user_id: userId && userId !== 'guest' ? userId : null,
-      subtotal: subtotal,
-      shipping_fee: deliveryFee,
-      discount: discountAmount,
-      total: totalAmount,
-      status: initialOrderStatus,
-      payment_status: initialPaymentStatus,
+    // 5. Insert only columns that actually exist in public.orders
+    // Columns: user_id, order_number, status, payment_status, payment_method, payment_provider,
+    // currency, subtotal, shipping_fee, discount, total, customer_name, customer_email,
+    // customer_phone, delivery_address, delivery_city, delivery_province, delivery_postal_code, customer_note, admin_note
+    const orderPayload = {
+      user_id: authUserId || null,
+      order_number: uniqueOrderNumber,
+      status: 'pending',
+      payment_status: 'pending',
       payment_method: paymentMethod,
+      payment_provider: paymentProvider,
+      currency: 'ZAR',
+      subtotal: calcSubtotal,
+      shipping_fee: calcShippingFee,
+      discount: calcDiscount,
+      total: calcTotal,
       customer_name: shippingAddress.fullName || 'Valued Customer',
       customer_email: shippingAddress.email || '',
+      customer_phone: shippingAddress.phone || null,
+      delivery_address: shippingAddress.addressLine || '',
+      delivery_city: shippingAddress.city || '',
+      delivery_province: shippingAddress.province || '',
+      delivery_postal_code: shippingAddress.postalCode || '',
+      customer_note: (shippingAddress as any).customerNote || null,
+      admin_note: null,
     };
 
-    console.log('[ORDER CREATION] Inserting order into Supabase public.orders table:', payload);
+    console.log('[ORDER CREATION] Inserting order into Supabase public.orders table:', {
+      order_number: orderPayload.order_number,
+      total: orderPayload.total,
+      customer_email: orderPayload.customer_email,
+      user_id: orderPayload.user_id,
+    });
 
-    const { data, error } = await supabase
+    const { data: createdOrderRow, error: orderInsertError } = await supabase
       .from('orders')
-      .insert(payload)
+      .insert(orderPayload)
       .select('*')
       .single();
 
-    if (error || !data) {
-      console.error('[ORDER CREATION] Database order creation error:', error);
+    if (orderInsertError || !createdOrderRow) {
+      console.error('[ORDER CREATION] Database error inserting into public.orders:', orderInsertError);
       throw new Error(
-        `Failed to create order in database: ${error?.message || 'No data returned'}`
+        `Failed to create order: ${orderInsertError?.message || 'Database returned empty response'}`
       );
     }
 
-    console.log('[ORDER CREATION] Order successfully created in Supabase database! Generated Order ID:', data.id);
+    const createdOrderId = createdOrderRow.id;
+    console.log('[ORDER CREATION] Order successfully created in Supabase database! Order ID:', createdOrderId);
 
-    const createdOrder: Order = {
-      id: data.id,
-      user_id: data.user_id || userId || 'guest',
-      created_at: data.created_at || new Date().toISOString(),
-      subtotal_amount: Number(data.subtotal),
-      delivery_fee: Number(data.shipping_fee),
-      discount_amount: Number(data.discount),
-      total_amount: Number(data.total),
-      status: data.status,
-      payment_status: data.payment_status,
-      payment_method: data.payment_method,
-      shipping_address: shippingAddress,
-      items,
-    };
-
+    // 6. After creating the order, create its order_items using the returned order ID
     if (items && items.length > 0) {
       const itemsToInsert = items.map((item) => ({
-        order_id: data.id,
+        order_id: createdOrderId,
         product_id: item.product_id,
         product_name: item.product_name,
-        product_brand: item.product_brand,
-        product_image: item.product_image,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total_price: item.total_price,
+        product_brand: item.product_brand || '',
+        product_image: item.product_image || null,
+        quantity: Number(item.quantity) || 1,
+        unit_price: Number(item.unit_price) || 0,
+        total_price: Number(item.total_price) || (Number(item.unit_price || 0) * (Number(item.quantity) || 1)),
         variant: item.variant || null,
       }));
 
-      const { error: itemsError } = await supabase.from('order_items').insert(itemsToInsert);
-      if (itemsError) {
-        console.warn('order_items insert warning:', itemsError.message);
+      const { error: itemsInsertError } = await supabase.from('order_items').insert(itemsToInsert);
+      if (itemsInsertError) {
+        console.warn('[ORDER CREATION] Notice inserting order_items:', itemsInsertError.message);
+      } else {
+        console.log(`[ORDER CREATION] Successfully inserted ${itemsToInsert.length} order items for Order ${createdOrderId}`);
       }
     }
 
+    const formattedOrder = mapSupabaseOrder(createdOrderRow, items);
+
     // Save local copy for UI history/cache
     const existingOrders = orderService.getLocalOrders();
-    existingOrders.unshift(createdOrder);
+    existingOrders.unshift(formattedOrder);
     safeSetItem(LOCAL_ORDERS_KEY, existingOrders);
 
-    return createdOrder;
+    return formattedOrder;
   },
 
+  /**
+   * Fetch orders for a user
+   */
   async getUserOrders(userId?: string): Promise<Order[]> {
-    if (isSupabaseConfigured() && supabase && userId) {
+    if (isSupabaseConfigured() && supabase) {
       try {
-        const { data: ordersData, error: ordersError } = await supabase
+        let query = supabase
           .from('orders')
           .select('*, order_items(*)')
-          .eq('user_id', userId)
           .order('created_at', { ascending: false });
 
+        if (userId && userId !== 'guest') {
+          query = query.eq('user_id', userId);
+        }
+
+        const { data: ordersData, error: ordersError } = await query;
+
         if (!ordersError && ordersData && ordersData.length > 0) {
-          return ordersData.map((o: any) => ({
-            id: o.id,
-            user_id: o.user_id,
-            created_at: o.created_at,
-            subtotal_amount: o.subtotal_amount,
-            delivery_fee: o.delivery_fee,
-            discount_amount: o.discount_amount,
-            total_amount: o.total_amount,
-            status: o.status,
-            payment_status: o.payment_status,
-            payment_method: o.payment_method,
-            shipping_address: o.shipping_address,
-            items: (o.order_items || []).map((item: any) => ({
-              id: item.id,
-              product_id: item.product_id,
-              product_name: item.product_name,
-              product_brand: item.product_brand,
-              product_image: item.product_image,
-              quantity: item.quantity,
-              unit_price: item.unit_price,
-              total_price: item.total_price,
-              variant: item.variant,
-            })),
-          }));
+          return ordersData.map((o: any) => mapSupabaseOrder(o));
         }
       } catch (err) {
-        console.warn('Supabase fetch user orders error, returning local:', err);
+        console.warn('Supabase fetch user orders notice:', err);
       }
     }
 
@@ -236,53 +302,34 @@ export const orderService = {
     return safeGetItem<Order[]>(LOCAL_ORDERS_KEY, []);
   },
 
+  /**
+   * Fetch single order by ID
+   */
   async getOrderById(orderId: string): Promise<Order | null> {
-    const orders = orderService.getLocalOrders();
-    const localMatch = orders.find((o) => o.id === orderId);
-    if (localMatch) return localMatch;
-
     if (isSupabaseConfigured() && supabase) {
       try {
         const { data, error } = await supabase
           .from('orders')
           .select('*, order_items(*)')
           .eq('id', orderId)
-          .single();
+          .maybeSingle();
 
         if (!error && data) {
-          return {
-            id: data.id,
-            user_id: data.user_id,
-            created_at: data.created_at,
-            subtotal_amount: data.subtotal_amount,
-            delivery_fee: data.delivery_fee,
-            discount_amount: data.discount_amount,
-            total_amount: data.total_amount,
-            status: data.status,
-            payment_status: data.payment_status,
-            payment_method: data.payment_method,
-            shipping_address: data.shipping_address,
-            items: (data.order_items || []).map((item: any) => ({
-              id: item.id,
-              product_id: item.product_id,
-              product_name: item.product_name,
-              product_brand: item.product_brand,
-              product_image: item.product_image,
-              quantity: item.quantity,
-              unit_price: item.unit_price,
-              total_price: item.total_price,
-              variant: item.variant,
-            })),
-          };
+          return mapSupabaseOrder(data);
         }
       } catch (err) {
-        console.warn('Supabase order details error:', err);
+        console.warn('Supabase order details notice:', err);
       }
     }
 
-    return null;
+    const orders = orderService.getLocalOrders();
+    const localMatch = orders.find((o) => o.id === orderId);
+    return localMatch || null;
   },
 
+  /**
+   * Update payment status for an order
+   */
   async updateOrderPaymentStatus(
     orderId: string,
     paymentStatus: PaymentStatus,
@@ -319,3 +366,4 @@ export const orderService = {
     return true;
   },
 };
+

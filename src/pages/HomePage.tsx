@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MainTabs } from '../components/MainTabs';
 import { CategoryNav } from '../components/CategoryNav';
 import { PromoBanner } from '../components/PromoBanner';
@@ -6,6 +6,7 @@ import { ProductGrid } from '../components/ProductGrid';
 import { FilterPanel } from '../components/FilterPanel';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
 import { EmptyState } from '../components/EmptyState';
+import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { SEOHead } from '../components/SEOHead';
 import { productService } from '../services/productService';
 import { useShop } from '../context/ShopContext';
@@ -18,28 +19,35 @@ export const HomePage: React.FC = () => {
   const { selectedCategory, setSelectedCategory, filters, setFilters, resetFilters } = useShop();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState<boolean>(false);
 
-  useEffect(() => {
-    let isMounted = true;
+  const fetchProducts = useCallback(() => {
     setIsLoading(true);
+    setDbError(null);
 
     const activeFilters = {
       ...filters,
       category: selectedCategory !== 'All' ? selectedCategory : filters.category,
     };
 
-    productService.getProducts(activeFilters).then((res) => {
-      if (isMounted) {
+    productService
+      .getProducts(activeFilters)
+      .then((res) => {
         setProducts(res);
         setIsLoading(false);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
+      })
+      .catch((err: any) => {
+        console.error('[HomePage] Failed to fetch products:', err);
+        setDbError(err?.message || 'Failed to connect to Supabase products table.');
+        setProducts([]);
+        setIsLoading(false);
+      });
   }, [selectedCategory, filters]);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   const storeJsonLd = generateStoreJsonLd();
 
@@ -225,10 +233,19 @@ export const HomePage: React.FC = () => {
           </div>
         )}
 
+        {/* Database Error State */}
+        {dbError && (
+          <DatabaseErrorBanner
+            error={dbError}
+            onRetry={fetchProducts}
+            isRetrying={isLoading}
+          />
+        )}
+
         {/* Product Grid or Skeleton */}
         {isLoading ? (
           <ProductGridSkeleton count={10} />
-        ) : products.length > 0 ? (
+        ) : dbError ? null : products.length > 0 ? (
           <ProductGrid products={products} />
         ) : (
           <EmptyState

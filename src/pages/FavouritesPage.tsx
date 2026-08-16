@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, Heart } from 'lucide-react';
 import { MainTabs } from '../components/MainTabs';
 import { ProductGrid } from '../components/ProductGrid';
 import { EmptyState } from '../components/EmptyState';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
+import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { SEOHead } from '../components/SEOHead';
 import { STORE_CONFIG } from '../constants/config';
 import { useShop } from '../context/ShopContext';
@@ -17,23 +18,30 @@ export const FavouritesPage: React.FC = () => {
 
   const [favouriteProducts, setFavouriteProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbError, setDbError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  const fetchFavourites = useCallback(() => {
     setIsLoading(true);
+    setDbError(null);
 
-    productService.getProducts().then((allProducts) => {
-      if (isMounted) {
+    productService
+      .getProducts()
+      .then((allProducts) => {
         const matched = allProducts.filter((p) => favourites.includes(p.id));
         setFavouriteProducts(matched);
         setIsLoading(false);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
+      })
+      .catch((err: any) => {
+        console.error('[FavouritesPage] Error fetching favourite products:', err);
+        setDbError(err?.message || 'Failed to fetch products from Supabase.');
+        setFavouriteProducts([]);
+        setIsLoading(false);
+      });
   }, [favourites]);
+
+  useEffect(() => {
+    fetchFavourites();
+  }, [fetchFavourites]);
 
   return (
     <>
@@ -59,9 +67,18 @@ export const FavouritesPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Database Error State */}
+          {dbError && (
+            <DatabaseErrorBanner
+              error={dbError}
+              onRetry={fetchFavourites}
+              isRetrying={isLoading}
+            />
+          )}
+
           {isLoading ? (
             <ProductGridSkeleton count={4} />
-          ) : favouriteProducts.length > 0 ? (
+          ) : dbError ? null : favouriteProducts.length > 0 ? (
             <ProductGrid products={favouriteProducts} />
           ) : (
             <EmptyState
