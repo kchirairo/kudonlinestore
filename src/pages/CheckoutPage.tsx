@@ -12,7 +12,7 @@ import { SEOHead } from '../components/SEOHead';
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { cart, cartSubtotal, deliveryFee, clearCart, user, showToast } = useShop();
+  const { cart, cartSubtotal, deliveryFee, clearCart, user, isAuthLoading, showToast } = useShop();
 
   const [paymentConfig, setPaymentConfig] = useState<PaymentGatewayConfig | null>(null);
   const [isLoadingConfig, setIsLoadingConfig] = useState<boolean>(true);
@@ -20,12 +20,24 @@ export const CheckoutPage: React.FC = () => {
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
     fullName: user?.fullName || '',
     email: user?.email || '',
-    phone: '',
+    phone: user?.phone || '',
     addressLine: '',
     city: '',
     province: STORE_CONFIG.SOUTH_AFRICAN_PROVINCES[0],
     postalCode: '',
   });
+
+  // Sync shipping address when user is restored
+  useEffect(() => {
+    if (user) {
+      setShippingAddress((prev) => ({
+        ...prev,
+        fullName: prev.fullName || user.fullName || '',
+        email: prev.email || user.email || '',
+        phone: prev.phone || user.phone || '',
+      }));
+    }
+  }, [user]);
 
   const [paymentMethod, setPaymentMethod] = useState<string>('yoco');
   const [selectedBank, setSelectedBank] = useState<string>('Capitec Bank');
@@ -38,13 +50,13 @@ export const CheckoutPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
 
-  // 1. Guard against guest checkouts: require login
+  // 1. Guard against guest checkouts: require login (only after auth check resolves)
   useEffect(() => {
-    if (!user) {
+    if (!isAuthLoading && !user) {
       showToast('Please sign in to proceed with checkout', 'info');
       navigate('/account', { state: { returnUrl: '/checkout' }, replace: true });
     }
-  }, [user, navigate, showToast]);
+  }, [user, isAuthLoading, navigate, showToast]);
 
   // 2. Fetch active payment gateway configuration
   useEffect(() => {
@@ -101,6 +113,17 @@ export const CheckoutPage: React.FC = () => {
 
   const discountAmount = 0; // standard checkout
   const totalAmount = cartSubtotal + deliveryFee - discountAmount;
+
+  if (isAuthLoading) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-24 text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center">
+          <RefreshCw className="w-6 h-6 animate-spin" />
+        </div>
+        <p className="text-sm font-semibold text-gray-500">Restoring checkout session...</p>
+      </div>
+    );
+  }
 
   if (cart.length === 0) {
     return (

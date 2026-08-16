@@ -150,12 +150,24 @@ export function mapSupabaseProduct(p: any): Product {
   };
 }
 
+let inflightProductsPromise: Promise<Product[]> | null = null;
+let lastProductsCache: { timestamp: number; data: Product[] } | null = null;
+const CACHE_TTL_MS = 2500; // 2.5s cache prevents duplicate queries during rapid re-renders or Strict Mode
+
 export const productService = {
+  /**
+   * Invalidate memory cache so next query fetches fresh data from database
+   */
+  invalidateCache() {
+    lastProductsCache = null;
+    inflightProductsPromise = null;
+  },
+
   /**
    * Fetches fresh products directly from Supabase public.products table.
    * Supabase public.products is the ONLY source of truth.
    */
-  async getAllRawProducts(): Promise<Product[]> {
+  async getAllRawProducts(forceRefresh = false): Promise<Product[]> {
     if (!isSupabaseConfigured() || !supabase) {
       const err = 'Supabase client is not configured in environment (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).';
       console.error(`[ProductService] ${err}`);
@@ -164,46 +176,54 @@ export const productService = {
       return [];
     }
 
-    // 1. Log Supabase project URL (Key is omitted for security)
-    console.log(`[Supabase Storefront] Project URL: ${supabaseUrl}`);
-
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    // 4. Log any Supabase error
-    if (error) {
-      console.warn('[Supabase Storefront] Supabase notification for public.products:', {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
-      return [];
+    if (!forceRefresh && lastProductsCache && Date.now() - lastProductsCache.timestamp < CACHE_TTL_MS) {
+      return lastProductsCache.data;
     }
 
-    const count = data ? data.length : 0;
-    // 2. Log number of products returned
-    console.log(`[Supabase Storefront] Number of products returned: ${count}`);
-
-    // 3. Log names & IDs of returned products
-    console.log(
-      `[Supabase Storefront] Returned products (ID & Name):`,
-      (data || []).map((p: any) => ({
-        id: p.id,
-        name: p.name || p.title,
-        price: p.price,
-        is_active: p.is_active ?? p.isActive ?? true,
-        category: p.category,
-      }))
-    );
-
-    if (!data || data.length === 0) {
-      return [];
+    if (inflightProductsPromise) {
+      return inflightProductsPromise;
     }
 
-    return data.map(mapSupabaseProduct);
+    inflightProductsPromise = (async () => {
+      try {
+        // 1. Log Supabase project URL (Key is omitted for security)
+        console.log(`[Supabase Storefront] Project URL: ${supabaseUrl}`);
+
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        // 4. Log any Supabase error
+        if (error) {
+          console.warn('[Supabase Storefront] Supabase notification for public.products:', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+          return lastProductsCache?.data || [];
+        }
+
+        const count = data ? data.length : 0;
+        // 2. Log number of products returned
+        console.log(`[Supabase Storefront] Number of products returned: ${count}`);
+
+        if (!data || data.length === 0) {
+          const emptyResult: Product[] = [];
+          lastProductsCache = { timestamp: Date.now(), data: emptyResult };
+          return emptyResult;
+        }
+
+        const mapped = data.map(mapSupabaseProduct);
+        lastProductsCache = { timestamp: Date.now(), data: mapped };
+        return mapped;
+      } finally {
+        inflightProductsPromise = null;
+      }
+    })();
+
+    return inflightProductsPromise;
   },
 
   /**

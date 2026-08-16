@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Product,
   CartItem,
@@ -109,21 +109,22 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<'customer' | 'admin' | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const isSyncingRef = useRef<boolean>(false);
 
   // Toast System State
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       removeToast(id);
     }, 3500);
-  };
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, [removeToast]);
 
   // Sync Cart to LocalStorage
   useEffect(() => {
@@ -136,14 +137,16 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [favourites]);
 
   // Sync Profile and Favourites from Supabase
-  const syncUserProfileAndFavourites = async () => {
+  const syncUserProfileAndFavourites = useCallback(async () => {
     if (!isSupabaseConfigured() || !supabase) {
       setIsAuthLoading(false);
       return;
     }
 
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+
     try {
-      setIsAuthLoading(true);
       setAuthError(null);
 
       // 1. Get authenticated user from supabase.auth.getUser()
@@ -232,8 +235,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError(err.message || 'Profile sync error');
     } finally {
       setIsAuthLoading(false);
+      isSyncingRef.current = false;
     }
-  };
+  }, []);
 
   // Check Supabase Auth Session and subscribe to state changes
   useEffect(() => {
@@ -263,10 +267,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       setIsAuthLoading(false);
     }
-  }, []);
+  }, [syncUserProfileAndFavourites]);
 
   // Cart Functions
-  const addToCart = (product: Product, quantity = 1, selectedSizeOrVariant?: string) => {
+  const addToCart = useCallback((product: Product, quantity = 1, selectedSizeOrVariant?: string) => {
     if (!user) {
       showToast('Please sign in to add products to your cart', 'info');
       const returnPath = window.location.pathname + window.location.search;
@@ -288,18 +292,18 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     showToast(`Added "${product.name}" to cart`);
-  };
+  }, [user, showToast]);
 
-  const removeFromCart = (productId: string, variant?: string) => {
+  const removeFromCart = useCallback((productId: string, variant?: string) => {
     setCart((prev) =>
       prev.filter(
         (item) => !(item.product.id === productId && item.selectedSizeOrVariant === (variant || item.product.sizeOrVariant || ''))
       )
     );
     showToast('Item removed from cart', 'info');
-  };
+  }, [showToast]);
 
-  const updateQuantity = (productId: string, quantity: number, variant?: string) => {
+  const updateQuantity = useCallback((productId: string, quantity: number, variant?: string) => {
     if (quantity <= 0) {
       removeFromCart(productId, variant);
       return;
@@ -315,26 +319,32 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return item;
       })
     );
-  };
+  }, [removeFromCart]);
 
-  const clearCart = () => {
-    setCart([]);
-  };
+  const clearCart = useCallback(() => {
+    setCart((prev) => {
+      if (prev.length === 0) return prev;
+      return [];
+    });
+  }, []);
 
-  const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
+  const cartCount = useMemo(() => cart.reduce((total, item) => total + item.quantity, 0), [cart]);
 
-  const cartSubtotal = cart.reduce(
-    (total, item) => total + item.product.price * item.quantity,
-    0
+  const cartSubtotal = useMemo(
+    () => cart.reduce((total, item) => total + item.product.price * item.quantity, 0),
+    [cart]
   );
 
-  const deliveryFee =
-    cartSubtotal >= STORE_CONFIG.FREE_DELIVERY_THRESHOLD || cartSubtotal === 0
-      ? 0
-      : STORE_CONFIG.DELIVERY_FEE;
+  const deliveryFee = useMemo(
+    () =>
+      cartSubtotal >= STORE_CONFIG.FREE_DELIVERY_THRESHOLD || cartSubtotal === 0
+        ? 0
+        : STORE_CONFIG.DELIVERY_FEE,
+    [cartSubtotal]
+  );
 
   // Favourites Functions
-  const toggleFavourite = async (productId: string) => {
+  const toggleFavourite = useCallback(async (productId: string) => {
     const isCurrentlyFav = favourites.includes(productId);
 
     setFavourites((prev) => {
@@ -370,21 +380,21 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Failed to sync favourite with Supabase:', err);
       }
     }
-  };
+  }, [favourites, showToast, user]);
 
-  const isFavourite = (productId: string) => favourites.includes(productId);
+  const isFavourite = useCallback((productId: string) => favourites.includes(productId), [favourites]);
 
-  const resetFilters = () => {
+  const resetFilters = useCallback(() => {
     setSelectedCategory('All');
     setSearchQuery('');
     setFilters({
       category: 'All',
       sortBy: 'newest',
     });
-  };
+  }, []);
 
   // Load Store Branding & Promo Banner on mount
-  const loadStoreCustomization = async () => {
+  const loadStoreCustomization = useCallback(async () => {
     try {
       const [branding, banner] = await Promise.all([
         adminService.getStoreBranding(),
@@ -395,78 +405,112 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.warn('Failed to load store branding / promo banner customization:', err);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadStoreCustomization();
-  }, []);
+  }, [loadStoreCustomization]);
 
-  const updateStoreBranding = async (config: StoreBrandingConfig) => {
+  const updateStoreBranding = useCallback(async (config: StoreBrandingConfig) => {
     setStoreBranding(config);
     safeSetItem(BRANDING_STORAGE_KEY, config);
     const res = await adminService.saveStoreBranding(config);
     return res;
-  };
+  }, []);
 
-  const updatePromoBanner = async (config: PromoBannerConfig) => {
+  const updatePromoBanner = useCallback(async (config: PromoBannerConfig) => {
     setPromoBanner(config);
     safeSetItem(PROMO_BANNER_STORAGE_KEY, config);
     const res = await adminService.savePromoBanner(config);
     return res;
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     if (isSupabaseConfigured() && supabase) {
       await supabase.auth.signOut();
     }
     setUser(null);
     showToast('Signed out successfully', 'info');
-  };
+  }, [showToast]);
+
+  const contextValue = useMemo<ShopContextType>(
+    () => ({
+      cart,
+      addToCart,
+      removeFromCart,
+      updateQuantity,
+      clearCart,
+      cartCount,
+      cartSubtotal,
+      deliveryFee,
+      freeDeliveryThreshold: STORE_CONFIG.FREE_DELIVERY_THRESHOLD,
+
+      favourites,
+      toggleFavourite,
+      isFavourite,
+
+      selectedCategory,
+      setSelectedCategory,
+      searchQuery,
+      setSearchQuery,
+      filters,
+      setFilters,
+      resetFilters,
+
+      storeBranding,
+      updateStoreBranding,
+      promoBanner,
+      updatePromoBanner,
+      reloadStoreCustomization: loadStoreCustomization,
+
+      user,
+      profile,
+      role,
+      isAuthLoading,
+      authError,
+      signOut,
+      refetchProfile: syncUserProfileAndFavourites,
+
+      toasts,
+      showToast,
+      removeToast,
+    }),
+    [
+      cart,
+      addToCart,
+      removeFromCart,
+      updateQuantity,
+      clearCart,
+      cartCount,
+      cartSubtotal,
+      deliveryFee,
+      favourites,
+      toggleFavourite,
+      isFavourite,
+      selectedCategory,
+      searchQuery,
+      filters,
+      resetFilters,
+      storeBranding,
+      updateStoreBranding,
+      promoBanner,
+      updatePromoBanner,
+      loadStoreCustomization,
+      user,
+      profile,
+      role,
+      isAuthLoading,
+      authError,
+      signOut,
+      syncUserProfileAndFavourites,
+      toasts,
+      showToast,
+      removeToast,
+    ]
+  );
 
   return (
-    <ShopContext.Provider
-      value={{
-        cart,
-        addToCart,
-        removeFromCart,
-        updateQuantity,
-        clearCart,
-        cartCount,
-        cartSubtotal,
-        deliveryFee,
-        freeDeliveryThreshold: STORE_CONFIG.FREE_DELIVERY_THRESHOLD,
-
-        favourites,
-        toggleFavourite,
-        isFavourite,
-
-        selectedCategory,
-        setSelectedCategory,
-        searchQuery,
-        setSearchQuery,
-        filters,
-        setFilters,
-        resetFilters,
-
-        storeBranding,
-        updateStoreBranding,
-        promoBanner,
-        updatePromoBanner,
-        reloadStoreCustomization: loadStoreCustomization,
-
-        user,
-        profile,
-        role,
-        isAuthLoading,
-        authError,
-        signOut,
-        refetchProfile: syncUserProfileAndFavourites,
-
-        toasts,
-        showToast,
-        removeToast,
-      }}
-    >
+    <ShopContext.Provider value={contextValue}>
       {children}
     </ShopContext.Provider>
   );

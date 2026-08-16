@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -31,8 +31,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<'customer' | 'admin' | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const isFetchingRef = useRef<boolean>(false);
 
-  const fetchUserAndProfile = async () => {
+  const fetchUserAndProfile = useCallback(async () => {
     if (!isSupabaseConfigured() || !supabase) {
       // Demo admin check if Supabase is not configured
       const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
@@ -49,8 +50,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     try {
-      setLoading(true);
       setAuthError(null);
 
       // 1. Get authenticated user from supabase.auth.getUser()
@@ -140,10 +143,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError(err.message || 'Error loading profile');
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     try {
       if (isSupabaseConfigured() && supabase) {
         await supabase.auth.signOut();
@@ -155,7 +159,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error('Sign out error:', err);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchUserAndProfile();
@@ -182,21 +186,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return () => subscription.unsubscribe();
     }
-  }, []);
+  }, [fetchUserAndProfile]);
+
+  const isAdmin = useMemo(
+    () => role === 'admin' || localStorage.getItem('kud_store_demo_admin') === 'true',
+    [role]
+  );
+
+  const contextValue = useMemo(
+    () => ({
+      user,
+      profile,
+      role,
+      loading,
+      isAdmin,
+      authError,
+      signOut: handleSignOut,
+      refetchProfile: fetchUserAndProfile,
+    }),
+    [user, profile, role, loading, isAdmin, authError, handleSignOut, fetchUserAndProfile]
+  );
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        profile,
-        role,
-        loading,
-        isAdmin: role === 'admin' || localStorage.getItem('kud_store_demo_admin') === 'true',
-        authError,
-        signOut: handleSignOut,
-        refetchProfile: fetchUserAndProfile,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

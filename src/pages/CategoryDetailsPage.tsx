@@ -44,13 +44,21 @@ export const CategoryDetailsPage: React.FC = () => {
     sortBy: 'newest',
   });
 
+  const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
+
   const fetchCategoryProducts = useCallback(() => {
-    setIsLoading(true);
+    if (products.length === 0) {
+      setIsLoading(true);
+    }
     setDbError(null);
 
     const activeFilters: FilterOptions = {
-      ...filters,
       category: resolvedCategory,
+      sortBy,
+      minPrice,
+      maxPrice,
+      condition,
+      inStockOnly,
     };
 
     productService
@@ -62,14 +70,13 @@ export const CategoryDetailsPage: React.FC = () => {
       .catch((err: any) => {
         console.error('[CategoryDetailsPage] Error fetching category products:', err);
         setDbError(err?.message || 'Failed to fetch products from Supabase.');
-        setProducts([]);
         setIsLoading(false);
       });
-  }, [resolvedCategory, filters]);
+  }, [resolvedCategory, sortBy, minPrice, maxPrice, condition, inStockOnly, products.length]);
 
   useEffect(() => {
     fetchCategoryProducts();
-  }, [fetchCategoryProducts]);
+  }, [resolvedCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   const canonicalUrl = `${getSiteUrl()}/category/${categoryMeta.slug}`;
   const categoryJsonLd = generateCategoryJsonLd(categoryMeta.name, products, canonicalUrl);

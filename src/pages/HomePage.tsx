@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MainTabs } from '../components/MainTabs';
 import { CategoryNav } from '../components/CategoryNav';
 import { PromoBanner } from '../components/PromoBanner';
@@ -16,21 +17,55 @@ import { generateStoreJsonLd } from '../utils/seo';
 import { SlidersHorizontal, PackageX, ArrowUpDown, X, Sparkles, Flame, Check } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
-  const { selectedCategory, setSelectedCategory, filters, setFilters, resetFilters } = useShop();
+  const { selectedCategory, setSelectedCategory, filters, setFilters, resetFilters, clearCart, showToast } = useShop();
+  const [searchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [dbError, setDbError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState<boolean>(false);
+  const isFetchingRef = useRef<boolean>(false);
+  const paymentHandledRef = useRef<boolean>(false);
+
+  // Handle post-payment redirect if user arrives at storefront with payment=success
+  useEffect(() => {
+    const isPaymentSuccess =
+      searchParams.get('payment') === 'success' ||
+      searchParams.get('status') === 'success';
+
+    if (isPaymentSuccess && !paymentHandledRef.current) {
+      paymentHandledRef.current = true;
+      clearCart();
+      showToast('Order completed successfully! Thank you for shopping with KUD Store.', 'success');
+
+      // Clean the query parameters from URL without reloading so browser refresh is clean
+      try {
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      } catch {
+        // Safe fallback
+      }
+    }
+  }, [searchParams, clearCart, showToast]);
+
+  const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
 
   const fetchProducts = useCallback(() => {
-    setIsLoading(true);
+    // Only show full skeleton on initial empty load
+    if (products.length === 0) {
+      setIsLoading(true);
+    }
     setDbError(null);
 
     const activeFilters = {
-      ...filters,
-      category: selectedCategory !== 'All' ? selectedCategory : filters.category,
+      category: selectedCategory !== 'All' ? selectedCategory : filterCategory,
+      sortBy,
+      minPrice,
+      maxPrice,
+      condition,
+      inStockOnly,
     };
 
+    isFetchingRef.current = true;
     productService
       .getProducts(activeFilters)
       .then((res) => {
@@ -40,14 +75,16 @@ export const HomePage: React.FC = () => {
       .catch((err: any) => {
         console.error('[HomePage] Failed to fetch products:', err);
         setDbError(err?.message || 'Failed to connect to Supabase products table.');
-        setProducts([]);
         setIsLoading(false);
+      })
+      .finally(() => {
+        isFetchingRef.current = false;
       });
-  }, [selectedCategory, filters]);
+  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly, products.length]);
 
   useEffect(() => {
     fetchProducts();
-  }, [fetchProducts]);
+  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   const storeJsonLd = generateStoreJsonLd();
 

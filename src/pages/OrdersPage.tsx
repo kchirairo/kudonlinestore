@@ -46,7 +46,7 @@ export const OrdersPage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [user?.id]);
 
   if (isLoading) {
     return (

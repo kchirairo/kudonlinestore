@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Package, MapPin, CreditCard, Clock, CheckCircle2, ShoppingBag, FileDown, RefreshCw } from 'lucide-react';
 import { orderService } from '../services/orderService';
@@ -19,6 +19,7 @@ export const OrderDetailsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isPaymentJustSuccess, setIsPaymentJustSuccess] = useState<boolean>(false);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState<boolean>(false);
+  const paymentHandledRef = useRef<boolean>(false);
 
   const handleDownloadInvoice = async () => {
     if (!order) return;
@@ -36,19 +37,45 @@ export const OrderDetailsPage: React.FC = () => {
 
   useEffect(() => {
     if (!id) return;
+    let isMounted = true;
     setIsLoading(true);
 
-    const isPaymentSuccess = searchParams.get('payment') === 'success' || searchParams.get('status') === 'success';
+    const isPaymentSuccess =
+      searchParams.get('payment') === 'success' ||
+      searchParams.get('status') === 'success';
+
+    const processedKey = `kud_order_paid_${id}`;
+    const alreadyProcessed = sessionStorage.getItem(processedKey) === 'true';
+
+    if (isPaymentSuccess && !paymentHandledRef.current && !alreadyProcessed) {
+      paymentHandledRef.current = true;
+      sessionStorage.setItem(processedKey, 'true');
+      setIsPaymentJustSuccess(true);
+      clearCart();
+      showToast('Payment successful! Your order has been placed.', 'success');
+
+      // Safely remove query parameters from URL without reloading
+      try {
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      } catch {
+        // Safe fallback
+      }
+    } else if (isPaymentSuccess || alreadyProcessed) {
+      setIsPaymentJustSuccess(true);
+    }
 
     orderService.getOrderById(id).then((res) => {
-      if (isPaymentSuccess) {
-        setIsPaymentJustSuccess(true);
-        clearCart();
+      if (isMounted) {
+        setOrder(res);
+        setIsLoading(false);
       }
-      setOrder(res);
-      setIsLoading(false);
     });
-  }, [id, searchParams, clearCart]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
 
   if (isLoading) {
     return (
