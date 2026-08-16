@@ -25,9 +25,9 @@ export const STORE_CONFIG = {
   PROMO_BG_COLOR: '#eff6ff', // Light blue background
   
   // Contact & Social Links
-  CONTACT_EMAIL: 'support@kudstore.co.za',
+  CONTACT_EMAIL: 'qchirass@gmail.com',
   CONTACT_PHONE: '+27 (0)11 892 4000',
-  WHATSAPP_SUPPORT: '+27 (0)82 123 4567',
+  WHATSAPP_SUPPORT: '+27797648590',
   
   // South African Provinces
   SOUTH_AFRICAN_PROVINCES: [
