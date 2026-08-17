@@ -60,7 +60,7 @@ export const AdminSettingsPage: React.FC = () => {
   const [freeDeliveryThreshold, setFreeDeliveryThreshold] = useState<string>(
     String(STORE_CONFIG.FREE_DELIVERY_THRESHOLD)
   );
-  const [contactEmail, setContactEmail] = useState<string>('support@kudstore.co.za');
+  const [contactEmail, setContactEmail] = useState<string>(STORE_CONFIG.CONTACT_EMAIL);
   const [contactPhone, setContactPhone] = useState<string>('+27 (0)11 892 4000');
   const [storeDescription, setStoreDescription] = useState<string>(
     'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.'

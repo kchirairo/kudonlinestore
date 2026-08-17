@@ -64,7 +64,7 @@ export const CartPage: React.FC = () => {
         noindex={true}
       />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28">
-      <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight mb-6">
+      <h1 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white tracking-tight mb-6">
         Shopping Cart ({cart.length})
       </h1>
 
@@ -76,12 +76,12 @@ export const CartPage: React.FC = () => {
             return (
               <div
                 key={`${item.product.id}-${variantKey}-${index}`}
-                className="bg-white rounded-2xl p-4 border border-gray-100 flex items-center gap-4 shadow-xs hover:border-gray-200 transition-all"
+                className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-800 flex items-center gap-4 shadow-xs hover:border-gray-200 dark:hover:border-slate-700 transition-all"
               >
                 {/* Product Thumbnail */}
                 <div
                   onClick={() => navigate(`/product/${item.product.id}`)}
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 cursor-pointer flex-shrink-0"
+                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800 cursor-pointer shrink-0 border border-gray-100 dark:border-slate-800"
                 >
                   <img
                     src={
@@ -99,12 +99,12 @@ export const CartPage: React.FC = () => {
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">
                         {item.product.brand}
                       </span>
                       <h3
                         onClick={() => navigate(`/product/${item.product.id}`)}
-                        className="text-sm sm:text-base font-bold text-gray-900 truncate cursor-pointer hover:text-[#ff6452] transition-colors"
+                        className="text-sm sm:text-base font-bold text-gray-900 dark:text-white truncate cursor-pointer hover:text-[#ff6452] dark:hover:text-[#ff6452] transition-colors"
                       >
                         {item.product.name}
                       </h3>
@@ -112,7 +112,7 @@ export const CartPage: React.FC = () => {
 
                     <button
                       onClick={() => removeFromCart(item.product.id, variantKey)}
-                      className="text-gray-400 hover:text-rose-600 p-1 rounded-lg transition-colors"
+                      className="text-gray-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 p-1 rounded-lg transition-colors cursor-pointer"
                       aria-label="Remove item"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -120,35 +120,35 @@ export const CartPage: React.FC = () => {
                   </div>
 
                   {variantKey && (
-                    <span className="inline-block text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                    <span className="inline-block text-xs font-medium text-gray-500 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
                       {variantKey}
                     </span>
                   )}
 
                   <div className="flex items-center justify-between pt-2">
-                    <span className="text-base font-extrabold text-gray-900">
+                    <span className="text-base font-extrabold text-gray-900 dark:text-white">
                       {STORE_CONFIG.STORE_CURRENCY}
                       {(item.product.price * item.quantity).toLocaleString()}
                     </span>
 
                     {/* Quantity Controls */}
-                    <div className="flex items-center bg-gray-100 rounded-xl p-0.5">
+                    <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-xl p-0.5">
                       <button
                         onClick={() =>
                           updateQuantity(item.product.id, item.quantity - 1, variantKey)
                         }
-                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 hover:bg-white rounded-lg transition-colors"
+                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                       >
                         -
                       </button>
-                      <span className="w-7 text-center text-xs font-bold text-gray-900">
+                      <span className="w-7 text-center text-xs font-bold text-gray-900 dark:text-white">
                         {item.quantity}
                       </span>
                       <button
                         onClick={() =>
                           updateQuantity(item.product.id, item.quantity + 1, variantKey)
                         }
-                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 hover:bg-white rounded-lg transition-colors"
+                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                       >
                         +
                       </button>
@@ -165,43 +165,43 @@ export const CartPage: React.FC = () => {
           {/* Coupon Input */}
           <form
             onSubmit={handleApplyCoupon}
-            className="bg-white rounded-2xl p-4 border border-gray-100 shadow-xs flex items-center gap-2"
+            className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-800 shadow-xs flex items-center gap-2"
           >
-            <Tag className="w-4 h-4 text-gray-400 ml-1" />
+            <Tag className="w-4 h-4 text-gray-400 dark:text-slate-400 ml-1" />
             <input
               type="text"
               placeholder="Promo code (e.g. KUD50)"
               value={couponCode}
               onChange={(e) => setCouponCode(e.target.value)}
-              className="flex-1 text-sm bg-transparent outline-none uppercase font-semibold text-gray-800 placeholder-gray-400"
+              className="flex-1 text-sm bg-transparent outline-none uppercase font-semibold text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500"
             />
             <button
               type="submit"
-              className="px-3.5 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-colors"
+              className="px-3.5 py-1.5 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer border border-transparent dark:border-slate-700"
             >
               Apply
             </button>
           </form>
 
           {/* Summary Box */}
-          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-xs space-y-4">
-            <h2 className="text-lg font-extrabold text-gray-900 border-b border-gray-100 pb-3">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-gray-100 dark:border-slate-800 shadow-xs space-y-4">
+            <h2 className="text-lg font-extrabold text-gray-900 dark:text-white border-b border-gray-100 dark:border-slate-800 pb-3">
               Order Summary
             </h2>
 
             <div className="space-y-2.5 text-sm">
-              <div className="flex justify-between text-gray-600">
+              <div className="flex justify-between text-gray-600 dark:text-slate-300">
                 <span>Subtotal</span>
-                <span className="font-semibold text-gray-900">
+                <span className="font-semibold text-gray-900 dark:text-white">
                   {STORE_CONFIG.STORE_CURRENCY}{cartSubtotal.toLocaleString()}
                 </span>
               </div>
 
-              <div className="flex justify-between text-gray-600">
+              <div className="flex justify-between text-gray-600 dark:text-slate-300">
                 <span>Delivery Fee</span>
-                <span className="font-semibold text-gray-900">
+                <span className="font-semibold text-gray-900 dark:text-white">
                   {deliveryFee === 0 ? (
-                    <span className="text-emerald-600 font-bold">FREE</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">FREE</span>
                   ) : (
                     `${STORE_CONFIG.STORE_CURRENCY}${deliveryFee}`
                   )}
@@ -215,9 +215,9 @@ export const CartPage: React.FC = () => {
                 </div>
               )}
 
-              <div className="border-t border-gray-100 pt-3 flex justify-between items-baseline text-base">
-                <span className="font-bold text-gray-900">Total</span>
-                <span className="text-2xl font-black text-gray-900">
+              <div className="border-t border-gray-100 dark:border-slate-800 pt-3 flex justify-between items-baseline text-base">
+                <span className="font-bold text-gray-900 dark:text-white">Total</span>
+                <span className="text-2xl font-black text-gray-900 dark:text-white">
                   {STORE_CONFIG.STORE_CURRENCY}{totalAmount.toLocaleString()}
                 </span>
               </div>
@@ -238,8 +238,8 @@ export const CartPage: React.FC = () => {
               <ArrowRight className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center justify-center gap-2 text-xs text-gray-400 pt-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <div className="flex items-center justify-center gap-2 text-xs text-gray-400 dark:text-slate-400 pt-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <span>Encrypted & safe checkout</span>
             </div>
           </div>

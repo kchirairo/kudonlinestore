@@ -17,7 +17,7 @@ export const BottomNavigation: React.FC = () => {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-gray-100 shadow-lg py-2 px-3 sm:px-6 transition-all">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-100 dark:border-slate-800 shadow-lg py-2 px-3 sm:px-6 transition-colors duration-200">
       <div className="max-w-md mx-auto flex items-center justify-between">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -31,18 +31,18 @@ export const BottomNavigation: React.FC = () => {
               key={item.label}
               onClick={() => navigate(item.path)}
               className={`flex flex-col items-center justify-center flex-1 py-1 px-1 transition-all relative ${
-                isActive ? 'text-[#ff6452]' : 'text-gray-400 hover:text-gray-600'
+                isActive ? 'text-[#ff6452]' : 'text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200'
               }`}
             >
               <div className="relative">
                 <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110' : ''}`} />
                 {item.badge !== undefined && item.badge > 0 && (
-                  <span className="absolute -top-1.5 -right-2.5 bg-[#ff6452] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
+                  <span className="absolute -top-1.5 -right-2.5 bg-[#ff6452] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
                     {item.badge > 99 ? '99+' : item.badge}
                   </span>
                 )}
               </div>
-              <span className={`text-[10px] tracking-wider mt-1 font-semibold uppercase ${isActive ? 'text-[#ff6452] font-bold' : 'text-gray-400'}`}>
+              <span className={`text-[10px] tracking-wider mt-1 font-semibold uppercase ${isActive ? 'text-[#ff6452] font-bold' : 'text-gray-400 dark:text-slate-400'}`}>
                 {item.label}
               </span>
             </button>

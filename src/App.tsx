@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider, ProtectedAdminRoute } from './context/AuthContext';
 import { ShopProvider } from './context/ShopContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { Header } from './components/Header';
 import { BottomNavigation } from './components/BottomNavigation';
 import { ToastContainer } from './components/Toast';
@@ -38,7 +39,7 @@ function AppContent() {
   const isAdminRoute = location.pathname.startsWith('/admin');
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans antialiased selection:bg-[#ff6452] selection:text-white flex flex-col">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-100 font-sans antialiased selection:bg-[#ff6452] selection:text-white flex flex-col transition-colors duration-200">
       {/* Customer Header (Hidden on Admin routes) */}
       {!isAdminRoute && <Header />}
 
@@ -99,12 +100,14 @@ function AppContent() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <ShopProvider>
-          <AppContent />
-        </ShopProvider>
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <ShopProvider>
+            <AppContent />
+          </ShopProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }

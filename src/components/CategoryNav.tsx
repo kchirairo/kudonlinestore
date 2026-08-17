@@ -20,7 +20,7 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({ onCategorySelect }) =>
   };
 
   return (
-    <div className="w-full bg-white border-b border-gray-100 py-3 px-4 sm:px-6 lg:px-8">
+    <div className="w-full bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800 py-3 px-4 sm:px-6 lg:px-8 transition-colors duration-200">
       <div className="max-w-7xl mx-auto flex items-center gap-6 overflow-x-auto no-scrollbar scroll-smooth whitespace-nowrap">
         {categories.map((cat) => {
           const isSelected = selectedCategory === cat;
@@ -28,10 +28,10 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({ onCategorySelect }) =>
             <button
               key={cat}
               onClick={() => handleSelect(cat)}
-              className={`text-sm font-medium transition-all py-1 px-1 cursor-pointer flex-shrink-0 ${
+              className={`text-sm font-medium transition-all py-1 px-1 cursor-pointer shrink-0 ${
                 isSelected
-                  ? 'text-gray-900 font-bold border-b-2 border-gray-900 -mb-1'
-                  : 'text-gray-500 hover:text-gray-800'
+                  ? 'text-gray-900 dark:text-white font-bold border-b-2 border-gray-900 dark:border-white -mb-1'
+                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
               }`}
             >
               {cat}

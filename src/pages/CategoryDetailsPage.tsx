@@ -47,9 +47,7 @@ export const CategoryDetailsPage: React.FC = () => {
   const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
 
   const fetchCategoryProducts = useCallback(() => {
-    if (products.length === 0) {
-      setIsLoading(true);
-    }
+    setIsLoading(true);
     setDbError(null);
 
     const activeFilters: FilterOptions = {
@@ -72,7 +70,7 @@ export const CategoryDetailsPage: React.FC = () => {
         setDbError(err?.message || 'Failed to fetch products from Supabase.');
         setIsLoading(false);
       });
-  }, [resolvedCategory, sortBy, minPrice, maxPrice, condition, inStockOnly, products.length]);
+  }, [resolvedCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   useEffect(() => {
     fetchCategoryProducts();
@@ -111,28 +109,28 @@ export const CategoryDetailsPage: React.FC = () => {
         </div>
 
         {/* Category Header Banner / Intro */}
-        <div className="bg-gradient-to-br from-rose-50/60 via-white to-gray-50/70 rounded-3xl p-6 sm:p-8 border border-rose-100/50 mb-8">
+        <div className="bg-gradient-to-br from-rose-50/60 dark:from-slate-900 via-white dark:via-slate-900 to-gray-50/70 dark:to-slate-950 rounded-3xl p-6 sm:p-8 border border-rose-100/50 dark:border-slate-800 mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="max-w-2xl">
               <div className="flex items-center gap-2 text-xs font-bold text-[#ff6452] uppercase tracking-wider mb-2">
                 <Sparkles className="w-4 h-4" />
                 <span>Verified Authentic South Africa Selection</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
                 {categoryMeta.heading}
               </h1>
-              <p className="text-sm sm:text-base text-gray-600 mt-2 leading-relaxed">
+              <p className="text-sm sm:text-base text-gray-600 dark:text-slate-300 mt-2 leading-relaxed">
                 {categoryMeta.description}
               </p>
             </div>
 
             {/* Quick value badges */}
-            <div className="flex flex-wrap md:flex-col gap-2.5 flex-shrink-0">
-              <div className="inline-flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl border border-gray-200/80 shadow-2xs text-xs font-bold text-gray-800">
+            <div className="flex flex-wrap md:flex-col gap-2.5 shrink-0">
+              <div className="inline-flex items-center gap-2 bg-white dark:bg-slate-800 px-3.5 py-2 rounded-xl border border-gray-200/80 dark:border-slate-700 shadow-2xs text-xs font-bold text-gray-800 dark:text-slate-200">
                 <Truck className="w-4 h-4 text-[#ff6452]" />
                 <span>Fast Nationwide Delivery</span>
               </div>
-              <div className="inline-flex items-center gap-2 bg-white px-3.5 py-2 rounded-xl border border-gray-200/80 shadow-2xs text-xs font-bold text-gray-800">
+              <div className="inline-flex items-center gap-2 bg-white dark:bg-slate-800 px-3.5 py-2 rounded-xl border border-gray-200/80 dark:border-slate-700 shadow-2xs text-xs font-bold text-gray-800 dark:text-slate-200">
                 <ShieldCheck className="w-4 h-4 text-[#ff6452]" />
                 <span>Yoco Secure Checkout</span>
               </div>
@@ -140,13 +138,13 @@ export const CategoryDetailsPage: React.FC = () => {
           </div>
 
           {/* Quick Subcategory Pills / Sibling Category Links for deep internal linking */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-5 mt-5 border-t border-gray-200/60">
-            <span className="text-xs font-bold text-gray-400 whitespace-nowrap mr-1">Other Categories:</span>
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-5 mt-5 border-t border-gray-200/60 dark:border-slate-800">
+            <span className="text-xs font-bold text-gray-400 dark:text-slate-400 whitespace-nowrap mr-1">Other Categories:</span>
             {STORE_CONFIG.CATEGORY_LIST.filter((c) => c !== categoryMeta.name).map((c) => (
               <Link
                 key={c}
                 to={`/category/${categoryToSlug(c)}`}
-                className="text-xs font-semibold px-3 py-1 bg-white hover:bg-[#ff6452] hover:text-white text-gray-700 rounded-full border border-gray-200 shadow-2xs transition-colors whitespace-nowrap"
+                className="text-xs font-semibold px-3 py-1 bg-white dark:bg-slate-800 hover:bg-[#ff6452] dark:hover:bg-[#ff6452] hover:text-white dark:hover:text-white text-gray-700 dark:text-slate-300 rounded-full border border-gray-200 dark:border-slate-700 shadow-2xs transition-colors whitespace-nowrap"
               >
                 {c}
               </Link>
@@ -155,12 +153,12 @@ export const CategoryDetailsPage: React.FC = () => {
         </div>
 
         {/* Toolbar & Sort Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-3 border-b border-gray-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-3 border-b border-gray-100 dark:border-slate-800">
           <div>
-            <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 tracking-tight">
+            <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 dark:text-white tracking-tight">
               All {categoryMeta.name} Items ({products.length})
             </h2>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-400 dark:text-slate-400">
               Showing real prices in South African Rand (ZAR)
             </p>
           </div>
@@ -176,7 +174,7 @@ export const CategoryDetailsPage: React.FC = () => {
                     sortBy: e.target.value as any,
                   }))
                 }
-                className="appearance-none bg-gray-100 hover:bg-gray-200/80 text-gray-800 font-bold text-xs sm:text-sm pl-8 pr-8 py-2 rounded-full cursor-pointer transition-colors border border-transparent focus:border-[#ff6452] outline-none"
+                className="appearance-none bg-gray-100 dark:bg-slate-800 hover:bg-gray-200/80 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 font-bold text-xs sm:text-sm pl-8 pr-8 py-2 rounded-full cursor-pointer transition-colors border border-transparent focus:border-[#ff6452] outline-none"
                 aria-label="Sort products"
               >
                 <option value="newest">Newest First</option>
@@ -184,18 +182,18 @@ export const CategoryDetailsPage: React.FC = () => {
                 <option value="price-asc">Price: Low to High</option>
                 <option value="price-desc">Price: High to Low</option>
               </select>
-              <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 dark:text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
             {/* Filter Toggle */}
             <button
               onClick={() => setIsFilterOpen(true)}
-              className="relative flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#ff6452] bg-rose-50/80 hover:bg-rose-100/80 px-3.5 py-2 rounded-full transition-colors cursor-pointer"
+              className="relative flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#ff6452] bg-rose-50/80 dark:bg-rose-950/40 hover:bg-rose-100/80 dark:hover:bg-rose-950/60 px-3.5 py-2 rounded-full transition-colors cursor-pointer"
             >
               <span>Filter</span>
               <SlidersHorizontal className="w-4 h-4" />
               {activeFilterCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#ff6452] text-white font-extrabold text-[10px] rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#ff6452] text-white font-extrabold text-[10px] rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-xs">
                   {activeFilterCount}
                 </span>
               )}

@@ -50,10 +50,7 @@ export const HomePage: React.FC = () => {
   const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
 
   const fetchProducts = useCallback(() => {
-    // Only show full skeleton on initial empty load
-    if (products.length === 0) {
-      setIsLoading(true);
-    }
+    setIsLoading(true);
     setDbError(null);
 
     const activeFilters = {
@@ -80,7 +77,7 @@ export const HomePage: React.FC = () => {
       .finally(() => {
         isFetchingRef.current = false;
       });
-  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly, products.length]);
+  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   useEffect(() => {
     fetchProducts();
@@ -120,17 +117,17 @@ export const HomePage: React.FC = () => {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
 
         {/* Section Header: Recently Added + Quick Sort + Filter Button */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-3 border-b border-gray-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 pb-3 border-b border-gray-100 dark:border-slate-800">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight">
+              <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">
                 {selectedCategory === 'All' ? 'Recently Added' : selectedCategory}
               </h2>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100/70 text-[#ff6452]">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100/70 dark:bg-rose-950/60 text-[#ff6452]">
                 {products.length} {products.length === 1 ? 'item' : 'items'}
               </span>
             </div>
-            <p className="text-xs sm:text-sm text-gray-400 mt-0.5">
+            <p className="text-xs sm:text-sm text-gray-400 dark:text-slate-400 mt-0.5">
               Explore latest curated items across South Africa
             </p>
           </div>
@@ -146,25 +143,25 @@ export const HomePage: React.FC = () => {
                     sortBy: e.target.value as any,
                   }))
                 }
-                className="appearance-none bg-gray-100 hover:bg-gray-200/80 text-gray-800 font-bold text-xs sm:text-sm pl-8 pr-8 py-2 rounded-full cursor-pointer transition-colors border border-transparent focus:border-[#ff6452] outline-none"
+                className="appearance-none bg-gray-100 dark:bg-slate-800 hover:bg-gray-200/80 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 font-bold text-xs sm:text-sm pl-8 pr-8 py-2 rounded-full cursor-pointer transition-colors border border-transparent dark:border-slate-700 focus:border-[#ff6452] outline-none"
               >
-                <option value="newest">Newest First</option>
-                <option value="popular">🔥 Popularity</option>
-                <option value="price-asc">Price: Low to High</option>
-                <option value="price-desc">Price: High to Low</option>
+                <option value="newest" className="bg-white dark:bg-slate-800 text-gray-900 dark:text-white">Newest First</option>
+                <option value="popular" className="bg-white dark:bg-slate-800 text-gray-900 dark:text-white">🔥 Popularity</option>
+                <option value="price-asc" className="bg-white dark:bg-slate-800 text-gray-900 dark:text-white">Price: Low to High</option>
+                <option value="price-desc" className="bg-white dark:bg-slate-800 text-gray-900 dark:text-white">Price: High to Low</option>
               </select>
-              <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ArrowUpDown className="w-3.5 h-3.5 text-gray-500 dark:text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
             {/* Main Filter Button */}
             <button
               onClick={() => setIsFilterOpen(true)}
-              className="relative flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#ff6452] bg-rose-50/80 hover:bg-rose-100/80 px-3.5 py-2 rounded-full transition-colors cursor-pointer"
+              className="relative flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#ff6452] bg-rose-50/80 dark:bg-rose-950/50 hover:bg-rose-100/80 dark:hover:bg-rose-900/50 px-3.5 py-2 rounded-full transition-colors cursor-pointer border border-transparent dark:border-rose-900/40"
             >
               <span>Filter</span>
               <SlidersHorizontal className="w-4 h-4" />
               {activeFilterCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#ff6452] text-white font-extrabold text-[10px] rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#ff6452] text-white font-extrabold text-[10px] rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-xs">
                   {activeFilterCount}
                 </span>
               )}
@@ -174,17 +171,17 @@ export const HomePage: React.FC = () => {
 
         {/* Active Filters Bar */}
         {activeFilterCount > 0 && (
-          <div className="flex flex-wrap items-center gap-2 mb-6 p-3 bg-rose-50/40 rounded-2xl border border-rose-100/60 text-xs">
-            <span className="font-bold text-gray-600 mr-1 flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-2 mb-6 p-3 bg-rose-50/40 dark:bg-slate-850 rounded-2xl border border-rose-100/60 dark:border-slate-800 text-xs">
+            <span className="font-bold text-gray-600 dark:text-slate-400 mr-1 flex items-center gap-1">
               Active Filters:
             </span>
 
             {selectedCategory !== 'All' && (
-              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-full border border-gray-200 text-gray-800 font-medium shadow-2xs">
+              <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 Category: <strong>{selectedCategory}</strong>
                 <button
                   onClick={() => setSelectedCategory('All')}
-                  className="p-0.5 hover:text-red-500 rounded-full"
+                  className="p-0.5 hover:text-red-500 rounded-full cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -192,7 +189,7 @@ export const HomePage: React.FC = () => {
             )}
 
             {filters.sortBy && filters.sortBy !== 'newest' && (
-              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-full border border-gray-200 text-gray-800 font-medium shadow-2xs">
+              <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 Sort:{' '}
                 <strong>
                   {filters.sortBy === 'popular'
@@ -205,7 +202,7 @@ export const HomePage: React.FC = () => {
                   onClick={() =>
                     setFilters((prev) => ({ ...prev, sortBy: 'newest' }))
                   }
-                  className="p-0.5 hover:text-red-500 rounded-full"
+                  className="p-0.5 hover:text-red-500 rounded-full cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -213,7 +210,7 @@ export const HomePage: React.FC = () => {
             )}
 
             {(filters.minPrice || filters.maxPrice) && (
-              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-full border border-gray-200 text-gray-800 font-medium shadow-2xs">
+              <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 Price: R{filters.minPrice || 0} - R{filters.maxPrice || '∞'}
                 <button
                   onClick={() =>
@@ -223,7 +220,7 @@ export const HomePage: React.FC = () => {
                       maxPrice: undefined,
                     }))
                   }
-                  className="p-0.5 hover:text-red-500 rounded-full"
+                  className="p-0.5 hover:text-red-500 rounded-full cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -231,13 +228,13 @@ export const HomePage: React.FC = () => {
             )}
 
             {filters.condition && filters.condition !== 'All' && (
-              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-full border border-gray-200 text-gray-800 font-medium shadow-2xs">
+              <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 Condition: {filters.condition}
                 <button
                   onClick={() =>
                     setFilters((prev) => ({ ...prev, condition: 'All' }))
                   }
-                  className="p-0.5 hover:text-red-500 rounded-full"
+                  className="p-0.5 hover:text-red-500 rounded-full cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -245,13 +242,13 @@ export const HomePage: React.FC = () => {
             )}
 
             {filters.inStockOnly && (
-              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-full border border-gray-200 text-gray-800 font-medium shadow-2xs">
+              <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 In Stock Only
                 <button
                   onClick={() =>
                     setFilters((prev) => ({ ...prev, inStockOnly: false }))
                   }
-                  className="p-0.5 hover:text-red-500 rounded-full"
+                  className="p-0.5 hover:text-red-500 rounded-full cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -263,7 +260,7 @@ export const HomePage: React.FC = () => {
                 resetFilters();
                 setSelectedCategory('All');
               }}
-              className="text-[#ff6452] font-bold hover:underline ml-auto pl-2"
+              className="text-[#ff6452] font-bold hover:underline ml-auto pl-2 cursor-pointer"
             >
               Clear All
             </button>

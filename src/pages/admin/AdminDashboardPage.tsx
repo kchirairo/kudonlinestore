@@ -167,17 +167,17 @@ export const AdminDashboardPage: React.FC = () => {
           return (
             <div
               key={idx}
-              className="bg-white rounded-3xl p-5 border border-gray-100 shadow-xs hover:border-gray-200 transition-all space-y-3"
+              className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-gray-100 dark:border-slate-800 shadow-xs hover:border-gray-200 dark:hover:border-slate-700 transition-all space-y-3"
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-500">{card.title}</span>
-                <div className={`w-9 h-9 rounded-2xl ${card.iconBg} flex items-center justify-center flex-shrink-0`}>
+                <span className="text-xs font-bold text-gray-500 dark:text-slate-400">{card.title}</span>
+                <div className={`w-9 h-9 rounded-2xl ${card.iconBg} flex items-center justify-center shrink-0`}>
                   <Icon className="w-4 h-4" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-black text-gray-900 tracking-tight">{card.value}</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">{card.subtitle}</p>
+                <p className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">{card.value}</p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{card.subtitle}</p>
               </div>
             </div>
           );
@@ -191,16 +191,16 @@ export const AdminDashboardPage: React.FC = () => {
       <InventoryManagementWidget onInventoryUpdated={loadDashboardData} />
 
       {/* Recent Orders Table / Mobile List */}
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-gray-100 dark:border-slate-800 shadow-xs overflow-hidden">
+        <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-black text-gray-900 tracking-tight">Recent Orders</h3>
-            <p className="text-xs text-gray-400">Latest activity across the storefront</p>
+            <h3 className="text-base font-black text-gray-900 dark:text-white tracking-tight">Recent Orders</h3>
+            <p className="text-xs text-gray-400 dark:text-slate-400">Latest activity across the storefront</p>
           </div>
 
           <button
             onClick={() => navigate('/admin/orders')}
-            className="flex items-center gap-1.5 text-xs font-bold text-[#ff6452] hover:text-[#ff4935] transition-colors"
+            className="flex items-center gap-1.5 text-xs font-bold text-[#ff6452] hover:text-[#ff4935] transition-colors cursor-pointer"
           >
             <span>View All ({stats?.totalOrders || 0})</span>
             <ArrowRight className="w-4 h-4" />
@@ -209,16 +209,16 @@ export const AdminDashboardPage: React.FC = () => {
 
         {recentOrders.length === 0 ? (
           <div className="p-12 text-center space-y-3">
-            <ShoppingBag className="w-10 h-10 text-gray-300 mx-auto" />
-            <p className="text-sm font-bold text-gray-900">No recent orders found</p>
-            <p className="text-xs text-gray-400">Orders placed by customers will appear here.</p>
+            <ShoppingBag className="w-10 h-10 text-gray-300 dark:text-slate-600 mx-auto" />
+            <p className="text-sm font-bold text-gray-900 dark:text-white">No recent orders found</p>
+            <p className="text-xs text-gray-400 dark:text-slate-400">Orders placed by customers will appear here.</p>
           </div>
         ) : (
           <>
             {/* Desktop Table View */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-gray-50/80 text-gray-400 font-extrabold uppercase text-[10px] tracking-wider border-b border-gray-100">
+                <thead className="bg-gray-50/80 dark:bg-slate-800/80 text-gray-400 dark:text-slate-400 font-extrabold uppercase text-[10px] tracking-wider border-b border-gray-100 dark:border-slate-800">
                   <tr>
                     <th className="py-3.5 px-6">Order Number</th>
                     <th className="py-3.5 px-6">Customer</th>
@@ -229,22 +229,22 @@ export const AdminDashboardPage: React.FC = () => {
                     <th className="py-3.5 px-6 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 font-medium text-gray-800">
+                <tbody className="divide-y divide-gray-100 dark:divide-slate-800 font-medium text-gray-800 dark:text-slate-200">
                   {recentOrders.map((order) => (
                     <tr
                       key={order.id}
-                      className="hover:bg-gray-50/50 transition-colors cursor-pointer"
+                      className="hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
                       onClick={() => navigate(`/admin/orders/${order.id}`)}
                     >
-                      <td className="py-4 px-6 font-black text-gray-900">#{order.id}</td>
+                      <td className="py-4 px-6 font-black text-gray-900 dark:text-white">#{order.id}</td>
                       <td className="py-4 px-6">
-                        <div className="font-bold text-gray-900">{order.customer_name}</div>
-                        <div className="text-[11px] text-gray-400">{order.customer_email}</div>
+                        <div className="font-bold text-gray-900 dark:text-white">{order.customer_name}</div>
+                        <div className="text-[11px] text-gray-400 dark:text-slate-400">{order.customer_email}</div>
                       </td>
-                      <td className="py-4 px-6 text-gray-500 whitespace-nowrap">
+                      <td className="py-4 px-6 text-gray-500 dark:text-slate-400 whitespace-nowrap">
                         {new Date(order.created_at).toLocaleDateString()}
                       </td>
-                      <td className="py-4 px-6 font-black text-gray-900">
+                      <td className="py-4 px-6 font-black text-gray-900 dark:text-white">
                         {STORE_CONFIG.STORE_CURRENCY}
                         {order.total_amount.toLocaleString()}
                       </td>
@@ -260,7 +260,7 @@ export const AdminDashboardPage: React.FC = () => {
                             e.stopPropagation();
                             navigate(`/admin/orders/${order.id}`);
                           }}
-                          className="p-2 text-gray-400 hover:text-[#ff6452] hover:bg-rose-50 rounded-xl transition-colors"
+                          className="p-2 text-gray-400 dark:text-slate-400 hover:text-[#ff6452] hover:bg-rose-50 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
@@ -272,28 +272,28 @@ export const AdminDashboardPage: React.FC = () => {
             </div>
 
             {/* Mobile Card View */}
-            <div className="md:hidden divide-y divide-gray-100">
+            <div className="md:hidden divide-y divide-gray-100 dark:divide-slate-800">
               {recentOrders.map((order) => (
                 <div
                   key={order.id}
                   onClick={() => navigate(`/admin/orders/${order.id}`)}
-                  className="p-4 space-y-3 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="p-4 space-y-3 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-black text-gray-900 text-sm">#{order.id}</span>
+                    <span className="font-black text-gray-900 dark:text-white text-sm">#{order.id}</span>
                     <OrderStatusBadge status={order.status} />
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
                     <div>
-                      <p className="font-bold text-gray-900">{order.customer_name}</p>
-                      <p className="text-gray-400 text-[11px]">
+                      <p className="font-bold text-gray-900 dark:text-white">{order.customer_name}</p>
+                      <p className="text-gray-400 dark:text-slate-400 text-[11px]">
                         {new Date(order.created_at).toLocaleDateString()}
                       </p>
                     </div>
 
                     <div className="text-right">
-                      <p className="font-black text-gray-900">
+                      <p className="font-black text-gray-900 dark:text-white">
                         {STORE_CONFIG.STORE_CURRENCY}
                         {order.total_amount.toLocaleString()}
                       </p>

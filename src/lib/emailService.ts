@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { STORE_CONFIG } from '../constants/config';
 
 export interface EmailResult {
   sent: boolean;
@@ -186,7 +187,7 @@ export async function sendOrderConfirmationEmail(
                 <!-- Footer -->
                 <tr>
                   <td style="background-color: #f8fafc; padding: 24px; text-align: center; border-top: 1px solid #e5e7eb;">
-                    <p style="margin: 0; font-size: 12px; color: #64748b;">Questions? Contact us at support@kudstore.com</p>
+                    <p style="margin: 0; font-size: 12px; color: #64748b;">Questions? Contact us at ${STORE_CONFIG.CONTACT_EMAIL} or WhatsApp ${STORE_CONFIG.WHATSAPP_SUPPORT}</p>
                     <p style="margin: 4px 0 0 0; font-size: 11px; color: #94a3b8;">&copy; ${new Date().getFullYear()} KUD Store. All rights reserved.</p>
                   </td>
                 </tr>

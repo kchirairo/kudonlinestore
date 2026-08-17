@@ -305,19 +305,34 @@ export const orderService = {
   },
 
   /**
-   * Fetch single order by ID
+   * Fetch single order by ID or order number
    */
   async getOrderById(orderId: string): Promise<Order | null> {
+    const cleanId = orderId.trim().replace(/^#/, '');
+    if (!cleanId) return null;
+
     if (isSupabaseConfigured() && supabase) {
       try {
+        // Try exact ID match first
         const { data, error } = await supabase
           .from('orders')
           .select('*, order_items(*)')
-          .eq('id', orderId)
+          .eq('id', cleanId)
           .maybeSingle();
 
         if (!error && data) {
           return mapSupabaseOrder(data);
+        }
+
+        // If not found, try order_number column match
+        const { data: numData, error: numError } = await supabase
+          .from('orders')
+          .select('*, order_items(*)')
+          .ilike('order_number', cleanId)
+          .maybeSingle();
+
+        if (!numError && numData) {
+          return mapSupabaseOrder(numData);
         }
       } catch (err) {
         console.warn('Supabase order details notice:', err);
@@ -325,8 +340,20 @@ export const orderService = {
     }
 
     const orders = orderService.getLocalOrders();
-    const localMatch = orders.find((o) => o.id === orderId);
+    const lowerClean = cleanId.toLowerCase();
+    const localMatch = orders.find(
+      (o) =>
+        o.id.toLowerCase() === lowerClean ||
+        (o.order_number && o.order_number.toLowerCase() === lowerClean)
+    );
     return localMatch || null;
+  },
+
+  /**
+   * Track order by ID or order reference number
+   */
+  async trackOrder(query: string): Promise<Order | null> {
+    return orderService.getOrderById(query);
   },
 
   /**

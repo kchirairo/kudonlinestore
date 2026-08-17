@@ -58,10 +58,10 @@ export const FavouritesPage: React.FC = () => {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-2xl font-black text-gray-900 tracking-tight">
+              <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
                 Your Saved Favourites ({favourites.length})
               </h1>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-gray-400 dark:text-slate-400 mt-1">
                 Items you star or bookmark will appear here
               </p>
             </div>

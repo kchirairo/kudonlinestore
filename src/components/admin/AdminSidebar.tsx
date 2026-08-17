@@ -55,9 +55,9 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   ];
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-white border-r border-gray-100">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-900 border-r border-gray-100 dark:border-slate-800 transition-colors duration-200">
       {/* Brand Header */}
-      <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+      <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {logoImage && (logoType === 'image' || logoType === 'both') ? (
             <img
@@ -78,7 +78,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           )}
 
           <div>
-            <h2 className="text-base font-black text-gray-900 tracking-tight leading-none truncate max-w-[140px]">
+            <h2 className="text-base font-black text-gray-900 dark:text-white tracking-tight leading-none truncate max-w-[140px]">
               {brandName}
             </h2>
             <div className="flex items-center gap-1 text-[11px] font-bold text-[#ff6452] mt-1">
@@ -92,7 +92,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         {onClose && (
           <button
             onClick={onClose}
-            className="lg:hidden text-gray-400 hover:text-gray-600 p-1.5 rounded-full hover:bg-gray-100 transition-colors"
+            className="lg:hidden text-gray-400 hover:text-gray-600 dark:text-slate-400 dark:hover:text-slate-200 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -101,7 +101,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
       {/* Main Navigation Links */}
       <div className="flex-1 py-6 px-4 space-y-1.5 overflow-y-auto no-scrollbar">
-        <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider px-3 mb-2 block">
+        <span className="text-[10px] font-extrabold text-gray-400 dark:text-slate-500 uppercase tracking-wider px-3 mb-2 block">
           Menu Navigation
         </span>
 
@@ -117,7 +117,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                 `flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
                   isActive
                     ? 'bg-[#ff6452] text-white shadow-xs'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    : 'text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/80 hover:text-gray-900 dark:hover:text-white'
                 }`
               }
             >
@@ -127,7 +127,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
               </div>
 
               {item.badge !== undefined && (
-                <span className="bg-amber-100 text-amber-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
                   {item.badge}
                 </span>
               )}
@@ -137,19 +137,19 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       </div>
 
       {/* Secondary Actions / Footer */}
-      <div className="p-4 border-t border-gray-100 space-y-1.5">
+      <div className="p-4 border-t border-gray-100 dark:border-slate-800 space-y-1.5">
         <NavLink
           to="/"
           onClick={onClose}
-          className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-bold text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white transition-colors"
         >
-          <Store className="w-4 h-4 text-gray-400" />
+          <Store className="w-4 h-4 text-gray-400 dark:text-slate-400" />
           <span>View Customer Store</span>
         </NavLink>
 
         <button
           onClick={handleSignOut}
-          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors"
+          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
         >
           <LogOut className="w-4 h-4" />
           <span>Sign Out</span>

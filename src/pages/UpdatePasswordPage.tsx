@@ -266,16 +266,16 @@ export const UpdatePasswordPage: React.FC = () => {
       />
 
       <div className="max-w-md mx-auto px-4 sm:px-6 py-12 pb-28">
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-md space-y-6">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-gray-100 dark:border-slate-800 shadow-md space-y-6">
           {/* Header Icon & Title */}
           <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center font-bold shadow-xs">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] mx-auto flex items-center justify-center font-bold shadow-xs">
               <KeyRound className="w-7 h-7" />
             </div>
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight">
+            <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
               {isSuccess ? 'Password Updated!' : 'Set New Password'}
             </h1>
-            <p className="text-xs text-gray-500 max-w-xs mx-auto">
+            <p className="text-xs text-gray-500 dark:text-slate-400 max-w-xs mx-auto">
               {isSuccess
                 ? 'Your account password has been changed securely.'
                 : 'Choose a strong, secure new password for your KUD Store account.'}
@@ -285,10 +285,10 @@ export const UpdatePasswordPage: React.FC = () => {
           {/* 1. Verifying Session Loading State */}
           {isVerifyingSession && (
             <div className="py-8 text-center space-y-3">
-              <div className="w-10 h-10 rounded-full bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] mx-auto flex items-center justify-center">
                 <RefreshCw className="w-5 h-5 animate-spin" />
               </div>
-              <p className="text-xs text-gray-500 font-medium">
+              <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">
                 Verifying secure password reset session...
               </p>
             </div>
@@ -297,10 +297,10 @@ export const UpdatePasswordPage: React.FC = () => {
           {/* 2. Success State View */}
           {!isVerifyingSession && isSuccess && (
             <div className="space-y-5">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center space-y-2">
-                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
-                <h3 className="font-bold text-emerald-900 text-base">All Done!</h3>
-                <p className="text-xs text-emerald-700 leading-relaxed">
+              <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-5 text-center space-y-2">
+                <CheckCircle2 className="w-10 h-10 text-emerald-600 dark:text-emerald-400 mx-auto" />
+                <h3 className="font-bold text-emerald-900 dark:text-emerald-200 text-base">All Done!</h3>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed">
                   You can now sign in to KUD Store using your new password.
                 </p>
               </div>
@@ -314,8 +314,8 @@ export const UpdatePasswordPage: React.FC = () => {
                   <span>Go to Sign In</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
-                <p className="text-[11px] text-center text-gray-400">
-                  Redirecting automatically in <span className="font-bold text-gray-700">{countdown}s</span>...
+                <p className="text-[11px] text-center text-gray-400 dark:text-slate-400">
+                  Redirecting automatically in <span className="font-bold text-gray-700 dark:text-slate-200">{countdown}s</span>...
                 </p>
               </div>
             </div>
@@ -325,22 +325,22 @@ export const UpdatePasswordPage: React.FC = () => {
           {!isVerifyingSession && !isSuccess && hasValidRecoverySession && (
             <>
               {sessionUserEmail && (
-                <div className="bg-gray-50 border border-gray-100 rounded-2xl p-3.5 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-white border border-gray-200 text-gray-500 flex items-center justify-center shrink-0">
+                <div className="bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-2xl p-3.5 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-300 flex items-center justify-center shrink-0">
                     <Mail className="w-4 h-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] uppercase font-bold text-gray-400">Updating Account</p>
-                    <p className="text-xs font-semibold text-gray-800 truncate">{sessionUserEmail}</p>
+                    <p className="text-[10px] uppercase font-bold text-gray-400 dark:text-slate-400">Updating Account</p>
+                    <p className="text-xs font-semibold text-gray-800 dark:text-slate-200 truncate">{sessionUserEmail}</p>
                   </div>
                 </div>
               )}
 
               {errorMessage && (
-                <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3 text-rose-700 text-xs font-medium">
+                <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-4 flex items-start gap-3 text-rose-700 dark:text-rose-300 text-xs font-medium">
                   <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                   <div className="space-y-1">
-                    <span className="font-bold block text-rose-800">Error Updating Password</span>
+                    <span className="font-bold block text-rose-800 dark:text-rose-200">Error Updating Password</span>
                     <p className="leading-relaxed">{errorMessage}</p>
                   </div>
                 </div>
@@ -348,11 +348,11 @@ export const UpdatePasswordPage: React.FC = () => {
 
               <form onSubmit={handleUpdatePassword} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase text-gray-500 mb-1">
+                  <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
                     New Password
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
@@ -361,12 +361,12 @@ export const UpdatePasswordPage: React.FC = () => {
                       placeholder="Minimum 6 characters"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] outline-none"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
                       tabIndex={-1}
                     >
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -375,11 +375,11 @@ export const UpdatePasswordPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase text-gray-500 mb-1">
+                  <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
                     Confirm New Password
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type={showConfirmPassword ? 'text' : 'password'}
                       required
@@ -387,12 +387,12 @@ export const UpdatePasswordPage: React.FC = () => {
                       placeholder="Re-type new password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] outline-none"
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
                       tabIndex={-1}
                     >
                       {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -401,16 +401,16 @@ export const UpdatePasswordPage: React.FC = () => {
                 </div>
 
                 {/* Password strength tips */}
-                <div className="bg-gray-50 rounded-xl p-3 text-[11px] text-gray-500 space-y-1 border border-gray-100">
+                <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-3 text-[11px] text-gray-500 dark:text-slate-400 space-y-1 border border-gray-100 dark:border-slate-700">
                   <div className="flex items-center gap-1.5 font-medium">
                     <ShieldCheck className="w-3.5 h-3.5 text-[#ff6452]" />
                     <span>Password Requirements:</span>
                   </div>
-                  <ul className="list-disc list-inside pl-1 text-[11px] text-gray-500 space-y-0.5">
-                    <li className={password.length >= 6 ? 'text-emerald-600 font-semibold' : ''}>
+                  <ul className="list-disc list-inside pl-1 text-[11px] text-gray-500 dark:text-slate-400 space-y-0.5">
+                    <li className={password.length >= 6 ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}>
                       At least 6 characters
                     </li>
-                    <li className={password && password === confirmPassword ? 'text-emerald-600 font-semibold' : ''}>
+                    <li className={password && password === confirmPassword ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}>
                       Both password entries must match
                     </li>
                   </ul>
@@ -437,42 +437,42 @@ export const UpdatePasswordPage: React.FC = () => {
           {/* 4. Expired or Invalid Link State */}
           {!isVerifyingSession && !isSuccess && !hasValidRecoverySession && (
             <div className="space-y-5">
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-                <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                  <AlertCircle className="w-4 h-4 text-amber-600" />
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-sm">
+                  <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                   <span>Reset Link Expired or Invalid</span>
                 </div>
-                <p className="text-xs text-amber-700 leading-relaxed">
+                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
                   {errorMessage ||
                     'This password reset link is invalid, has expired, or was already used. Please request a fresh reset link below.'}
                 </p>
               </div>
 
               {/* Request New Link Form */}
-              <div className="border border-gray-100 rounded-2xl p-4 bg-gray-50/50 space-y-3">
-                <h3 className="text-xs font-bold uppercase text-gray-700">Request New Reset Link</h3>
+              <div className="border border-gray-100 dark:border-slate-800 rounded-2xl p-4 bg-gray-50/50 dark:bg-slate-800/50 space-y-3">
+                <h3 className="text-xs font-bold uppercase text-gray-700 dark:text-slate-300">Request New Reset Link</h3>
                 {resendSent && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-xl">
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-200 text-xs p-3 rounded-xl">
                     New reset link has been dispatched! Please check your inbox and spam folder.
                   </div>
                 )}
                 <form onSubmit={handleResendResetEmail} className="space-y-3">
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Mail className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="email"
                       required
                       placeholder="Enter your email address"
                       value={resendEmail}
                       onChange={(e) => setResendEmail(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:border-[#ff6452] outline-none"
                     />
                   </div>
 
                   <button
                     type="submit"
                     disabled={isResending || resendCooldown > 0}
-                    className="w-full py-2.5 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full py-2.5 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 border border-transparent dark:border-slate-700"
                   >
                     {isResending ? (
                       <>
@@ -500,10 +500,10 @@ export const UpdatePasswordPage: React.FC = () => {
           )}
 
           {/* Footer Back to Home */}
-          <div className="text-center border-t border-gray-100 pt-4">
+          <div className="text-center border-t border-gray-100 dark:border-slate-800 pt-4">
             <Link
               to="/"
-              className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-xs font-medium text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-400 transition-colors"
             >
               ← Back to KUD Store
             </Link>

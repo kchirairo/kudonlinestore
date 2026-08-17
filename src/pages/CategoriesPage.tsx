@@ -50,11 +50,11 @@ export const CategoriesPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <Grid className="w-6 h-6 text-[#ff6452]" />
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-white tracking-tight">
                 Product Categories
               </h1>
             </div>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
               Explore our curated South African catalog with verified authentic brands and transparent ZAR pricing.
             </p>
           </div>
@@ -70,7 +70,7 @@ export const CategoriesPage: React.FC = () => {
               <Link
                 key={cat}
                 to={`/category/${slug}`}
-                className="group relative h-52 sm:h-64 rounded-3xl overflow-hidden border border-gray-100 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-end text-white"
+                className="group relative h-52 sm:h-64 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-800 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-end text-white"
                 aria-label={`Explore ${cat} category in South Africa`}
               >
                 <img
@@ -90,7 +90,7 @@ export const CategoriesPage: React.FC = () => {
                         {meta.heading}
                       </p>
                     </div>
-                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center group-hover:bg-[#ff6452] group-hover:text-white transition-colors flex-shrink-0 ml-3">
+                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center group-hover:bg-[#ff6452] group-hover:text-white transition-colors shrink-0 ml-3">
                       <ArrowRight className="w-4 h-4" />
                     </div>
                   </div>
