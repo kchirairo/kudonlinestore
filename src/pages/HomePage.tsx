@@ -8,6 +8,7 @@ import { FilterPanel } from '../components/FilterPanel';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
 import { EmptyState } from '../components/EmptyState';
 import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
+import { CustomerReviewCarousel } from '../components/CustomerReviewCarousel';
 import { SEOHead } from '../components/SEOHead';
 import { productService } from '../services/productService';
 import { useShop } from '../context/ShopContext';
@@ -293,6 +294,9 @@ export const HomePage: React.FC = () => {
             }}
           />
         )}
+
+        {/* Customer Review Carousel - Top-Rated Product Testimonials */}
+        <CustomerReviewCarousel products={products} />
       </main>
 
       {/* Filter / Sort Drawer */}

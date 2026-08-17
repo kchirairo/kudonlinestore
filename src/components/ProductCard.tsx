@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Star } from 'lucide-react';
+import { Star, Flame } from 'lucide-react';
 import { Product } from '../types';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
@@ -13,6 +13,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const { isFavourite, toggleFavourite } = useShop();
 
   const isFav = isFavourite(product.id);
+
+  const isOutOfStock = !product.inStock || (product.stock !== undefined && product.stock <= 0);
+  const isLowStock = !isOutOfStock && product.stock !== undefined && product.stock > 0 && product.stock < 5;
 
   const handleFavouriteClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -48,9 +51,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           }}
         />
 
-        {/* Condition / Discount Badges */}
+        {/* Condition / Discount / Low Stock Badges */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 items-start pointer-events-none">
-          {product.discountPercentage && (
+          {isLowStock && (
+            <span
+              id={`low-stock-badge-${product.id}`}
+              className="bg-amber-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 animate-pulse"
+            >
+              <Flame className="w-3 h-3 fill-current" />
+              <span>Low stock ({product.stock} left)</span>
+            </span>
+          )}
+          {isOutOfStock && (
+            <span
+              id={`out-of-stock-badge-${product.id}`}
+              className="bg-gray-800/90 dark:bg-slate-800/90 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs"
+            >
+              Out of stock
+            </span>
+          )}
+          {product.discountPercentage && !isOutOfStock && (
             <span className="bg-[#ff6452] text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs">
               -{product.discountPercentage}%
             </span>

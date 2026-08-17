@@ -60,6 +60,8 @@ interface ShopContextType {
   authError: string | null;
   signOut: () => Promise<void>;
   refetchProfile: () => Promise<void>;
+  updateAdminAvatar: (file: File) => Promise<{ success: boolean; url?: string; error?: string }>;
+  removeAdminAvatar: () => Promise<{ success: boolean; error?: string }>;
 
   // Toast notifications
   toasts: ToastMessage[];
@@ -156,9 +158,43 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } = await supabase.auth.getUser();
 
       if (userError || !authUser) {
-        setUser(null);
-        setProfile(null);
-        setRole(null);
+        const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
+        const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
+        if (isDemoAdmin) {
+          const storedAvatar = localStorage.getItem('kud_store_admin_avatar') || undefined;
+          const demoAdminUser = {
+            id: 'demo-admin-id',
+            email: 'admin@kudstore.com',
+            fullName: 'Demo Administrator',
+            phone: '+27 82 123 4567',
+            avatarUrl: storedAvatar,
+            role: 'admin' as const,
+          };
+          setUser(demoAdminUser);
+          setProfile({
+            id: 'demo-admin-id',
+            role: 'admin',
+            full_name: 'Demo Administrator',
+            avatar_url: storedAvatar,
+            avatarUrl: storedAvatar,
+          });
+          setRole('admin');
+        } else if (isDemoUser) {
+          const demoCustomerUser = {
+            id: 'demo-customer-id',
+            email: 'customer@kudstore.co.za',
+            fullName: 'Sipho Dlamini (Demo)',
+            phone: '+27 83 987 6543',
+            role: 'customer' as const,
+          };
+          setUser(demoCustomerUser);
+          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
+          setRole('customer');
+        } else {
+          setUser(null);
+          setProfile(null);
+          setRole(null);
+        }
         setIsAuthLoading(false);
         return;
       }
@@ -202,13 +238,25 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authUser.email?.split('@')[0];
       let phone = profileData?.phone || authUser.phone || '';
 
-      const fullProfile = profileData || {
-        id: authUser.id,
-        email: authUser.email || '',
-        full_name: fullName,
-        role: fetchedRole,
-        phone,
-      };
+      const avatarUrl =
+        profileData?.avatar_url ||
+        profileData?.avatarUrl ||
+        authUser.user_metadata?.avatar_url ||
+        authUser.user_metadata?.avatarUrl ||
+        localStorage.getItem('kud_store_admin_avatar') ||
+        undefined;
+
+      const fullProfile = profileData
+        ? { ...profileData, avatar_url: avatarUrl, avatarUrl }
+        : {
+            id: authUser.id,
+            email: authUser.email || '',
+            full_name: fullName,
+            role: fetchedRole,
+            phone,
+            avatar_url: avatarUrl,
+            avatarUrl,
+          };
 
       setProfile(fullProfile);
       setRole(fetchedRole);
@@ -217,6 +265,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: authUser.email || '',
         fullName,
         phone,
+        avatarUrl,
         role: fetchedRole,
       });
 
@@ -425,11 +474,59 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   }, []);
 
+  const updateAdminAvatar = useCallback(
+    async (file: File) => {
+      try {
+        const res = await adminService.uploadAdminAvatar(file, user?.id);
+        if (res.success && res.url) {
+          setUser((prev) => (prev ? { ...prev, avatarUrl: res.url } : null));
+          setProfile((prev: any) =>
+            prev ? { ...prev, avatar_url: res.url, avatarUrl: res.url } : null
+          );
+          showToast('Admin avatar updated successfully!', 'success');
+          return res;
+        } else {
+          showToast(res.error || 'Failed to upload avatar', 'error');
+          return res;
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Error updating avatar', 'error');
+        return { success: false, error: err.message };
+      }
+    },
+    [user?.id, showToast]
+  );
+
+  const removeAdminAvatar = useCallback(async () => {
+    try {
+      const currentUrl = user?.avatarUrl || profile?.avatar_url || localStorage.getItem('kud_store_admin_avatar') || undefined;
+      const res = await adminService.removeAdminAvatar(currentUrl, user?.id);
+      if (res.success) {
+        setUser((prev) => (prev ? { ...prev, avatarUrl: undefined } : null));
+        setProfile((prev: any) =>
+          prev ? { ...prev, avatar_url: null, avatarUrl: undefined } : null
+        );
+        showToast('Avatar removed. Restored default "K" avatar.', 'info');
+        return res;
+      } else {
+        showToast(res.error || 'Failed to remove avatar', 'error');
+        return res;
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error removing avatar', 'error');
+      return { success: false, error: err.message };
+    }
+  }, [user?.avatarUrl, user?.id, profile?.avatar_url, showToast]);
+
   const signOut = useCallback(async () => {
     if (isSupabaseConfigured() && supabase) {
       await supabase.auth.signOut();
     }
+    localStorage.removeItem('kud_store_demo_admin');
+    localStorage.removeItem('kud_store_demo_user');
     setUser(null);
+    setProfile(null);
+    setRole(null);
     showToast('Signed out successfully', 'info');
   }, [showToast]);
 
@@ -470,6 +567,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authError,
       signOut,
       refetchProfile: syncUserProfileAndFavourites,
+      updateAdminAvatar,
+      removeAdminAvatar,
 
       toasts,
       showToast,
@@ -503,6 +602,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authError,
       signOut,
       syncUserProfileAndFavourites,
+      updateAdminAvatar,
+      removeAdminAvatar,
       toasts,
       showToast,
       removeToast,

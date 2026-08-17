@@ -59,6 +59,15 @@ export const AdminLayout: React.FC = () => {
         } = await supabase.auth.getUser();
 
         if (userError || !authUser) {
+          const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
+          if (isDemoAdmin) {
+            if (isMounted) {
+              setIsAuthenticated(true);
+              setIsAdmin(true);
+              setIsCheckingAdmin(false);
+            }
+            return;
+          }
           console.log('No authenticated user found. Redirecting to: /login');
           if (isMounted) {
             setIsAuthenticated(false);

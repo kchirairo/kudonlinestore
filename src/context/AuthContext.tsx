@@ -35,12 +35,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUserAndProfile = useCallback(async () => {
     if (!isSupabaseConfigured() || !supabase) {
-      // Demo admin check if Supabase is not configured
+      // Demo login check if Supabase is not configured
       const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
+      const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
       if (isDemoAdmin) {
         setUser({ id: 'demo-admin-id', email: 'admin@kudstore.com' });
-        setProfile({ role: 'admin', full_name: 'Demo Admin' });
+        setProfile({ id: 'demo-admin-id', role: 'admin', full_name: 'Demo Admin' });
         setRole('admin');
+      } else if (isDemoUser) {
+        setUser({ id: 'demo-customer-id', email: 'customer@kudstore.co.za' });
+        setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
+        setRole('customer');
       } else {
         setUser(null);
         setProfile(null);
@@ -63,9 +68,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } = await supabase.auth.getUser();
 
       if (userError || !authUser) {
-        setUser(null);
-        setProfile(null);
-        setRole(null);
+        const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
+        const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
+        if (isDemoAdmin) {
+          setUser({ id: 'demo-admin-id', email: 'admin@kudstore.com' });
+          setProfile({ id: 'demo-admin-id', role: 'admin', full_name: 'Demo Admin' });
+          setRole('admin');
+        } else if (isDemoUser) {
+          setUser({ id: 'demo-customer-id', email: 'customer@kudstore.co.za' });
+          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
+          setRole('customer');
+        } else {
+          setUser(null);
+          setProfile(null);
+          setRole(null);
+        }
         setLoading(false);
         return;
       }
@@ -153,6 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await supabase.auth.signOut();
       }
       localStorage.removeItem('kud_store_demo_admin');
+      localStorage.removeItem('kud_store_demo_user');
       setUser(null);
       setProfile(null);
       setRole(null);

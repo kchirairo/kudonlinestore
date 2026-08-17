@@ -1145,6 +1145,131 @@ export const adminService = {
 
     return points;
   },
+
+  /**
+   * Admin Avatar Management
+   * Handles uploading avatar to Supabase Storage, updating profile & auth metadata,
+   * and cleanly removing avatar with Supabase Storage file deletion and database updates.
+   */
+  async uploadAdminAvatar(
+    file: File,
+    userId?: string
+  ): Promise<{ success: boolean; url?: string; error?: string }> {
+    try {
+      // 1. Upload to Supabase storage in 'avatars' folder
+      const uploadResult = await uploadImageToStorage(file, {
+        folder: 'avatars',
+        prefix: 'admin_avatar',
+        bucket: 'product-images',
+      });
+
+      const avatarUrl = uploadResult.url;
+
+      // 2. Persist in localStorage for instant local preview & persistence
+      safeSetItem('kud_store_admin_avatar', avatarUrl);
+      try {
+        localStorage.setItem('kud_store_admin_avatar', avatarUrl);
+      } catch (e) {
+        console.warn('localStorage setItem notice:', e);
+      }
+
+      // 3. Update Supabase profile and user metadata if connected
+      if (isSupabaseConfigured() && supabase) {
+        let targetId = userId;
+        if (!targetId) {
+          try {
+            const { data: userData } = await supabase.auth.getUser();
+            targetId = userData.user?.id;
+          } catch {
+            // Ignored
+          }
+        }
+
+        if (targetId) {
+          try {
+            await executeWithColumnFallback(
+              (p) => supabase.from('profiles').update(p).eq('id', targetId),
+              { avatar_url: avatarUrl }
+            );
+          } catch (profileErr) {
+            console.warn('[AdminService] Update profile avatar_url notice:', profileErr);
+          }
+        }
+
+        try {
+          await supabase.auth.updateUser({
+            data: { avatar_url: avatarUrl, avatarUrl },
+          });
+        } catch (metaErr) {
+          console.warn('[AdminService] Update user metadata avatar_url notice:', metaErr);
+        }
+      }
+
+      return { success: true, url: avatarUrl };
+    } catch (err: any) {
+      console.error('[AdminService] Upload avatar error:', err);
+      return { success: false, error: err?.message || 'Failed to upload avatar image' };
+    }
+  },
+
+  async removeAdminAvatar(
+    currentAvatarUrl?: string,
+    userId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      // 1. If existing image URL in Supabase Storage, delete from storage
+      const urlToDelete = currentAvatarUrl || localStorage.getItem('kud_store_admin_avatar');
+      if (urlToDelete && !urlToDelete.startsWith('data:')) {
+        await deleteImageFromStorage(urlToDelete, 'product-images').catch((err) => {
+          console.warn('[AdminService] Clean storage avatar notice:', err);
+        });
+      }
+
+      // 2. Remove from localStorage
+      try {
+        localStorage.removeItem('kud_store_admin_avatar');
+      } catch (e) {
+        console.warn('localStorage removeItem notice:', e);
+      }
+
+      // 3. Update Supabase profile and user metadata
+      if (isSupabaseConfigured() && supabase) {
+        let targetId = userId;
+        if (!targetId) {
+          try {
+            const { data: userData } = await supabase.auth.getUser();
+            targetId = userData.user?.id;
+          } catch {
+            // Ignored
+          }
+        }
+
+        if (targetId) {
+          try {
+            await executeWithColumnFallback(
+              (p) => supabase.from('profiles').update(p).eq('id', targetId),
+              { avatar_url: null }
+            );
+          } catch (profileErr) {
+            console.warn('[AdminService] Remove profile avatar_url notice:', profileErr);
+          }
+        }
+
+        try {
+          await supabase.auth.updateUser({
+            data: { avatar_url: null, avatarUrl: null },
+          });
+        } catch (metaErr) {
+          console.warn('[AdminService] Remove user metadata avatar_url notice:', metaErr);
+        }
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('[AdminService] Remove avatar error:', err);
+      return { success: false, error: err?.message || 'Failed to remove avatar image' };
+    }
+  },
 };
 
 // Helper demo records

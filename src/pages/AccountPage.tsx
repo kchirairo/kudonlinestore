@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   User,
   ShoppingBag,
@@ -12,8 +12,6 @@ import {
   EyeOff,
   RefreshCw,
   AlertCircle,
-  ShieldCheck,
-  LayoutDashboard,
   KeyRound,
   ArrowLeft,
   CheckCircle2,
@@ -32,7 +30,7 @@ export const AccountPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut, showToast } = useShop();
-  const { loading: isAuthLoading, role, profile, authError } = useAuth();
+  const { loading: isAuthLoading, role } = useAuth();
 
   const [isSignUp, setIsSignUp] = useState<boolean>(false);
   const [isForgotPassword, setIsForgotPassword] = useState<boolean>(false);
@@ -43,7 +41,7 @@ export const AccountPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  // Track Order Modal state
+  // Track Order Modal state (for authenticated customer profile)
   const [isTrackOrderModalOpen, setIsTrackOrderModalOpen] = useState<boolean>(false);
   const [trackOrderInitialId, setTrackOrderInitialId] = useState<string>('');
   const [inlineTrackQuery, setInlineTrackQuery] = useState<string>('');
@@ -140,7 +138,7 @@ export const AccountPage: React.FC = () => {
         } else {
           // 1. Authenticate with Supabase
           const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email,
+            email: email.trim(),
             password,
           });
           if (authError) throw authError;
@@ -239,8 +237,25 @@ export const AccountPage: React.FC = () => {
         }
       } catch (err: any) {
         console.error('Authentication process failed:', err);
-        setLoginError(err.message || 'Authentication failed');
-        showToast(err.message || 'Authentication failed', 'error');
+        const rawMsg = err?.message || 'Authentication failed';
+        let friendlyMsg = rawMsg;
+
+        if (
+          rawMsg.toLowerCase().includes('invalid login credentials') ||
+          rawMsg.toLowerCase().includes('invalid_credentials')
+        ) {
+          friendlyMsg =
+            'Invalid email or password. Please check your credentials or create a new account.';
+        } else if (rawMsg.toLowerCase().includes('email not confirmed')) {
+          friendlyMsg =
+            'Please verify your email address. Check your inbox for the confirmation link.';
+        } else if (rawMsg.toLowerCase().includes('user already registered')) {
+          friendlyMsg =
+            'An account with this email already exists. Please sign in or reset your password.';
+        }
+
+        setLoginError(friendlyMsg);
+        showToast(friendlyMsg, 'error');
       } finally {
         setIsSubmitting(false);
       }
@@ -307,9 +322,6 @@ export const AccountPage: React.FC = () => {
                 {user.fullName || 'KUD Shopper'}
               </h1>
               <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{user.email}</p>
-              <span className="inline-block text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                Verified Customer
-              </span>
             </div>
             <button
               onClick={signOut}
@@ -577,12 +589,42 @@ export const AccountPage: React.FC = () => {
               </div>
 
               {loginError && (
-                <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-2xl p-4 flex items-start gap-3 text-rose-700 dark:text-rose-300 text-xs font-medium">
-                  <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <span className="font-bold block text-rose-800 dark:text-rose-200">Authentication / Profile Error</span>
-                    <p className="leading-relaxed">{loginError}</p>
+                <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-2xl p-4 space-y-3 text-rose-700 dark:text-rose-300 text-xs font-medium">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <span className="font-bold block text-rose-900 dark:text-rose-200 text-sm">
+                        {isSignUp ? 'Sign Up Notice' : 'Sign In Notice'}
+                      </span>
+                      <p className="leading-relaxed text-gray-700 dark:text-slate-300">{loginError}</p>
+                    </div>
                   </div>
+
+                  {!isSignUp && (
+                    <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/50 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSignUp(true);
+                          setLoginError(null);
+                        }}
+                        className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-rose-100/50 dark:hover:bg-slate-700 text-[#ff6452] font-bold rounded-lg border border-rose-200 dark:border-slate-700 transition-colors cursor-pointer text-xs"
+                      >
+                        Create account with this email
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResetEmail(email);
+                          setIsForgotPassword(true);
+                          setLoginError(null);
+                        }}
+                        className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 font-semibold rounded-lg border border-gray-200 dark:border-slate-700 transition-colors cursor-pointer text-xs"
+                      >
+                        Reset password
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -673,7 +715,7 @@ export const AccountPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full py-3.5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl shadow-md shadow-[#ff6452]/20 transition-all cursor-pointer"
+                  className="w-full py-3.5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl shadow-md shadow-[#ff6452]/20 transition-all cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting
                     ? 'Processing...'
@@ -698,41 +740,17 @@ export const AccountPage: React.FC = () => {
               </div>
             </>
           )}
-
-          {/* Guest Track Order Quick Link */}
-          <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-            <div className="bg-gray-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-gray-100 dark:border-slate-800 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] flex items-center justify-center shrink-0">
-                  <Truck className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-gray-900 dark:text-white">Track an Order</p>
-                  <p className="text-[11px] text-gray-500 dark:text-slate-400">Have an Order ID? Check status instantly</p>
-                </div>
-              </div>
-              <button
-                id="guest-track-order-btn"
-                type="button"
-                onClick={() => {
-                  setTrackOrderInitialId('');
-                  setIsTrackOrderModalOpen(true);
-                }}
-                className="px-3.5 py-1.5 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-900 dark:text-white text-xs font-bold rounded-xl border border-gray-200 dark:border-slate-700 transition-colors shadow-2xs cursor-pointer shrink-0"
-              >
-                Track Now
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
-      {/* Track Order Modal */}
-      <TrackOrderModal
-        isOpen={isTrackOrderModalOpen}
-        onClose={() => setIsTrackOrderModalOpen(false)}
-        initialOrderId={trackOrderInitialId}
-      />
+      {/* Track Order Modal - Accessible inside customer profile */}
+      {user && (
+        <TrackOrderModal
+          isOpen={isTrackOrderModalOpen}
+          onClose={() => setIsTrackOrderModalOpen(false)}
+          initialOrderId={trackOrderInitialId}
+        />
+      )}
     </div>
     </>
   );
