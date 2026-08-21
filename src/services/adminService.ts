@@ -13,11 +13,13 @@ import {
   StoreBrandingConfig,
   PromoBannerConfig,
   GeneralStoreSettings,
+  Coupon,
+  CouponsConfig,
 } from '../types';
 import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
-import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS } from '../constants/config';
+import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS, DEFAULT_COUPONS } from '../constants/config';
 import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUpload';
 
 // Storage keys for settings and mock tables if Supabase is unconfigured or empty
@@ -503,11 +505,19 @@ export const adminService = {
       return { success: false, error: 'Store name cannot be empty.' };
     }
 
+    const expressFeeNum = Number(settings.expressDeliveryFee);
+    const expressFee = !isNaN(expressFeeNum) && expressFeeNum >= 0 ? expressFeeNum : 120;
+
     const payload: GeneralStoreSettings = {
       storeName: settings.storeName.trim(),
       currency: settings.currency?.trim() || 'R',
       deliveryFee: deliveryFeeNum,
+      expressDeliveryFee: expressFee,
       freeDeliveryThreshold: freeThresholdNum,
+      enableFreeDeliveryThreshold: settings.enableFreeDeliveryThreshold ?? true,
+      estimatedStandardDays: (settings.estimatedStandardDays || '2 - 4 Business Days').trim(),
+      estimatedExpressDays: (settings.estimatedExpressDays || '1 - 2 Business Days').trim(),
+      shippingNotes: (settings.shippingNotes || '').trim(),
       contactEmail: settings.contactEmail.trim(),
       contactPhone: settings.contactPhone.trim(),
       storeDescription: (settings.storeDescription || '').trim(),
@@ -515,6 +525,119 @@ export const adminService = {
     };
 
     return writeSupabaseSettingHelper<GeneralStoreSettings>('general_settings', payload);
+  },
+
+  /**
+   * Fetch stored coupons list from Supabase with fallback to DEFAULT_COUPONS
+   */
+  async getCoupons(): Promise<Coupon[]> {
+    const config = await readSupabaseSettingHelper<CouponsConfig>('coupons_config', {
+      coupons: DEFAULT_COUPONS,
+      allowStacking: false,
+    });
+    return Array.isArray(config?.coupons) ? config.coupons : DEFAULT_COUPONS;
+  },
+
+  /**
+   * Save all coupons to Supabase settings
+   */
+  async saveCoupons(coupons: Coupon[]): Promise<{ success: boolean; error?: string; data?: Coupon[] }> {
+    const payload: CouponsConfig = {
+      coupons,
+      allowStacking: false,
+      lastUpdated: new Date().toISOString(),
+    };
+    const res = await writeSupabaseSettingHelper<CouponsConfig>('coupons_config', payload);
+    if (res.success && res.data) {
+      return { success: true, data: res.data.coupons };
+    }
+    return { success: res.success, error: res.error };
+  },
+
+  /**
+   * Create a new coupon code
+   */
+  async createCoupon(data: Omit<Coupon, 'id' | 'createdAt'>): Promise<{ success: boolean; error?: string; data?: Coupon }> {
+    const current = await this.getCoupons();
+    const cleanCode = data.code.trim().toUpperCase();
+
+    if (!cleanCode) {
+      return { success: false, error: 'Coupon code cannot be empty.' };
+    }
+
+    if (current.some((c) => c.code.toUpperCase() === cleanCode)) {
+      return { success: false, error: `Coupon code "${cleanCode}" already exists.` };
+    }
+
+    const newCoupon: Coupon = {
+      ...data,
+      id: `coupon-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      code: cleanCode,
+      discountValue: Number(data.discountValue) || 0,
+      minOrderAmount: Number(data.minOrderAmount) || 0,
+      maxDiscountAmount: data.maxDiscountAmount ? Number(data.maxDiscountAmount) : undefined,
+      usageLimit: data.usageLimit ? Number(data.usageLimit) : undefined,
+      usageCount: 0,
+      isActive: data.isActive ?? true,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updated = [newCoupon, ...current];
+    const saveRes = await this.saveCoupons(updated);
+    if (saveRes.success) {
+      return { success: true, data: newCoupon };
+    }
+    return { success: false, error: saveRes.error || 'Failed to save new coupon' };
+  },
+
+  /**
+   * Update an existing coupon
+   */
+  async updateCoupon(id: string, updates: Partial<Coupon>): Promise<{ success: boolean; error?: string; data?: Coupon }> {
+    const current = await this.getCoupons();
+    const index = current.findIndex((c) => c.id === id);
+
+    if (index === -1) {
+      return { success: false, error: 'Coupon not found.' };
+    }
+
+    if (updates.code) {
+      const cleanCode = updates.code.trim().toUpperCase();
+      if (current.some((c) => c.id !== id && c.code.toUpperCase() === cleanCode)) {
+        return { success: false, error: `Coupon code "${cleanCode}" is already taken.` };
+      }
+      updates.code = cleanCode;
+    }
+
+    const updatedCoupon: Coupon = {
+      ...current[index],
+      ...updates,
+      discountValue: updates.discountValue !== undefined ? Number(updates.discountValue) : current[index].discountValue,
+      minOrderAmount: updates.minOrderAmount !== undefined ? Number(updates.minOrderAmount) : current[index].minOrderAmount,
+    };
+
+    current[index] = updatedCoupon;
+    const saveRes = await this.saveCoupons(current);
+    if (saveRes.success) {
+      return { success: true, data: updatedCoupon };
+    }
+    return { success: false, error: saveRes.error || 'Failed to update coupon' };
+  },
+
+  /**
+   * Delete a coupon
+   */
+  async deleteCoupon(id: string): Promise<{ success: boolean; error?: string }> {
+    const current = await this.getCoupons();
+    const filtered = current.filter((c) => c.id !== id);
+    return this.saveCoupons(filtered);
+  },
+
+  /**
+   * Toggle a coupon active/inactive status
+   */
+  async toggleCouponStatus(id: string, isActive: boolean): Promise<{ success: boolean; error?: string }> {
+    return this.updateCoupon(id, { isActive });
   },
 
   /**

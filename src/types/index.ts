@@ -257,11 +257,40 @@ export interface PromoBannerConfig {
   lastUpdated?: string;
 }
 
+export type CouponDiscountType = 'percentage' | 'fixed' | 'free_shipping';
+
+export interface Coupon {
+  id: string;
+  code: string;
+  description?: string;
+  discountType: CouponDiscountType;
+  discountValue: number; // percentage (e.g. 10) or fixed amount (e.g. 50)
+  minOrderAmount?: number;
+  maxDiscountAmount?: number;
+  isActive: boolean;
+  expiryDate?: string;
+  usageLimit?: number;
+  usageCount?: number;
+  applicableCategory?: ProductCategory | 'All';
+  createdAt: string;
+}
+
+export interface CouponsConfig {
+  coupons: Coupon[];
+  allowStacking?: boolean;
+  lastUpdated?: string;
+}
+
 export interface GeneralStoreSettings {
   storeName: string;
   currency: string;
   deliveryFee: number;
+  expressDeliveryFee?: number;
   freeDeliveryThreshold: number;
+  enableFreeDeliveryThreshold?: boolean;
+  estimatedStandardDays?: string;
+  estimatedExpressDays?: string;
+  shippingNotes?: string;
   contactEmail: string;
   contactPhone: string;
   storeDescription: string;

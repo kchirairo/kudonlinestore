@@ -3,7 +3,7 @@
  * Beginners can easily customize store settings, contact details, delivery fees, and colors here!
  */
 
-import { StoreBrandingConfig, PromoBannerConfig, GeneralStoreSettings } from '../types';
+import { StoreBrandingConfig, PromoBannerConfig, GeneralStoreSettings, Coupon } from '../types';
 
 export const STORE_CONFIG = {
   // Store Basic Information
@@ -18,6 +18,7 @@ export const STORE_CONFIG = {
   
   // Delivery & Fees
   DELIVERY_FEE: 65, // ZAR R65 flat delivery fee across SA
+  EXPRESS_DELIVERY_FEE: 120, // ZAR R120 express courier delivery
   FREE_DELIVERY_THRESHOLD: 800, // Free delivery for orders over R800
   
   // Brand Colors (Tailwind Reference)
@@ -68,12 +69,61 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralStoreSettings = {
   storeName: 'KUD online store',
   currency: 'R',
   deliveryFee: 65,
+  expressDeliveryFee: 120,
   freeDeliveryThreshold: 800,
+  enableFreeDeliveryThreshold: true,
+  estimatedStandardDays: '2 - 4 Business Days',
+  estimatedExpressDays: '1 - 2 Business Days',
+  shippingNotes: 'Nationwide door-to-door courier via The Courier Guy & Aramex.',
   contactEmail: 'qchirass@gmail.com',
   contactPhone: '+27 (0)11 892 4000',
   storeDescription:
     'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.',
 };
+
+export const DEFAULT_COUPONS: Coupon[] = [
+  {
+    id: 'coupon-1',
+    code: 'KUD50',
+    description: 'R50 OFF on orders over R150',
+    discountType: 'fixed',
+    discountValue: 50,
+    minOrderAmount: 150,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'coupon-2',
+    code: 'WELCOME10',
+    description: '10% OFF your entire shopping bag',
+    discountType: 'percentage',
+    discountValue: 10,
+    minOrderAmount: 0,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'coupon-3',
+    code: 'FREESHIP',
+    description: '100% OFF Delivery Fee',
+    discountType: 'free_shipping',
+    discountValue: 0,
+    minOrderAmount: 200,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'coupon-4',
+    code: 'SAVE20',
+    description: '20% OFF on premium orders over R500',
+    discountType: 'percentage',
+    discountValue: 20,
+    minOrderAmount: 500,
+    maxDiscountAmount: 300,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  },
+];
 
 export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   enabled: true,
