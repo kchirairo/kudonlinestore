@@ -98,14 +98,12 @@ export const CustomerReviewCarousel: React.FC<CustomerReviewCarouselProps> = ({ 
 
   // Handle helpful toggle
   const handleToggleHelpful = (reviewId: string) => {
-    setHelpfulLikes((prev) => {
-      const isLiked = !prev[reviewId];
-      setHelpfulCounts((counts) => ({
-        ...counts,
-        [reviewId]: (counts[reviewId] || 0) + (isLiked ? 1 : -1),
-      }));
-      return { ...prev, [reviewId]: isLiked };
-    });
+    const isLiked = !helpfulLikes[reviewId];
+    setHelpfulLikes((prev) => ({ ...prev, [reviewId]: isLiked }));
+    setHelpfulCounts((counts) => ({
+      ...counts,
+      [reviewId]: Math.max(0, (counts[reviewId] || 0) + (isLiked ? 1 : -1)),
+    }));
   };
 
   const categories = ['All', 'Technology', 'Beauty', 'Home', 'Sports & Leisure'];

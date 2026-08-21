@@ -59,9 +59,6 @@ export const SearchPage: React.FC = () => {
         .then((res) => {
           setResults(res);
           setIsLoading(false);
-          if (searchQuery.trim().length >= 2) {
-            saveRecentSearch(searchQuery.trim());
-          }
         })
         .catch((err: any) => {
           console.error('[SearchPage] Error searching products:', err);
@@ -74,7 +71,7 @@ export const SearchPage: React.FC = () => {
     return () => {
       clearTimeout(handler);
     };
-  }, [searchQuery, filters, saveRecentSearch]);
+  }, [searchQuery, filters]);
 
   useEffect(() => {
     const cleanup = fetchSearchResults();

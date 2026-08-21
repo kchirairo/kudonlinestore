@@ -257,3 +257,14 @@ export interface PromoBannerConfig {
   lastUpdated?: string;
 }
 
+export interface GeneralStoreSettings {
+  storeName: string;
+  currency: string;
+  deliveryFee: number;
+  freeDeliveryThreshold: number;
+  contactEmail: string;
+  contactPhone: string;
+  storeDescription: string;
+  lastUpdated?: string;
+}
+

@@ -1,182 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { ShieldAlert, ArrowLeft, RefreshCw, KeyRound, Lock } from 'lucide-react';
+import { Outlet, useLocation, useNavigate, Navigate } from 'react-router-dom';
+import { ShieldAlert, ArrowLeft, RefreshCw, Lock } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import { adminService } from '../../services/adminService';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { AdminSidebar } from './AdminSidebar';
 import { AdminHeader } from './AdminHeader';
 import { SEOHead } from '../SEOHead';
 
 export const AdminLayout: React.FC = () => {
-  const { user, isAuthLoading } = useShop();
+  const { user, isAuthLoading, role } = useShop();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [isCheckingAdmin, setIsCheckingAdmin] = useState<boolean>(true);
+  const isDemoAdmin = typeof window !== 'undefined' && localStorage.getItem('kud_store_demo_admin') === 'true';
+  const isAdmin = role === 'admin' || user?.role === 'admin' || isDemoAdmin;
+  const isAuthenticated = Boolean(user) || isDemoAdmin;
+
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
 
-  // Fetch current user's profile role from the 'profiles' table using Supabase client
-  useEffect(() => {
-    let isMounted = true;
-
-    async function checkAdminAccess() {
-      setIsCheckingAdmin(true);
-
-      if (!isSupabaseConfigured() || !supabase) {
-        // Fallback if Supabase credentials are not configured
-        const demoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
-        if (user?.role === 'admin' || demoAdmin) {
-          if (isMounted) {
-            setIsAuthenticated(true);
-            setIsAdmin(true);
-            setIsCheckingAdmin(false);
-          }
-        } else if (user) {
-          if (isMounted) {
-            setIsAuthenticated(true);
-            setIsAdmin(false);
-            setIsCheckingAdmin(false);
-          }
-        } else {
-          if (isMounted) {
-            setIsAuthenticated(false);
-            setIsAdmin(false);
-            setIsCheckingAdmin(false);
-          }
-        }
-        return;
-      }
-
-      try {
-        // 1. Get current user from Supabase auth.getUser()
-        const {
-          data: { user: authUser },
-          error: userError,
-        } = await supabase.auth.getUser();
-
-        if (userError || !authUser) {
-          const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
-          if (isDemoAdmin) {
-            if (isMounted) {
-              setIsAuthenticated(true);
-              setIsAdmin(true);
-              setIsCheckingAdmin(false);
-            }
-            return;
-          }
-          console.log('No authenticated user found. Redirecting to: /login');
-          if (isMounted) {
-            setIsAuthenticated(false);
-            setIsAdmin(false);
-            setIsCheckingAdmin(false);
-          }
-          return;
-        }
-
-        console.log('Authenticated user ID:', authUser.id);
-
-        if (isMounted) {
-          setIsAuthenticated(true);
-        }
-
-        // 2. Fetch current user's profile role from 'public.profiles' table
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', authUser.id)
-          .maybeSingle();
-
-        if (profileError) {
-          console.error('Error querying profile in AdminLayout:', profileError);
-        }
-
-        let userRole = profile?.role;
-
-        // Fallback check via RPC if profiles query returned null role
-        if (!userRole && !profileError) {
-          const { data: rpcIsAdmin } = await supabase.rpc('is_admin');
-          if (rpcIsAdmin === true) {
-            userRole = 'admin';
-          }
-        }
-
-        console.log('Profile role:', userRole || 'none');
-
-        const isUserAdmin =
-          userRole === 'admin' ||
-          user?.role === 'admin' ||
-          localStorage.getItem('kud_store_demo_admin') === 'true';
-
-        if (isUserAdmin) {
-          console.log('Redirecting to: /admin');
-        } else {
-          console.log('Redirecting to: /');
-        }
-
-        if (isMounted) {
-          setIsAdmin(isUserAdmin);
-          setIsCheckingAdmin(false);
-        }
-      } catch (err) {
-        console.warn('Supabase admin check failed:', err);
-        if (isMounted) {
-          setIsAuthenticated(false);
-          setIsAdmin(false);
-          setIsCheckingAdmin(false);
-        }
-      }
-    }
-
-    if (!isAuthLoading) {
-      checkAdminAccess();
-    }
-
-    // Subscribe to auth state changes to dynamically re-verify access
-    let subscription: any = null;
-    if (isSupabaseConfigured() && supabase) {
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (!session?.user) {
-          if (isMounted) {
-            setIsAuthenticated(false);
-            setIsAdmin(false);
-            setIsCheckingAdmin(false);
-          }
-        } else {
-          checkAdminAccess();
-        }
-      });
-      subscription = data.subscription;
-    }
-
-    return () => {
-      isMounted = false;
-      if (subscription) {
-        subscription.unsubscribe();
-      }
-    };
-  }, [user, isAuthLoading]);
-
-  // Automatically redirect non-authenticated users to sign-in page (/account)
-  useEffect(() => {
-    if (!isCheckingAdmin && !isAuthLoading && isAuthenticated === false) {
-      const redirectTimer = setTimeout(() => {
-        navigate('/account', { replace: true });
-      }, 1200);
-      return () => clearTimeout(redirectTimer);
-    }
-  }, [isCheckingAdmin, isAuthLoading, isAuthenticated, navigate]);
-
   // Fetch pending orders count for sidebar badge
   useEffect(() => {
+    let isMounted = true;
     if (isAdmin) {
       adminService.getOrders({ status: 'Pending' }).then((pendingOrders) => {
-        setPendingOrdersCount(pendingOrders.length);
+        if (isMounted) {
+          setPendingOrdersCount(pendingOrders.length);
+        }
+      }).catch((err) => {
+        console.warn('Failed to load pending orders count:', err);
       });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [isAdmin, location.pathname]);
 
   // Determine header page title based on current path
@@ -194,7 +51,7 @@ export const AdminLayout: React.FC = () => {
   };
 
   // 1. Loading state
-  if (isAuthLoading || isCheckingAdmin) {
+  if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
         <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm max-w-sm w-full text-center space-y-4">
@@ -211,12 +68,12 @@ export const AdminLayout: React.FC = () => {
   }
 
   // 2. Unauthenticated: Redirect to /login
-  if (isAuthenticated === false) {
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
   // 3. Authenticated but user does NOT have the 'admin' role: Render unauthorized access message instead of outlet
-  if (isAdmin === false) {
+  if (!isAdmin) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
         <div className="bg-white p-8 sm:p-10 rounded-3xl border border-gray-100 shadow-sm max-w-md w-full text-center space-y-6">

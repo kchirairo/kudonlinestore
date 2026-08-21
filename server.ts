@@ -683,6 +683,199 @@ async function startServer() {
     }
   });
 
+  // --- STORE SETTINGS PERSISTENCE ENDPOINTS ---
+  // Public GET settings by key (filters sensitive fields for unauthenticated visitors)
+  app.get('/api/settings/:key', async (req, res) => {
+    try {
+      const { key } = req.params;
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
+      }
+
+      // 1. Try reading from public.settings table
+      try {
+        const { data: tableData, error: tableError } = await supabase
+          .from('settings')
+          .select('value')
+          .eq('key', key)
+          .maybeSingle();
+
+        if (!tableError && tableData?.value) {
+          let val = tableData.value;
+          if (key === 'payment_gateways') {
+            val = {
+              ...val,
+              yoco: val.yoco ? { ...val.yoco, secretKey: undefined } : undefined,
+              payfast: val.payfast ? { ...val.payfast, passphrase: undefined } : undefined,
+              ozow: val.ozow ? { ...val.ozow, privateKey: undefined } : undefined,
+            };
+          }
+          return res.json({ success: true, data: val, source: 'database_table' });
+        }
+      } catch {
+        // Continue to storage
+      }
+
+      // 2. Fallback to Supabase Storage
+      try {
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('product-images')
+          .download(`settings/${key}.json`);
+
+        if (!downloadError && fileData) {
+          const text = await fileData.text();
+          let parsed = JSON.parse(text);
+          if (key === 'payment_gateways') {
+            parsed = {
+              ...parsed,
+              yoco: parsed.yoco ? { ...parsed.yoco, secretKey: undefined } : undefined,
+              payfast: parsed.payfast ? { ...parsed.payfast, passphrase: undefined } : undefined,
+              ozow: parsed.ozow ? { ...parsed.ozow, privateKey: undefined } : undefined,
+            };
+          }
+          return res.json({ success: true, data: parsed, source: 'supabase_storage' });
+        }
+      } catch {
+        // Storage lookup error
+      }
+
+      return res.status(404).json({ success: false, error: `Setting '${key}' not found.` });
+    } catch (err: any) {
+      console.error('[Settings] Error fetching setting:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch setting.' });
+    }
+  });
+
+  // Admin GET full settings by key (includes full payload for admin panel)
+  app.get('/api/admin/settings/:key', async (req, res) => {
+    try {
+      const { key } = req.params;
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
+      }
+
+      // 1. Try public.settings table
+      try {
+        const { data: tableData, error: tableError } = await supabase
+          .from('settings')
+          .select('value')
+          .eq('key', key)
+          .maybeSingle();
+
+        if (!tableError && tableData?.value) {
+          return res.json({ success: true, data: tableData.value, source: 'database_table' });
+        }
+      } catch {}
+
+      // 2. Try Supabase Storage
+      try {
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('product-images')
+          .download(`settings/${key}.json`);
+
+        if (!downloadError && fileData) {
+          const text = await fileData.text();
+          const parsed = JSON.parse(text);
+          return res.json({ success: true, data: parsed, source: 'supabase_storage' });
+        }
+      } catch {}
+
+      return res.status(404).json({ success: false, error: `Setting '${key}' not found.` });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch admin setting.' });
+    }
+  });
+
+  // Admin POST save settings by key (persists permanently to Supabase table & Supabase Storage)
+  app.post('/api/admin/settings/:key', async (req, res) => {
+    try {
+      const { key } = req.params;
+      const payload = req.body;
+
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ success: false, error: 'Payload body must be a JSON object.' });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
+      }
+
+      const now = new Date().toISOString();
+      const updatedPayload = {
+        ...payload,
+        lastUpdated: now,
+      };
+
+      let tableSaved = false;
+      let storageSaved = false;
+      let lastErrorMessage = '';
+
+      // 1. Attempt writing to public.settings table
+      try {
+        const { error: tableError } = await supabase
+          .from('settings')
+          .upsert(
+            {
+              key,
+              value: updatedPayload,
+              updated_at: now,
+            },
+            { onConflict: 'key' }
+          );
+
+        if (!tableError) {
+          tableSaved = true;
+        } else {
+          lastErrorMessage = tableError.message;
+          console.log(`[Settings] Notice writing to table 'settings':`, tableError.message);
+        }
+      } catch (tErr: any) {
+        lastErrorMessage = tErr.message;
+      }
+
+      // 2. Persist to Supabase Storage (product-images/settings/{key}.json)
+      try {
+        const buffer = Buffer.from(JSON.stringify(updatedPayload, null, 2), 'utf-8');
+        const { data: sData, error: sError } = await supabase.storage
+          .from('product-images')
+          .upload(`settings/${key}.json`, buffer, {
+            contentType: 'application/json',
+            cacheControl: '0',
+            upsert: true,
+          });
+
+        if (!sError && sData) {
+          storageSaved = true;
+        } else if (sError) {
+          console.warn(`[Settings] Notice uploading to Supabase storage:`, sError.message);
+          if (!lastErrorMessage) lastErrorMessage = sError.message;
+        }
+      } catch (sErr: any) {
+        console.warn(`[Settings] Storage upload exception:`, sErr);
+        if (!lastErrorMessage) lastErrorMessage = sErr.message;
+      }
+
+      if (!tableSaved && !storageSaved) {
+        return res.status(500).json({
+          success: false,
+          error: lastErrorMessage || 'Failed to persist settings in Supabase.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: updatedPayload,
+        persistedIn: tableSaved ? 'database_table' : 'supabase_storage',
+      });
+    } catch (err: any) {
+      console.error('[Settings] Error saving setting:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Internal error saving settings.' });
+    }
+  });
+
   // Vite integration
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

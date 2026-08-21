@@ -131,7 +131,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
         scriptElement.setAttribute('type', 'application/ld+json');
         document.head.appendChild(scriptElement);
       }
-      scriptElement.textContent = JSON.stringify(jsonLd, null, 2);
+      scriptElement.textContent = typeof jsonLd === 'string' ? jsonLd : JSON.stringify(jsonLd, null, 2);
     } else if (scriptElement) {
       scriptElement.remove();
     }
@@ -152,7 +152,7 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
     productPrice,
     productCurrency,
     productAvailability,
-    jsonLd,
+    typeof jsonLd === 'object' && jsonLd !== null ? JSON.stringify(jsonLd) : jsonLd,
   ]);
 
   return null;

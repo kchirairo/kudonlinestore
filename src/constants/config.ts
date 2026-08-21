@@ -3,7 +3,7 @@
  * Beginners can easily customize store settings, contact details, delivery fees, and colors here!
  */
 
-import { StoreBrandingConfig, PromoBannerConfig } from '../types';
+import { StoreBrandingConfig, PromoBannerConfig, GeneralStoreSettings } from '../types';
 
 export const STORE_CONFIG = {
   // Store Basic Information
@@ -62,6 +62,17 @@ export const DEFAULT_STORE_BRANDING: StoreBrandingConfig = {
   logoHeight: 36,
   accentColor: '#ff6452',
   showTagline: true,
+};
+
+export const DEFAULT_GENERAL_SETTINGS: GeneralStoreSettings = {
+  storeName: 'KUD online store',
+  currency: 'R',
+  deliveryFee: 65,
+  freeDeliveryThreshold: 800,
+  contactEmail: 'qchirass@gmail.com',
+  contactPhone: '+27 (0)11 892 4000',
+  storeDescription:
+    'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.',
 };
 
 export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {

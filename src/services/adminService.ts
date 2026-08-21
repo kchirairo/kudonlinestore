@@ -12,11 +12,12 @@ import {
   PaymentGatewayConfig,
   StoreBrandingConfig,
   PromoBannerConfig,
+  GeneralStoreSettings,
 } from '../types';
 import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
-import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER } from '../constants/config';
+import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS } from '../constants/config';
 import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUpload';
 
 // Storage keys for settings and mock tables if Supabase is unconfigured or empty
@@ -64,6 +65,160 @@ const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-6', name: 'Others', slug: 'others', isActive: true, sortOrder: 6, productCount: 4 },
 ];
 
+/**
+ * Universal Supabase Settings Reader
+ * Fetches settings directly from Supabase (checking settings table, then storage / server endpoint)
+ */
+async function readSupabaseSettingHelper<T extends Record<string, any>>(key: string, defaultValue: T): Promise<T> {
+  if (isSupabaseConfigured() && supabase) {
+    // 1. Try public.settings table
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', key)
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        return { ...defaultValue, ...data.value };
+      }
+    } catch (err) {
+      console.warn(`[AdminService] Notice reading '${key}' from table:`, err);
+    }
+
+    // 2. Try Supabase Storage (product-images/settings/{key}.json) with cachebuster
+    try {
+      const { data: pubData } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(`settings/${key}.json`);
+
+      if (pubData?.publicUrl) {
+        const res = await fetch(`${pubData.publicUrl}?t=${Date.now()}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json && typeof json === 'object') {
+            return { ...defaultValue, ...json };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[AdminService] Notice reading '${key}' from storage:`, err);
+    }
+  }
+
+  // 3. Fallback: try server API endpoint
+  try {
+    const res = await fetch(`/api/admin/settings/${key}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.success && json?.data) {
+        return { ...defaultValue, ...json.data };
+      }
+    }
+  } catch {
+    // Server endpoint not reachable or client test
+  }
+
+  return defaultValue;
+}
+
+/**
+ * Universal Supabase Settings Writer
+ * Saves settings directly to Supabase (upserts into settings table AND persists to Supabase Storage & Server)
+ */
+async function writeSupabaseSettingHelper<T extends Record<string, any>>(
+  key: string,
+  payload: T
+): Promise<{ success: boolean; error?: string; data?: T }> {
+  if (!isSupabaseConfigured() || !supabase) {
+    return {
+      success: false,
+      error: 'Supabase is not configured. Please check your Supabase credentials.',
+    };
+  }
+
+  const updatedPayload: T = {
+    ...payload,
+    lastUpdated: new Date().toISOString(),
+  };
+
+  let tableSaved = false;
+  let storageSaved = false;
+  let serverSaved = false;
+  let lastError = '';
+
+  // 1. Primary write to public.settings table in Supabase
+  try {
+    const { error } = await supabase
+      .from('settings')
+      .upsert(
+        { key, value: updatedPayload, updated_at: new Date().toISOString() },
+        { onConflict: 'key' }
+      );
+
+    if (!error) {
+      tableSaved = true;
+    } else {
+      lastError = error.message;
+    }
+  } catch (err: any) {
+    lastError = err?.message || 'Database error';
+  }
+
+  // 2. Also persist to Supabase Storage (settings/{key}.json)
+  try {
+    let blob: Blob;
+    if (typeof window !== 'undefined') {
+      blob = new Blob([JSON.stringify(updatedPayload, null, 2)], { type: 'application/json' });
+    } else {
+      blob = Buffer.from(JSON.stringify(updatedPayload, null, 2), 'utf-8') as unknown as Blob;
+    }
+
+    const { error: sError } = await supabase.storage
+      .from('product-images')
+      .upload(`settings/${key}.json`, blob, {
+        contentType: 'application/json',
+        cacheControl: '0',
+        upsert: true,
+      });
+
+    if (!sError) {
+      storageSaved = true;
+    } else if (!lastError) {
+      lastError = sError.message;
+    }
+  } catch (sErr: any) {
+    if (!lastError) lastError = sErr?.message || 'Storage upload failed';
+  }
+
+  // 3. Sync with server-side endpoint if available
+  try {
+    const res = await fetch(`/api/admin/settings/${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedPayload),
+    });
+    if (res.ok) {
+      serverSaved = true;
+    }
+  } catch {
+    // In non-server or pure client context
+  }
+
+  if (!tableSaved && !storageSaved && !serverSaved) {
+    return {
+      success: false,
+      error: lastError || 'Failed to persist settings in Supabase.',
+    };
+  }
+
+  // Immediate reload verification from Supabase
+  const reloaded = await readSupabaseSettingHelper<T>(key, updatedPayload);
+  return {
+    success: true,
+    data: reloaded || updatedPayload,
+  };
+}
 
 export const adminService = {
   /**
@@ -298,262 +453,125 @@ export const adminService = {
   },
 
   /**
-   * Fetch stored payment gateway configuration from Supabase or localStorage (decrypts sensitive fields)
+   * Universal Supabase Settings Reader
    */
-  async getPaymentSettings(): Promise<PaymentGatewayConfig> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('store_settings')
-          .select('value')
-          .eq('key', 'payment_gateways')
-          .single();
+  readSupabaseSetting: readSupabaseSettingHelper,
 
-        if (!error && data?.value) {
-          const rawConfig = { ...DEFAULT_PAYMENT_CONFIG, ...data.value };
-          return decryptGatewayPayload(rawConfig);
-        }
-      } catch (err) {
-        console.warn('Supabase getPaymentSettings error:', err);
-      }
-    }
+  /**
+   * Universal Supabase Settings Writer
+   */
+  writeSupabaseSetting: writeSupabaseSettingHelper,
 
-    const saved = safeGetItem<any>(LOCAL_PAYMENT_SETTINGS_KEY, null);
-    if (saved) {
-      const rawConfig = { ...DEFAULT_PAYMENT_CONFIG, ...saved };
-      return decryptGatewayPayload(rawConfig);
-    }
-
-    return DEFAULT_PAYMENT_CONFIG;
+  /**
+   * Fetch general store settings (Store name, currency, delivery fee, free delivery threshold, contact email, contact phone, store description)
+   * Primary source of truth is Supabase.
+   */
+  async getGeneralSettings(): Promise<GeneralStoreSettings> {
+    return readSupabaseSettingHelper<GeneralStoreSettings>('general_settings', DEFAULT_GENERAL_SETTINGS);
   },
 
   /**
-   * Save payment gateway configuration securely to Supabase store_settings database table with encryption and RLS policy enforcement
+   * Validate and save general store settings directly to Supabase.
+   * Supabase is the single source of truth.
    */
-  async savePaymentSettings(config: PaymentGatewayConfig): Promise<{ success: boolean; error?: string }> {
+  async saveGeneralSettings(settings: GeneralStoreSettings): Promise<{
+    success: boolean;
+    error?: string;
+    data?: GeneralStoreSettings;
+  }> {
+    // 1. Validation
+    const deliveryFeeNum = Number(settings.deliveryFee);
+    const freeThresholdNum = Number(settings.freeDeliveryThreshold);
+
+    if (isNaN(deliveryFeeNum) || deliveryFeeNum < 0) {
+      return { success: false, error: 'Standard delivery fee must be a valid positive number.' };
+    }
+
+    if (isNaN(freeThresholdNum) || freeThresholdNum < 0) {
+      return { success: false, error: 'Free delivery threshold must be a valid positive number.' };
+    }
+
+    if (!settings.contactEmail || !settings.contactEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid customer support email address.' };
+    }
+
+    if (!settings.contactPhone || settings.contactPhone.trim().length < 6) {
+      return { success: false, error: 'Please enter a valid support contact phone number.' };
+    }
+
+    if (!settings.storeName || settings.storeName.trim().length === 0) {
+      return { success: false, error: 'Store name cannot be empty.' };
+    }
+
+    const payload: GeneralStoreSettings = {
+      storeName: settings.storeName.trim(),
+      currency: settings.currency?.trim() || 'R',
+      deliveryFee: deliveryFeeNum,
+      freeDeliveryThreshold: freeThresholdNum,
+      contactEmail: settings.contactEmail.trim(),
+      contactPhone: settings.contactPhone.trim(),
+      storeDescription: (settings.storeDescription || '').trim(),
+      lastUpdated: new Date().toISOString(),
+    };
+
+    return writeSupabaseSettingHelper<GeneralStoreSettings>('general_settings', payload);
+  },
+
+  /**
+   * Fetch stored payment gateway configuration from Supabase (decrypts sensitive fields)
+   */
+  async getPaymentSettings(): Promise<PaymentGatewayConfig> {
+    const rawConfig = await readSupabaseSettingHelper<PaymentGatewayConfig>('payment_gateways', DEFAULT_PAYMENT_CONFIG);
+    return decryptGatewayPayload(rawConfig);
+  },
+
+  /**
+   * Save payment gateway configuration securely to Supabase settings table with encryption
+   */
+  async savePaymentSettings(config: PaymentGatewayConfig): Promise<{ success: boolean; error?: string; data?: PaymentGatewayConfig }> {
     const encryptedConfig = encryptGatewayPayload({
       ...config,
       lastUpdated: new Date().toISOString(),
     });
 
-    let savedToDatabase = false;
-
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        // SQL Row-Level Security (RLS) Policy Assured:
-        // CREATE POLICY "Admin payment settings RLS" ON store_settings
-        // FOR ALL USING (auth.role() = 'authenticated');
-        const { error } = await supabase
-          .from('store_settings')
-          .upsert(
-            { key: 'payment_gateways', value: encryptedConfig, updated_at: new Date().toISOString() },
-            { onConflict: 'key' }
-          );
-
-        if (!error) {
-          savedToDatabase = true;
-        } else {
-          console.warn('Supabase savePaymentSettings warning:', error.message);
-        }
-      } catch (err: any) {
-        console.warn('Supabase savePaymentSettings exception:', err);
-      }
+    const res = await writeSupabaseSettingHelper<PaymentGatewayConfig>('payment_gateways', encryptedConfig);
+    if (res.success && res.data) {
+      return { success: true, data: decryptGatewayPayload(res.data) };
     }
-
-    // Always persist in local storage as reliable fallback (encrypted secrets)
-    safeSetItem(LOCAL_PAYMENT_SETTINGS_KEY, encryptedConfig);
-
-    return {
-      success: true,
-      error: savedToDatabase ? undefined : 'Saved locally with AES encryption (Database fallback active)',
-    };
+    return { success: res.success, error: res.error };
   },
 
   /**
-   * Fetch stored store branding configuration (Logo, name, tagline, colors)
+   * Fetch stored store branding configuration (Logo, name, tagline, colors) from Supabase
    */
   async getStoreBranding(): Promise<StoreBrandingConfig> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('store_settings')
-          .select('value')
-          .eq('key', 'store_branding')
-          .single();
-
-        if (!error && data?.value) {
-          return { ...DEFAULT_STORE_BRANDING, ...data.value };
-        }
-      } catch (err) {
-        console.warn('Supabase getStoreBranding error:', err);
-      }
-    }
-
-    const saved = safeGetItem<StoreBrandingConfig>(LOCAL_BRANDING_KEY, null);
-    if (saved) {
-      return { ...DEFAULT_STORE_BRANDING, ...saved };
-    }
-
-    return DEFAULT_STORE_BRANDING;
+    return readSupabaseSettingHelper<StoreBrandingConfig>('store_branding', DEFAULT_STORE_BRANDING);
   },
 
   /**
-   * Save store branding configuration to database & localStorage
+   * Save store branding configuration to Supabase settings table
    */
-  async saveStoreBranding(config: StoreBrandingConfig): Promise<{ success: boolean; error?: string }> {
-    const updatedPayload = {
-      ...config,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    let savedToDatabase = false;
-
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { error } = await supabase
-          .from('store_settings')
-          .upsert(
-            { key: 'store_branding', value: updatedPayload, updated_at: new Date().toISOString() },
-            { onConflict: 'key' }
-          );
-
-        if (!error) {
-          savedToDatabase = true;
-        } else {
-          console.warn('Supabase saveStoreBranding warning:', error.message);
-        }
-      } catch (err: any) {
-        console.warn('Supabase saveStoreBranding exception:', err);
-      }
-    }
-
-    safeSetItem(LOCAL_BRANDING_KEY, updatedPayload);
-
-    return {
-      success: true,
-      error: savedToDatabase ? undefined : 'Saved locally in browser storage (Database sync pending)',
-    };
+  async saveStoreBranding(config: StoreBrandingConfig): Promise<{ success: boolean; error?: string; data?: StoreBrandingConfig }> {
+    return writeSupabaseSettingHelper<StoreBrandingConfig>('store_branding', config);
   },
 
   /**
-   * Fetch stored promotional banner & advertising media configuration
-   * Queries the dedicated Supabase 'settings' table (with fallback to 'store_settings')
+   * Fetch stored promotional banner & advertising media configuration from Supabase
    */
   async getPromoBanner(): Promise<PromoBannerConfig> {
-    if (isSupabaseConfigured() && supabase) {
-      // 1. Try dedicated 'settings' table with 'banner_config' key
-      try {
-        const { data, error } = await supabase
-          .from('settings')
-          .select('value')
-          .eq('key', 'banner_config')
-          .single();
-
-        if (!error && data?.value) {
-          return { ...DEFAULT_PROMO_BANNER, ...data.value };
-        }
-      } catch {
-        // Continue to fallback
-      }
-
-      // 2. Try dedicated 'settings' table with 'promo_banner' key
-      try {
-        const { data, error } = await supabase
-          .from('settings')
-          .select('value')
-          .eq('key', 'promo_banner')
-          .single();
-
-        if (!error && data?.value) {
-          return { ...DEFAULT_PROMO_BANNER, ...data.value };
-        }
-      } catch {
-        // Continue to fallback
-      }
-
-      // 3. Fallback to 'store_settings' table
-      try {
-        const { data, error } = await supabase
-          .from('store_settings')
-          .select('value')
-          .eq('key', 'promo_banner')
-          .single();
-
-        if (!error && data?.value) {
-          return { ...DEFAULT_PROMO_BANNER, ...data.value };
-        }
-      } catch (err) {
-        console.warn('Supabase getPromoBanner fallback error:', err);
-      }
-    }
-
-    const saved = safeGetItem<PromoBannerConfig>(LOCAL_PROMO_BANNER_KEY, null);
-    if (saved) {
-      return { ...DEFAULT_PROMO_BANNER, ...saved };
-    }
-
-    return DEFAULT_PROMO_BANNER;
+    return readSupabaseSettingHelper<PromoBannerConfig>('banner_config', DEFAULT_PROMO_BANNER);
   },
 
   /**
-   * Save promotional banner, media upload, and text overlay configuration
-   * Stores records in the dedicated Supabase 'settings' table
+   * Save promotional banner, media upload, and text overlay configuration to Supabase settings table
    */
-  async savePromoBanner(config: PromoBannerConfig): Promise<{ success: boolean; error?: string; databaseTable?: string }> {
-    const updatedPayload = {
-      ...config,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    let savedToDatabase = false;
-    let targetTable = '';
-
-    if (isSupabaseConfigured() && supabase) {
-      // Attempt 1: dedicated 'settings' table
-      try {
-        const { error } = await supabase
-          .from('settings')
-          .upsert(
-            { key: 'banner_config', value: updatedPayload, updated_at: new Date().toISOString() },
-            { onConflict: 'key' }
-          );
-
-        if (!error) {
-          savedToDatabase = true;
-          targetTable = 'settings';
-        } else {
-          console.info('Attempting store_settings fallback:', error.message);
-        }
-      } catch (err: any) {
-        console.info('Settings table query attempt caught:', err);
-      }
-
-      // Attempt 2: fallback 'store_settings' table if settings table is not present
-      if (!savedToDatabase) {
-        try {
-          const { error } = await supabase
-            .from('store_settings')
-            .upsert(
-              { key: 'promo_banner', value: updatedPayload, updated_at: new Date().toISOString() },
-              { onConflict: 'key' }
-            );
-
-          if (!error) {
-            savedToDatabase = true;
-            targetTable = 'store_settings';
-          }
-        } catch (err: any) {
-          console.warn('Supabase store_settings fallback exception:', err);
-        }
-      }
-    }
-
-    safeSetItem(LOCAL_PROMO_BANNER_KEY, updatedPayload);
-
+  async savePromoBanner(config: PromoBannerConfig): Promise<{ success: boolean; error?: string; data?: PromoBannerConfig; databaseTable?: string }> {
+    const res = await writeSupabaseSettingHelper<PromoBannerConfig>('banner_config', config);
     return {
-      success: true,
-      databaseTable: targetTable || undefined,
-      error: savedToDatabase ? undefined : 'Saved locally in browser storage (Database sync fallback)',
+      success: res.success,
+      error: res.error,
+      data: res.data,
+      databaseTable: 'settings',
     };
   },
 

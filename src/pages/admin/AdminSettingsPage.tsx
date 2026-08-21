@@ -34,7 +34,7 @@ import { PromoBannerSettings } from '../../components/admin/PromoBannerSettings'
 type SettingsTab = 'general' | 'branding' | 'banner' | 'payments';
 
 export const AdminSettingsPage: React.FC = () => {
-  const { showToast } = useShop();
+  const { showToast, reloadGeneralSettings, updateGeneralSettings } = useShop();
   const { isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTabParam = searchParams.get('tab') as SettingsTab | null;
@@ -105,52 +105,68 @@ export const AdminSettingsPage: React.FC = () => {
   const [isLoadingSettings, setIsLoadingSettings] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Load payment settings from database on mount
+  // Load both General and Payment settings from Supabase on mount
   useEffect(() => {
     let isMounted = true;
     async function loadSettings() {
       setIsLoadingSettings(true);
       try {
-        const config = await adminService.getPaymentSettings();
-        if (isMounted && config) {
-          setActiveProvider(config.activeProvider || 'yoco');
+        const [genConfig, payConfig] = await Promise.all([
+          adminService.getGeneralSettings(),
+          adminService.getPaymentSettings(),
+        ]);
 
-          if (config.yoco) {
-            setYocoEnabled(config.yoco.enabled);
-            setYocoMode(config.yoco.mode || 'test');
-            setYocoPublicKey(config.yoco.publicKey || import.meta.env.VITE_YOCO_PUBLIC_KEY || 'pk_test_placeholder');
-            setYocoSecretKey(config.yoco.secretKey || 'sk_test_placeholder');
-            setYocoIntegrationMethod(config.yoco.integrationMethod || 'hybrid');
-            setYocoEnable3DS(config.yoco.enable3DS ?? true);
+        if (isMounted) {
+          if (genConfig) {
+            setStoreName(genConfig.storeName || STORE_CONFIG.STORE_NAME);
+            setCurrency(genConfig.currency || STORE_CONFIG.STORE_CURRENCY);
+            setDeliveryFee(String(genConfig.deliveryFee ?? STORE_CONFIG.DELIVERY_FEE));
+            setFreeDeliveryThreshold(String(genConfig.freeDeliveryThreshold ?? STORE_CONFIG.FREE_DELIVERY_THRESHOLD));
+            setContactEmail(genConfig.contactEmail || STORE_CONFIG.CONTACT_EMAIL);
+            setContactPhone(genConfig.contactPhone || '+27 (0)11 892 4000');
+            setStoreDescription(genConfig.storeDescription || '');
           }
 
-          if (config.payfast) {
-            setPayfastEnabled(config.payfast.enabled);
-            setPayfastMerchantId(config.payfast.merchantId || '10000100');
-            setPayfastMerchantKey(config.payfast.merchantKey || '46f0cd694581a');
-            setPayfastPassphrase(config.payfast.passphrase || 'kudstore_passphrase');
-          }
+          if (payConfig) {
+            setActiveProvider(payConfig.activeProvider || 'yoco');
 
-          if (config.ozow) {
-            setOzowEnabled(config.ozow.enabled);
-            setOzowSiteCode(config.ozow.siteCode || 'KUD-SA-01');
-            setOzowPrivateKey(config.ozow.privateKey || 'ozow_private_key_sample');
-          }
+            if (payConfig.yoco) {
+              setYocoEnabled(payConfig.yoco.enabled);
+              setYocoMode(payConfig.yoco.mode || 'test');
+              setYocoPublicKey(payConfig.yoco.publicKey || import.meta.env.VITE_YOCO_PUBLIC_KEY || 'pk_test_placeholder');
+              setYocoSecretKey(payConfig.yoco.secretKey || 'sk_test_placeholder');
+              setYocoIntegrationMethod(payConfig.yoco.integrationMethod || 'hybrid');
+              setYocoEnable3DS(payConfig.yoco.enable3DS ?? true);
+            }
 
-          if (config.cod) {
-            setCodEnabled(config.cod.enabled);
-            setCodInstructions(
-              config.cod.instructions ||
-                'Cash on delivery is available for selected Gauteng and Western Cape metro hubs. Drivers accept cash or card tap.'
-            );
-          }
+            if (payConfig.payfast) {
+              setPayfastEnabled(payConfig.payfast.enabled);
+              setPayfastMerchantId(payConfig.payfast.merchantId || '10000100');
+              setPayfastMerchantKey(payConfig.payfast.merchantKey || '46f0cd694581a');
+              setPayfastPassphrase(payConfig.payfast.passphrase || 'kudstore_passphrase');
+            }
 
-          if (config.lastUpdated) {
-            setDbSyncStatus(`Database Synced (${new Date(config.lastUpdated).toLocaleTimeString()})`);
+            if (payConfig.ozow) {
+              setOzowEnabled(payConfig.ozow.enabled);
+              setOzowSiteCode(payConfig.ozow.siteCode || 'KUD-SA-01');
+              setOzowPrivateKey(payConfig.ozow.privateKey || 'ozow_private_key_sample');
+            }
+
+            if (payConfig.cod) {
+              setCodEnabled(payConfig.cod.enabled);
+              setCodInstructions(
+                payConfig.cod.instructions ||
+                  'Cash on delivery is available for selected Gauteng and Western Cape metro hubs. Drivers accept cash or card tap.'
+              );
+            }
+
+            if (payConfig.lastUpdated) {
+              setDbSyncStatus(`Database Synced (${new Date(payConfig.lastUpdated).toLocaleTimeString()})`);
+            }
           }
         }
       } catch (err) {
-        console.warn('Error fetching payment settings:', err);
+        console.warn('Error fetching settings from Supabase:', err);
       } finally {
         if (isMounted) setIsLoadingSettings(false);
       }
@@ -167,13 +183,74 @@ export const AdminSettingsPage: React.FC = () => {
     setSearchParams(tab === 'general' ? {} : { tab });
   };
 
-  const handleSaveGeneralSettings = (e: React.FormEvent) => {
+  const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 1. Validation
+    const parsedDeliveryFee = parseFloat(deliveryFee);
+    if (isNaN(parsedDeliveryFee) || parsedDeliveryFee < 0) {
+      showToast('Standard delivery fee must be a positive number.', 'error');
+      return;
+    }
+
+    const parsedThreshold = parseFloat(freeDeliveryThreshold);
+    if (isNaN(parsedThreshold) || parsedThreshold < 0) {
+      showToast('Free delivery threshold must be a positive number.', 'error');
+      return;
+    }
+
+    if (!contactEmail.trim() || !contactEmail.includes('@')) {
+      showToast('Please provide a valid support contact email.', 'error');
+      return;
+    }
+
+    if (!contactPhone.trim() || contactPhone.trim().length < 6) {
+      showToast('Please provide a valid contact phone number.', 'error');
+      return;
+    }
+
+    if (!storeName.trim()) {
+      showToast('Store name cannot be empty.', 'error');
+      return;
+    }
+
     setIsSaving(true);
-    setTimeout(() => {
+    try {
+      const payload = {
+        storeName: storeName.trim(),
+        currency: currency.trim() || 'R',
+        deliveryFee: parsedDeliveryFee,
+        freeDeliveryThreshold: parsedThreshold,
+        contactEmail: contactEmail.trim(),
+        contactPhone: contactPhone.trim(),
+        storeDescription: storeDescription.trim(),
+      };
+
+      const res = await updateGeneralSettings(payload);
+
+      if (res.success) {
+        // Immediate reload from Supabase to verify persistence
+        const reloaded = await adminService.getGeneralSettings();
+        if (reloaded) {
+          setStoreName(reloaded.storeName);
+          setCurrency(reloaded.currency);
+          setDeliveryFee(String(reloaded.deliveryFee));
+          setFreeDeliveryThreshold(String(reloaded.freeDeliveryThreshold));
+          setContactEmail(reloaded.contactEmail);
+          setContactPhone(reloaded.contactPhone);
+          setStoreDescription(reloaded.storeDescription);
+        }
+        await reloadGeneralSettings();
+        showToast('Settings saved successfully.', 'success');
+      } else {
+        showToast(res.error || 'Failed to save settings to database.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Error saving general settings to Supabase:', err);
+      showToast(err?.message || 'Error occurred while saving settings.', 'error');
+    } finally {
       setIsSaving(false);
-      showToast('General store settings updated successfully', 'success');
-    }, 600);
+    }
   };
 
   const validateKeys = (): boolean => {
@@ -291,11 +368,9 @@ export const AdminSettingsPage: React.FC = () => {
       },
     };
 
-    // Encrypt sensitive gateway keys before database storage
-    const encryptedPayload = encryptGatewayPayload(payload);
-
+    // Save gateway configuration to Supabase
     try {
-      const res = await adminService.savePaymentSettings(encryptedPayload);
+      const res = await adminService.savePaymentSettings(payload);
       if (res.success) {
         setDbSyncStatus(`Saved & Encrypted to DB (${new Date().toLocaleTimeString()})`);
         setValidationErrors({});

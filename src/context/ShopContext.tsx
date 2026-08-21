@@ -7,8 +7,9 @@ import {
   UserProfile,
   StoreBrandingConfig,
   PromoBannerConfig,
+  GeneralStoreSettings,
 } from '../types';
-import { STORE_CONFIG, DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER } from '../constants/config';
+import { STORE_CONFIG, DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS } from '../constants/config';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import { adminService } from '../services/adminService';
@@ -30,6 +31,11 @@ interface ShopContextType {
   cartSubtotal: number;
   deliveryFee: number;
   freeDeliveryThreshold: number;
+
+  // General Store Settings
+  generalSettings: GeneralStoreSettings;
+  updateGeneralSettings: (settings: GeneralStoreSettings) => Promise<{ success: boolean; error?: string; data?: GeneralStoreSettings }>;
+  reloadGeneralSettings: () => Promise<void>;
 
   // Favourites
   favourites: string[]; // product IDs
@@ -77,6 +83,9 @@ const BRANDING_STORAGE_KEY = 'kud_store_branding_config';
 const PROMO_BANNER_STORAGE_KEY = 'kud_store_promo_banner_config';
 
 export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // General Store Settings (Delivery Fee, Threshold, Contact Details, Store Info from Supabase)
+  const [generalSettings, setGeneralSettings] = useState<GeneralStoreSettings>(DEFAULT_GENERAL_SETTINGS);
+
   // Store Branding & Customization State
   const [storeBranding, setStoreBranding] = useState<StoreBrandingConfig>(() => {
     return safeGetItem<StoreBrandingConfig>(BRANDING_STORAGE_KEY, DEFAULT_STORE_BRANDING);
@@ -384,13 +393,15 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [cart]
   );
 
-  const deliveryFee = useMemo(
-    () =>
-      cartSubtotal >= STORE_CONFIG.FREE_DELIVERY_THRESHOLD || cartSubtotal === 0
-        ? 0
-        : STORE_CONFIG.DELIVERY_FEE,
-    [cartSubtotal]
+  const freeDeliveryThreshold = useMemo(
+    () => Number(generalSettings.freeDeliveryThreshold) || STORE_CONFIG.FREE_DELIVERY_THRESHOLD,
+    [generalSettings.freeDeliveryThreshold]
   );
+
+  const deliveryFee = useMemo(() => {
+    const fee = Number(generalSettings.deliveryFee) >= 0 ? Number(generalSettings.deliveryFee) : STORE_CONFIG.DELIVERY_FEE;
+    return cartSubtotal >= freeDeliveryThreshold || cartSubtotal === 0 ? 0 : fee;
+  }, [cartSubtotal, freeDeliveryThreshold, generalSettings.deliveryFee]);
 
   // Favourites Functions
   const toggleFavourite = useCallback(async (productId: string) => {
@@ -442,23 +453,42 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  // Load Store Branding & Promo Banner on mount
+  // Load General Settings, Store Branding & Promo Banner from Supabase on mount
   const loadStoreCustomization = useCallback(async () => {
     try {
-      const [branding, banner] = await Promise.all([
+      const [general, branding, banner] = await Promise.all([
+        adminService.getGeneralSettings(),
         adminService.getStoreBranding(),
         adminService.getPromoBanner(),
       ]);
+      if (general) setGeneralSettings(general);
       if (branding) setStoreBranding(branding);
       if (banner) setPromoBanner(banner);
     } catch (err) {
-      console.warn('Failed to load store branding / promo banner customization:', err);
+      console.warn('Failed to load store settings / branding / promo banner from Supabase:', err);
     }
   }, []);
 
   useEffect(() => {
     loadStoreCustomization();
   }, [loadStoreCustomization]);
+
+  const reloadGeneralSettings = useCallback(async () => {
+    try {
+      const general = await adminService.getGeneralSettings();
+      if (general) setGeneralSettings(general);
+    } catch (err) {
+      console.warn('Failed to reload general settings from Supabase:', err);
+    }
+  }, []);
+
+  const updateGeneralSettings = useCallback(async (settings: GeneralStoreSettings) => {
+    const res = await adminService.saveGeneralSettings(settings);
+    if (res.success && res.data) {
+      setGeneralSettings(res.data);
+    }
+    return res;
+  }, []);
 
   const updateStoreBranding = useCallback(async (config: StoreBrandingConfig) => {
     setStoreBranding(config);
@@ -540,7 +570,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cartCount,
       cartSubtotal,
       deliveryFee,
-      freeDeliveryThreshold: STORE_CONFIG.FREE_DELIVERY_THRESHOLD,
+      freeDeliveryThreshold,
+
+      generalSettings,
+      updateGeneralSettings,
+      reloadGeneralSettings,
 
       favourites,
       toggleFavourite,
@@ -583,6 +617,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cartCount,
       cartSubtotal,
       deliveryFee,
+      freeDeliveryThreshold,
+      generalSettings,
+      updateGeneralSettings,
+      reloadGeneralSettings,
       favourites,
       toggleFavourite,
       isFavourite,

@@ -30,14 +30,28 @@ export const CheckoutPage: React.FC = () => {
   // Sync shipping address when user is restored
   useEffect(() => {
     if (user) {
-      setShippingAddress((prev) => ({
-        ...prev,
-        fullName: prev.fullName || user.fullName || '',
-        email: prev.email || user.email || '',
-        phone: prev.phone || user.phone || '',
-      }));
+      setShippingAddress((prev) => {
+        const nextFullName = prev.fullName || user.fullName || '';
+        const nextEmail = prev.email || user.email || '';
+        const nextPhone = prev.phone || user.phone || '';
+
+        if (
+          prev.fullName === nextFullName &&
+          prev.email === nextEmail &&
+          prev.phone === nextPhone
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          fullName: nextFullName,
+          email: nextEmail,
+          phone: nextPhone,
+        };
+      });
     }
-  }, [user]);
+  }, [user?.id, user?.fullName, user?.email, user?.phone]);
 
   const [paymentMethod, setPaymentMethod] = useState<string>('yoco');
   const [selectedBank, setSelectedBank] = useState<string>('Capitec Bank');

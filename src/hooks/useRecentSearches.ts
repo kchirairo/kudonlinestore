@@ -28,13 +28,24 @@ export const useRecentSearches = () => {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            setRecentSearches(parsed.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).slice(0, MAX_SEARCHES));
+            const next = parsed
+              .filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
+              .slice(0, MAX_SEARCHES);
+            setRecentSearches((prev) => {
+              if (
+                prev.length === next.length &&
+                prev.every((val, idx) => val === next[idx])
+              ) {
+                return prev;
+              }
+              return next;
+            });
             return;
           }
         }
-        setRecentSearches([]);
+        setRecentSearches((prev) => (prev.length === 0 ? prev : []));
       } catch {
-        setRecentSearches([]);
+        setRecentSearches((prev) => (prev.length === 0 ? prev : []));
       }
     };
 
