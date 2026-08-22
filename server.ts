@@ -37,7 +37,7 @@ function decryptApiKeyOnServer(encryptedKey: string): string {
 }
 
 /**
- * Resolves active Yoco Secret Key from process.env OR store_settings database table
+ * Resolves active Yoco Secret Key from process.env OR public.settings database table
  */
 async function getStoredYocoSecretKey(): Promise<string> {
   const envKey = process.env.YOCO_SECRET_KEY || process.env.VITE_YOCO_SECRET_KEY;
@@ -45,7 +45,7 @@ async function getStoredYocoSecretKey(): Promise<string> {
     return envKey.trim();
   }
 
-  // Attempt database lookup
+  // Attempt database lookup in public.settings table (settings_data.payment_gateways.yoco)
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
   const supabaseKey =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -56,15 +56,21 @@ async function getStoredYocoSecretKey(): Promise<string> {
   if (supabaseUrl && supabaseKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
-      const { data } = await supabase.from('store_settings').select('value').eq('key', 'payment_gateways').single();
-      if (data?.value?.yoco?.secretKey) {
-        const decrypted = decryptApiKeyOnServer(data.value.yoco.secretKey);
+      const { data } = await supabase
+        .from('settings')
+        .select('id, settings_data')
+        .limit(1)
+        .maybeSingle();
+
+      const yocoConfig = (data?.settings_data as any)?.payment_gateways?.yoco;
+      if (yocoConfig?.secretKey) {
+        const decrypted = decryptApiKeyOnServer(yocoConfig.secretKey);
         if (decrypted && decrypted.trim() !== '') {
           return decrypted.trim();
         }
       }
     } catch (err) {
-      console.warn('Could not fetch Yoco secret key from store_settings:', err);
+      console.warn('Could not fetch Yoco secret key from public.settings:', err);
     }
   }
 
@@ -684,7 +690,7 @@ async function startServer() {
   });
 
   // --- STORE SETTINGS PERSISTENCE ENDPOINTS ---
-  // Public GET settings by key (filters sensitive fields for unauthenticated visitors)
+  // Public GET settings by section key (filters sensitive fields for unauthenticated visitors)
   app.get('/api/settings/:key', async (req, res) => {
     try {
       const { key } = req.params;
@@ -697,21 +703,25 @@ async function startServer() {
       try {
         const { data: tableData, error: tableError } = await supabase
           .from('settings')
-          .select('value')
-          .eq('key', key)
+          .select('id, settings_data')
+          .limit(1)
           .maybeSingle();
 
-        if (!tableError && tableData?.value) {
-          let val = tableData.value;
-          if (key === 'payment_gateways') {
-            val = {
-              ...val,
-              yoco: val.yoco ? { ...val.yoco, secretKey: undefined } : undefined,
-              payfast: val.payfast ? { ...val.payfast, passphrase: undefined } : undefined,
-              ozow: val.ozow ? { ...val.ozow, privateKey: undefined } : undefined,
-            };
+        if (!tableError && tableData?.settings_data && typeof tableData.settings_data === 'object') {
+          const sectionData = (tableData.settings_data as any)[key];
+          if (sectionData !== undefined) {
+            let val = sectionData;
+            if (key === 'payment_gateways' && typeof val === 'object') {
+              val = { ...val };
+              for (const gKey of Object.keys(val)) {
+                if (val[gKey] && typeof val[gKey] === 'object') {
+                  const { secretKey, privateKey, passphrase, ...safeObj } = val[gKey];
+                  val[gKey] = safeObj;
+                }
+              }
+            }
+            return res.json({ success: true, data: val, source: 'database_table' });
           }
-          return res.json({ success: true, data: val, source: 'database_table' });
         }
       } catch {
         // Continue to storage
@@ -726,13 +736,13 @@ async function startServer() {
         if (!downloadError && fileData) {
           const text = await fileData.text();
           let parsed = JSON.parse(text);
-          if (key === 'payment_gateways') {
-            parsed = {
-              ...parsed,
-              yoco: parsed.yoco ? { ...parsed.yoco, secretKey: undefined } : undefined,
-              payfast: parsed.payfast ? { ...parsed.payfast, passphrase: undefined } : undefined,
-              ozow: parsed.ozow ? { ...parsed.ozow, privateKey: undefined } : undefined,
-            };
+          if (key === 'payment_gateways' && typeof parsed === 'object') {
+            for (const gKey of Object.keys(parsed)) {
+              if (parsed[gKey] && typeof parsed[gKey] === 'object') {
+                const { secretKey, privateKey, passphrase, ...safeObj } = parsed[gKey];
+                parsed[gKey] = safeObj;
+              }
+            }
           }
           return res.json({ success: true, data: parsed, source: 'supabase_storage' });
         }
@@ -747,7 +757,7 @@ async function startServer() {
     }
   });
 
-  // Admin GET full settings by key (includes full payload for admin panel)
+  // Admin GET full settings by section key
   app.get('/api/admin/settings/:key', async (req, res) => {
     try {
       const { key } = req.params;
@@ -760,12 +770,15 @@ async function startServer() {
       try {
         const { data: tableData, error: tableError } = await supabase
           .from('settings')
-          .select('value')
-          .eq('key', key)
+          .select('id, settings_data')
+          .limit(1)
           .maybeSingle();
 
-        if (!tableError && tableData?.value) {
-          return res.json({ success: true, data: tableData.value, source: 'database_table' });
+        if (!tableError && tableData?.settings_data && typeof tableData.settings_data === 'object') {
+          const sectionData = (tableData.settings_data as any)[key];
+          if (sectionData !== undefined) {
+            return res.json({ success: true, data: sectionData, source: 'database_table' });
+          }
         }
       } catch {}
 
@@ -788,7 +801,7 @@ async function startServer() {
     }
   });
 
-  // Admin POST save settings by key (persists permanently to Supabase table & Supabase Storage)
+  // Admin POST save settings by section key (persists permanently to Supabase table settings_data JSONB)
   app.post('/api/admin/settings/:key', async (req, res) => {
     try {
       const { key } = req.params;
@@ -813,30 +826,52 @@ async function startServer() {
       let storageSaved = false;
       let lastErrorMessage = '';
 
-      // 1. Attempt writing to public.settings table
+      // 1. Attempt writing to public.settings table (merging into settings_data)
       try {
-        const { error: tableError } = await supabase
+        const { data: current } = await supabase
           .from('settings')
-          .upsert(
-            {
-              key,
-              value: updatedPayload,
-              updated_at: now,
-            },
-            { onConflict: 'key' }
-          );
+          .select('id, settings_data')
+          .limit(1)
+          .maybeSingle();
 
-        if (!tableError) {
+        const currentSettingsData = (current?.settings_data as Record<string, any>) || {};
+        const updatedSettingsData = {
+          ...(currentSettingsData || {}),
+          [key]: updatedPayload,
+        };
+
+        let result;
+        if (current?.id) {
+          result = await supabase
+            .from('settings')
+            .update({
+              settings_data: updatedSettingsData,
+              updated_at: now,
+            })
+            .eq('id', current.id);
+        } else {
+          result = await supabase
+            .from('settings')
+            .insert({
+              store_name: 'KUD Store',
+              currency_symbol: 'R',
+              settings_data: updatedSettingsData,
+              created_at: now,
+              updated_at: now,
+            });
+        }
+
+        if (!result.error) {
           tableSaved = true;
         } else {
-          lastErrorMessage = tableError.message;
-          console.log(`[Settings] Notice writing to table 'settings':`, tableError.message);
+          lastErrorMessage = result.error.message;
+          console.log(`[Settings] Notice writing to table 'settings':`, result.error.message);
         }
       } catch (tErr: any) {
         lastErrorMessage = tErr.message;
       }
 
-      // 2. Persist to Supabase Storage (product-images/settings/{key}.json)
+      // 2. Persist to Supabase Storage as secondary backup
       try {
         const buffer = Buffer.from(JSON.stringify(updatedPayload, null, 2), 'utf-8');
         const { data: sData, error: sError } = await supabase.storage

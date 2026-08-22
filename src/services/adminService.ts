@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured, executeWithColumnFallback } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import {
   AdminStats,
@@ -10,6 +10,10 @@ import {
   Customer,
   SalesDataPoint,
   PaymentGatewayConfig,
+  PaymentGatewayItem,
+  PaymentGatewaysMap,
+  SettingsData,
+  SettingsTableRow,
   StoreBrandingConfig,
   PromoBannerConfig,
   GeneralStoreSettings,
@@ -20,43 +24,49 @@ import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
 import { DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS, DEFAULT_COUPONS } from '../constants/config';
+import { DEFAULT_PAYMENT_GATEWAYS } from '../constants/paymentGateways';
 import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUpload';
 
 // Storage keys for settings and mock tables if Supabase is unconfigured or empty
 const LOCAL_CATEGORIES_KEY = 'kud_store_admin_categories';
 const LOCAL_CUSTOMERS_KEY = 'kud_store_admin_customers';
-const LOCAL_PAYMENT_SETTINGS_KEY = 'kud_store_payment_gateways_config';
+const LOCAL_PAYMENT_SETTINGS_KEY = 'kud_store_payment_gateways_v2';
 const LOCAL_BRANDING_KEY = 'kud_store_branding_config';
 const LOCAL_PROMO_BANNER_KEY = 'kud_store_promo_banner_config';
 
 const DEFAULT_PAYMENT_CONFIG: PaymentGatewayConfig = {
   activeProvider: 'yoco',
   yoco: {
-    enabled: true,
+    enabled: false,
     mode: 'test',
-    publicKey: import.meta.env.VITE_YOCO_PUBLIC_KEY || 'pk_test_placeholder',
-    secretKey: 'sk_test_placeholder',
-    integrationMethod: 'hybrid',
-    enable3DS: true,
+    publicKey: import.meta.env.VITE_YOCO_PUBLIC_KEY || '',
+    configured: false,
+  },
+  paypal: {
+    enabled: false,
+    mode: 'sandbox',
+    clientId: '',
+    configured: false,
   },
   payfast: {
-    enabled: true,
-    mode: 'test',
-    merchantId: '10000100',
-    merchantKey: '46f0cd694581a',
-    passphrase: 'kudstore_passphrase',
+    enabled: false,
+    mode: 'sandbox',
+    merchantId: '',
+    configured: false,
   },
   ozow: {
-    enabled: true,
-    siteCode: 'KUD-SA-01',
-    privateKey: 'ozow_private_key_sample',
+    enabled: false,
+    mode: 'sandbox',
+    siteCode: '',
+    configured: false,
   },
-  cod: {
-    enabled: true,
-    instructions: 'Cash on delivery is available for selected Gauteng and Western Cape metro hubs. Drivers accept cash or card tap.',
+  peach_payments: {
+    enabled: false,
+    mode: 'test',
+    entityId: '',
+    configured: false,
   },
 };
-
 
 const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-1', name: 'Beauty', slug: 'beauty', isActive: true, sortOrder: 1, productCount: 12 },
@@ -68,158 +78,167 @@ const DEFAULT_CATEGORIES: Category[] = [
 ];
 
 /**
- * Universal Supabase Settings Reader
- * Fetches settings directly from Supabase (checking settings table, then storage / server endpoint)
+ * Helper to gracefully retry Supabase queries by stripping columns that don't exist in the database table
  */
-async function readSupabaseSettingHelper<T extends Record<string, any>>(key: string, defaultValue: T): Promise<T> {
-  if (isSupabaseConfigured() && supabase) {
-    // 1. Try public.settings table
-    try {
-      const { data, error } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', key)
-        .maybeSingle();
+async function executeWithColumnFallback<T = any>(
+  fn: (payload: Record<string, any>) => PromiseLike<{ data?: any; error?: any }>,
+  payload: Record<string, any>
+): Promise<{ data?: T | null; error?: any }> {
+  let currentPayload = { ...payload };
+  const maxAttempts = 5;
 
-      if (!error && data?.value) {
-        return { ...defaultValue, ...data.value };
-      }
-    } catch (err) {
-      console.warn(`[AdminService] Notice reading '${key}' from table:`, err);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fn(currentPayload);
+    if (!res.error) {
+      return res;
     }
 
-    // 2. Try Supabase Storage (product-images/settings/{key}.json) with cachebuster
-    try {
-      const { data: pubData } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(`settings/${key}.json`);
+    const errorMsg = res.error.message || '';
+    const match =
+      errorMsg.match(/column "(.*?)" of relation/i) ||
+      errorMsg.match(/Could not find the '(.*?)' column/i) ||
+      errorMsg.match(/column '(.*?)' does not exist/i);
 
-      if (pubData?.publicUrl) {
-        const res = await fetch(`${pubData.publicUrl}?t=${Date.now()}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json && typeof json === 'object') {
-            return { ...defaultValue, ...json };
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`[AdminService] Notice reading '${key}' from storage:`, err);
+    if (match && match[1] && currentPayload.hasOwnProperty(match[1])) {
+      console.warn(`[SupabaseFallback] Omitting missing column "${match[1]}" and retrying...`);
+      delete currentPayload[match[1]];
+      continue;
     }
+
+    return res;
   }
 
-  // 3. Fallback: try server API endpoint
-  try {
-    const res = await fetch(`/api/admin/settings/${key}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json?.success && json?.data) {
-        return { ...defaultValue, ...json.data };
-      }
-    }
-  } catch {
-    // Server endpoint not reachable or client test
-  }
-
-  return defaultValue;
+  return fn(currentPayload);
 }
 
 /**
- * Universal Supabase Settings Writer
- * Saves settings directly to Supabase (upserts into settings table AND persists to Supabase Storage & Server)
+ * Universal Supabase Settings Row Fetcher
+ * Queries the public.settings table using its true schema:
+ * id, store_name, currency_symbol, store_description, delivery_fee, free_shipping_threshold,
+ * support_email, support_phone, logo_url, banner_url, settings_data, created_at, updated_at
+ */
+async function fetchPublicSettingsRow(): Promise<SettingsTableRow | null> {
+  if (isSupabaseConfigured() && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('id, store_name, currency_symbol, store_description, delivery_fee, free_shipping_threshold, support_email, support_phone, logo_url, banner_url, settings_data, created_at, updated_at')
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        return data as SettingsTableRow;
+      }
+      if (error) {
+        console.warn('[AdminService] Notice querying public.settings:', error.message);
+      }
+    } catch (err) {
+      console.warn('[AdminService] Exception querying public.settings:', err);
+    }
+  }
+  return null;
+}
+
+/**
+ * Reads a specific section from public.settings.settings_data JSONB
+ */
+async function readSupabaseSettingHelper<T extends Record<string, any>>(key: string, defaultValue: T): Promise<T> {
+  const row = await fetchPublicSettingsRow();
+  
+  if (row?.settings_data && typeof row.settings_data === 'object' && row.settings_data[key] !== undefined) {
+    return { ...defaultValue, ...row.settings_data[key] };
+  }
+
+  // Handle general_settings mapping from columns if available
+  if (key === 'general_settings' && row) {
+    return {
+      ...defaultValue,
+      storeName: row.store_name || (defaultValue as any).storeName,
+      currency: row.currency_symbol || (defaultValue as any).currency || 'R',
+      deliveryFee: row.delivery_fee != null ? Number(row.delivery_fee) : (defaultValue as any).deliveryFee,
+      freeDeliveryThreshold: row.free_shipping_threshold != null ? Number(row.free_shipping_threshold) : (defaultValue as any).freeDeliveryThreshold,
+      contactEmail: row.support_email || (defaultValue as any).contactEmail,
+      contactPhone: row.support_phone || (defaultValue as any).contactPhone,
+      storeDescription: row.store_description || (defaultValue as any).storeDescription,
+      ...(row.settings_data?.general_settings || {})
+    };
+  }
+
+  // Also check local storage fallback
+  const localVal = safeGetItem<T>(`kud_store_settings_${key}`, defaultValue);
+  return localVal || defaultValue;
+}
+
+/**
+ * Writes a specific section to public.settings.settings_data JSONB while preserving
+ * all other existing properties in settings_data.
  */
 async function writeSupabaseSettingHelper<T extends Record<string, any>>(
   key: string,
   payload: T
 ): Promise<{ success: boolean; error?: string; data?: T }> {
-  if (!isSupabaseConfigured() || !supabase) {
-    return {
-      success: false,
-      error: 'Supabase is not configured. Please check your Supabase credentials.',
-    };
-  }
-
+  const now = new Date().toISOString();
   const updatedPayload: T = {
     ...payload,
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: now,
   };
 
-  let tableSaved = false;
-  let storageSaved = false;
-  let serverSaved = false;
-  let lastError = '';
-
-  // 1. Primary write to public.settings table in Supabase
-  try {
-    const { error } = await supabase
-      .from('settings')
-      .upsert(
-        { key, value: updatedPayload, updated_at: new Date().toISOString() },
-        { onConflict: 'key' }
-      );
-
-    if (!error) {
-      tableSaved = true;
-    } else {
-      lastError = error.message;
-    }
-  } catch (err: any) {
-    lastError = err?.message || 'Database error';
-  }
-
-  // 2. Also persist to Supabase Storage (settings/{key}.json)
-  try {
-    let blob: Blob;
-    if (typeof window !== 'undefined') {
-      blob = new Blob([JSON.stringify(updatedPayload, null, 2)], { type: 'application/json' });
-    } else {
-      blob = Buffer.from(JSON.stringify(updatedPayload, null, 2), 'utf-8') as unknown as Blob;
-    }
-
-    const { error: sError } = await supabase.storage
-      .from('product-images')
-      .upload(`settings/${key}.json`, blob, {
-        contentType: 'application/json',
-        cacheControl: '0',
-        upsert: true,
-      });
-
-    if (!sError) {
-      storageSaved = true;
-    } else if (!lastError) {
-      lastError = sError.message;
-    }
-  } catch (sErr: any) {
-    if (!lastError) lastError = sErr?.message || 'Storage upload failed';
-  }
-
-  // 3. Sync with server-side endpoint if available
-  try {
-    const res = await fetch(`/api/admin/settings/${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedPayload),
-    });
-    if (res.ok) {
-      serverSaved = true;
-    }
-  } catch {
-    // In non-server or pure client context
-  }
-
-  if (!tableSaved && !storageSaved && !serverSaved) {
+  if (!isSupabaseConfigured() || !supabase) {
+    safeSetItem(`kud_store_settings_${key}`, updatedPayload);
     return {
-      success: false,
-      error: lastError || 'Failed to persist settings in Supabase.',
+      success: true,
+      data: updatedPayload,
     };
   }
 
-  // Immediate reload verification from Supabase
-  const reloaded = await readSupabaseSettingHelper<T>(key, updatedPayload);
-  return {
-    success: true,
-    data: reloaded || updatedPayload,
-  };
+  try {
+    const existingRow = await fetchPublicSettingsRow();
+    const currentSettingsData = (existingRow?.settings_data as Record<string, any>) || {};
+    const settingsId = existingRow?.id;
+
+    const updatedSettingsData = {
+      ...(currentSettingsData || {}),
+      [key]: updatedPayload,
+    };
+
+    let result;
+    if (settingsId) {
+      result = await supabase
+        .from('settings')
+        .update({
+          settings_data: updatedSettingsData,
+          updated_at: now,
+        })
+        .eq('id', settingsId)
+        .select('*')
+        .maybeSingle();
+    } else {
+      result = await supabase
+        .from('settings')
+        .insert({
+          store_name: 'KUD Store',
+          currency_symbol: 'R',
+          settings_data: updatedSettingsData,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('*')
+        .maybeSingle();
+    }
+
+    if (result.error) {
+      console.error(`[AdminService] Error saving settings section '${key}':`, result.error);
+      safeSetItem(`kud_store_settings_${key}`, updatedPayload);
+      return { success: false, error: result.error.message };
+    }
+
+    safeSetItem(`kud_store_settings_${key}`, updatedPayload);
+    return { success: true, data: updatedPayload };
+  } catch (err: any) {
+    console.error(`[AdminService] Exception saving settings section '${key}':`, err);
+    safeSetItem(`kud_store_settings_${key}`, updatedPayload);
+    return { success: false, error: err?.message || 'Database error' };
+  }
 }
 
 export const adminService = {
@@ -641,27 +660,260 @@ export const adminService = {
   },
 
   /**
-   * Fetch stored payment gateway configuration from Supabase (decrypts sensitive fields)
+   * Fetch stored payment gateways from public.settings.settings_data.payment_gateways
+   * Returns a merged object containing all 5 supported gateways.
    */
-  async getPaymentSettings(): Promise<PaymentGatewayConfig> {
-    const rawConfig = await readSupabaseSettingHelper<PaymentGatewayConfig>('payment_gateways', DEFAULT_PAYMENT_CONFIG);
-    return decryptGatewayPayload(rawConfig);
+  async getPaymentGateways(): Promise<PaymentGatewaysMap> {
+    const defaultMap = { ...DEFAULT_PAYMENT_GATEWAYS };
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('settings')
+          .select('id, settings_data')
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data?.settings_data?.payment_gateways) {
+          const stored = data.settings_data.payment_gateways as PaymentGatewaysMap;
+          const merged: PaymentGatewaysMap = { ...defaultMap };
+          for (const [gId, gVal] of Object.entries(stored)) {
+            if (gVal) {
+              merged[gId] = {
+                ...(merged[gId] || {}),
+                ...gVal,
+                id: gId,
+              };
+            }
+          }
+          return merged;
+        }
+      } catch (err) {
+        console.warn('[AdminService] Error fetching payment_gateways from settings_data:', err);
+      }
+    }
+
+    const localGateways = safeGetItem<PaymentGatewaysMap>(LOCAL_PAYMENT_SETTINGS_KEY, defaultMap);
+    return { ...defaultMap, ...(localGateways || {}) };
   },
 
   /**
-   * Save payment gateway configuration securely to Supabase settings table with encryption
+   * Save or update an individual payment gateway inside public.settings.settings_data.payment_gateways.
+   * Preserves all other existing properties in settings_data.
    */
-  async savePaymentSettings(config: PaymentGatewayConfig): Promise<{ success: boolean; error?: string; data?: PaymentGatewayConfig }> {
-    const encryptedConfig = encryptGatewayPayload({
-      ...config,
-      lastUpdated: new Date().toISOString(),
-    });
+  async savePaymentGateway(
+    gatewayId: string,
+    gatewayData: Partial<PaymentGatewayItem>
+  ): Promise<{ success: boolean; error?: string; data?: PaymentGatewayItem }> {
+    const defaultItem = DEFAULT_PAYMENT_GATEWAYS[gatewayId] || {
+      id: gatewayId,
+      name: gatewayId,
+      description: '',
+      enabled: false,
+      mode: 'test',
+      configured: false,
+    };
 
-    const res = await writeSupabaseSettingHelper<PaymentGatewayConfig>('payment_gateways', encryptedConfig);
+    const now = new Date().toISOString();
+
+    if (!isSupabaseConfigured() || !supabase) {
+      const currentLocal = await this.getPaymentGateways();
+      const updatedItem: PaymentGatewayItem = {
+        ...defaultItem,
+        ...(currentLocal[gatewayId] || {}),
+        ...gatewayData,
+        id: gatewayId,
+        lastUpdated: now,
+      };
+      safeSetItem(LOCAL_PAYMENT_SETTINGS_KEY, {
+        ...currentLocal,
+        [gatewayId]: updatedItem,
+      });
+      return { success: true, data: updatedItem };
+    }
+
+    try {
+      const { data: current, error: fetchError } = await supabase
+        .from('settings')
+        .select('id, settings_data')
+        .limit(1)
+        .maybeSingle();
+
+      if (fetchError) {
+        console.warn('[AdminService] Notice fetching current settings row:', fetchError.message);
+      }
+
+      const currentSettingsData = (current?.settings_data as Record<string, any>) || {};
+      const currentGateways = (currentSettingsData?.payment_gateways as PaymentGatewaysMap) || {};
+
+      const finalGatewayItem: PaymentGatewayItem = {
+        ...defaultItem,
+        ...(currentGateways[gatewayId] || {}),
+        ...gatewayData,
+        id: gatewayId,
+        lastUpdated: now,
+      };
+
+      const updatedSettingsData = {
+        ...(currentSettingsData || {}),
+        payment_gateways: {
+          ...(currentSettingsData?.payment_gateways || {}),
+          [gatewayId]: finalGatewayItem,
+        },
+      };
+
+      let res;
+      if (current?.id) {
+        res = await supabase
+          .from('settings')
+          .update({
+            settings_data: updatedSettingsData,
+            updated_at: now,
+          })
+          .eq('id', current.id)
+          .select('id, settings_data')
+          .maybeSingle();
+      } else {
+        res = await supabase
+          .from('settings')
+          .insert({
+            store_name: 'KUD Store',
+            currency_symbol: 'R',
+            settings_data: updatedSettingsData,
+            created_at: now,
+            updated_at: now,
+          })
+          .select('id, settings_data')
+          .maybeSingle();
+      }
+
+      if (res.error) {
+        console.error('[AdminService] Supabase error saving payment gateway:', res.error);
+        return { success: false, error: res.error.message };
+      }
+
+      // Update local storage cache
+      const currentLocal = safeGetItem<PaymentGatewaysMap>(LOCAL_PAYMENT_SETTINGS_KEY, DEFAULT_PAYMENT_GATEWAYS);
+      safeSetItem(LOCAL_PAYMENT_SETTINGS_KEY, {
+        ...(currentLocal || {}),
+        [gatewayId]: finalGatewayItem,
+      });
+
+      return { success: true, data: finalGatewayItem };
+    } catch (err: any) {
+      console.error('[AdminService] Exception saving payment gateway:', err);
+      return { success: false, error: err?.message || 'Database error occurred while updating gateway.' };
+    }
+  },
+
+  /**
+   * Save all payment gateways to public.settings.settings_data.payment_gateways
+   */
+  async saveAllPaymentGateways(
+    gateways: PaymentGatewaysMap
+  ): Promise<{ success: boolean; error?: string; data?: PaymentGatewaysMap }> {
+    const res = await writeSupabaseSettingHelper<PaymentGatewaysMap>('payment_gateways', gateways);
     if (res.success && res.data) {
-      return { success: true, data: decryptGatewayPayload(res.data) };
+      safeSetItem(LOCAL_PAYMENT_SETTINGS_KEY, res.data);
+      return { success: true, data: res.data };
     }
     return { success: res.success, error: res.error };
+  },
+
+  /**
+   * Legacy adapter for checkout: fetch stored payment gateway configuration
+   */
+  async getPaymentSettings(): Promise<PaymentGatewayConfig> {
+    const gateways = await this.getPaymentGateways();
+    const yoco = gateways.yoco;
+    const paypal = gateways.paypal;
+    const payfast = gateways.payfast;
+    const ozow = gateways.ozow;
+    const peach = gateways.peach_payments;
+
+    return {
+      activeProvider: yoco?.enabled ? 'yoco' : paypal?.enabled ? 'paypal' : payfast?.enabled ? 'payfast' : 'yoco',
+      yoco: {
+        enabled: yoco?.enabled ?? false,
+        mode: (yoco?.mode === 'live' ? 'live' : 'test'),
+        publicKey: yoco?.publicKey || import.meta.env.VITE_YOCO_PUBLIC_KEY || '',
+        configured: yoco?.configured ?? false,
+      },
+      paypal: {
+        enabled: paypal?.enabled ?? false,
+        mode: (paypal?.mode === 'live' ? 'live' : 'sandbox'),
+        clientId: paypal?.clientId || '',
+        configured: paypal?.configured ?? false,
+      },
+      payfast: {
+        enabled: payfast?.enabled ?? false,
+        mode: (payfast?.mode === 'live' ? 'live' : 'sandbox'),
+        merchantId: payfast?.merchantId || '',
+        configured: payfast?.configured ?? false,
+      },
+      ozow: {
+        enabled: ozow?.enabled ?? false,
+        mode: (ozow?.mode === 'live' ? 'live' : 'sandbox'),
+        siteCode: ozow?.siteCode || '',
+        configured: ozow?.configured ?? false,
+      },
+      peach_payments: {
+        enabled: peach?.enabled ?? false,
+        mode: (peach?.mode === 'live' ? 'live' : 'test'),
+        entityId: peach?.entityId || '',
+        configured: peach?.configured ?? false,
+      },
+    };
+  },
+
+  /**
+   * Legacy adapter for savePaymentSettings
+   */
+  async savePaymentSettings(config: PaymentGatewayConfig): Promise<{ success: boolean; error?: string; data?: PaymentGatewayConfig }> {
+    const current = await this.getPaymentGateways();
+    const updated: PaymentGatewaysMap = {
+      ...current,
+      yoco: config.yoco ? {
+        ...(current.yoco || DEFAULT_PAYMENT_GATEWAYS.yoco!),
+        enabled: config.yoco.enabled,
+        mode: config.yoco.mode,
+        publicKey: config.yoco.publicKey,
+        configured: config.yoco.configured ?? current.yoco?.configured ?? false,
+      } : current.yoco,
+      paypal: config.paypal ? {
+        ...(current.paypal || DEFAULT_PAYMENT_GATEWAYS.paypal!),
+        enabled: config.paypal.enabled,
+        mode: config.paypal.mode,
+        clientId: config.paypal.clientId,
+        configured: config.paypal.configured ?? current.paypal?.configured ?? false,
+      } : current.paypal,
+      payfast: config.payfast ? {
+        ...(current.payfast || DEFAULT_PAYMENT_GATEWAYS.payfast!),
+        enabled: config.payfast.enabled,
+        mode: config.payfast.mode === 'live' ? 'live' : 'sandbox',
+        merchantId: config.payfast.merchantId,
+        configured: config.payfast.configured ?? current.payfast?.configured ?? false,
+      } : current.payfast,
+      ozow: config.ozow ? {
+        ...(current.ozow || DEFAULT_PAYMENT_GATEWAYS.ozow!),
+        enabled: config.ozow.enabled,
+        siteCode: config.ozow.siteCode,
+        configured: config.ozow.configured ?? current.ozow?.configured ?? false,
+      } : current.ozow,
+      peach_payments: config.peach_payments ? {
+        ...(current.peach_payments || DEFAULT_PAYMENT_GATEWAYS.peach_payments!),
+        enabled: config.peach_payments.enabled,
+        mode: config.peach_payments.mode,
+        entityId: config.peach_payments.entityId,
+        configured: config.peach_payments.configured ?? current.peach_payments?.configured ?? false,
+      } : current.peach_payments,
+    };
+
+    const res = await this.saveAllPaymentGateways(updated);
+    if (res.success) {
+      const adapterData = await this.getPaymentSettings();
+      return { success: true, data: adapterData };
+    }
+    return { success: false, error: res.error };
   },
 
   /**

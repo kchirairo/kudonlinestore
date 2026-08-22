@@ -101,8 +101,18 @@ CREATE TABLE IF NOT EXISTS public.orders (
 
 -- 5. SETTINGS TABLE (Store settings, delivery fees, contact details, payment gateways, branding, promo banners)
 CREATE TABLE IF NOT EXISTS public.settings (
-    key TEXT PRIMARY KEY,
-    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_name TEXT DEFAULT 'KUD Store',
+    currency_symbol TEXT DEFAULT 'R',
+    store_description TEXT,
+    delivery_fee NUMERIC DEFAULT 60,
+    free_shipping_threshold NUMERIC DEFAULT 500,
+    support_email TEXT DEFAULT 'support@kudstore.co.za',
+    support_phone TEXT DEFAULT '+27 11 000 0000',
+    logo_url TEXT,
+    banner_url TEXT,
+    settings_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 

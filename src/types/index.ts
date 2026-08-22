@@ -168,29 +168,98 @@ export interface FilterOptions {
   sortBy?: 'newest' | 'price-asc' | 'price-desc' | 'popular';
 }
 
+export type PaymentGatewayMode = 'test' | 'sandbox' | 'live';
+
+export interface PaymentGatewayItem {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  mode: PaymentGatewayMode;
+  configured: boolean;
+  publicKey?: string;
+  clientId?: string;
+  merchantId?: string;
+  siteCode?: string;
+  entityId?: string;
+  webhookUrl?: string;
+  metadata?: Record<string, any>;
+  lastUpdated?: string;
+}
+
+export interface PaymentGatewaysMap {
+  yoco?: PaymentGatewayItem;
+  paypal?: PaymentGatewayItem;
+  payfast?: PaymentGatewayItem;
+  ozow?: PaymentGatewayItem;
+  peach_payments?: PaymentGatewayItem;
+  [key: string]: PaymentGatewayItem | undefined;
+}
+
+export interface SettingsData {
+  payment_gateways?: PaymentGatewaysMap;
+  store_branding?: StoreBrandingConfig;
+  banner_config?: PromoBannerConfig;
+  coupons_config?: CouponsConfig;
+  general_settings?: GeneralStoreSettings;
+  [key: string]: any;
+}
+
+export interface SettingsTableRow {
+  id: string;
+  store_name?: string | null;
+  currency_symbol?: string | null;
+  store_description?: string | null;
+  delivery_fee?: number | null;
+  free_shipping_threshold?: number | null;
+  support_email?: string | null;
+  support_phone?: string | null;
+  logo_url?: string | null;
+  banner_url?: string | null;
+  settings_data: SettingsData | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface PaymentGatewayConfig {
-  activeProvider: 'yoco' | 'payfast' | 'ozow' | 'all';
-  yoco: {
+  activeProvider?: 'yoco' | 'paypal' | 'payfast' | 'ozow' | 'peach_payments' | 'all' | string;
+  yoco?: {
     enabled: boolean;
     mode: 'test' | 'live';
-    publicKey: string;
-    secretKey: string;
-    integrationMethod: 'sdk' | 'hosted' | 'hybrid';
-    enable3DS: boolean;
+    publicKey?: string;
+    secretKey?: string;
+    integrationMethod?: 'sdk' | 'hosted' | 'hybrid';
+    enable3DS?: boolean;
+    configured?: boolean;
   };
-  payfast: {
+  paypal?: {
+    enabled: boolean;
+    mode: 'sandbox' | 'live';
+    clientId?: string;
+    configured?: boolean;
+  };
+  payfast?: {
+    enabled: boolean;
+    mode: 'sandbox' | 'live' | 'test';
+    merchantId?: string;
+    merchantKey?: string;
+    passphrase?: string;
+    configured?: boolean;
+  };
+  ozow?: {
+    enabled: boolean;
+    mode?: 'sandbox' | 'live';
+    siteCode?: string;
+    privateKey?: string;
+    configured?: boolean;
+  };
+  peach_payments?: {
     enabled: boolean;
     mode: 'test' | 'live';
-    merchantId: string;
-    merchantKey: string;
-    passphrase: string;
+    entityId?: string;
+    configured?: boolean;
   };
-  ozow: {
-    enabled: boolean;
-    siteCode: string;
-    privateKey: string;
-  };
-  cod: {
+  cod?: {
     enabled: boolean;
     instructions: string;
   };
