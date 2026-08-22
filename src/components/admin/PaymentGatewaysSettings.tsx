@@ -12,9 +12,11 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
+  Activity,
+  Server,
 } from 'lucide-react';
 import { SUPPORTED_PAYMENT_GATEWAYS, GatewayMetadata, DEFAULT_PAYMENT_GATEWAYS } from '../../constants/paymentGateways';
-import { PaymentGatewaysMap, PaymentGatewayItem, PaymentGatewayMode } from '../../types';
+import { PaymentGatewaysMap, PaymentGatewayItem, PaymentGatewayMode, GatewayHealthCheckReport } from '../../types';
 import { adminService } from '../../services/adminService';
 import { useShop } from '../../context/ShopContext';
 import { PaymentGatewayCard } from './PaymentGatewayCard';
@@ -28,7 +30,11 @@ export const PaymentGatewaysSettings: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [filterMode, setFilterMode] = useState<'all' | 'enabled' | 'live' | 'test'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'enabled' | 'configured' | 'live' | 'test'>('all');
+
+  // Health check states
+  const [isHealthChecking, setIsHealthChecking] = useState<boolean>(false);
+  const [healthReport, setHealthReport] = useState<GatewayHealthCheckReport | null>(null);
 
   // Modal states
   const [activeConfigGateway, setActiveConfigGateway] = useState<GatewayMetadata | null>(null);
@@ -54,6 +60,37 @@ export const PaymentGatewaysSettings: React.FC = () => {
   useEffect(() => {
     loadGateways();
   }, [loadGateways]);
+
+  // Server-side verification request
+  const handleRunHealthCheck = async () => {
+    setIsHealthChecking(true);
+    try {
+      const report = await adminService.runPaymentGatewaysHealthCheck();
+      setHealthReport(report);
+
+      if (report.unreachableCount > 0) {
+        showToast(
+          `Health check: ${report.unreachableCount} gateway endpoint(s) unreachable.`,
+          'error'
+        );
+      } else if (report.warningCount > 0) {
+        showToast(
+          `Health check complete: ${report.healthyCount} verified operational, ${report.warningCount} notices.`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Health check passed! All ${report.healthyCount} verified gateways are online and operational.`,
+          'success'
+        );
+      }
+    } catch (err: any) {
+      console.error('Health check error:', err);
+      showToast('Failed to complete server-side verification request', 'error');
+    } finally {
+      setIsHealthChecking(false);
+    }
+  };
 
   // Handle single gateway enable/disable toggle
   const handleToggleEnabled = async (gatewayId: string, newEnabled: boolean) => {
@@ -168,6 +205,9 @@ export const PaymentGatewaysSettings: React.FC = () => {
     if (filterMode === 'enabled') {
       return config.enabled;
     }
+    if (filterMode === 'configured') {
+      return config.configured;
+    }
     if (filterMode === 'live') {
       return config.mode === 'live';
     }
@@ -212,19 +252,113 @@ export const PaymentGatewaysSettings: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center space-x-3 shrink-0">
+        <div className="flex items-center flex-wrap gap-2.5 shrink-0">
+          {/* Run Health Check Button */}
+          <button
+            id="run-health-check-btn"
+            type="button"
+            onClick={handleRunHealthCheck}
+            disabled={isHealthChecking || isLoading}
+            className="px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-black text-white text-sm font-bold shadow-xs hover:shadow-md transition-all flex items-center space-x-2 disabled:opacity-60 cursor-pointer"
+          >
+            <Activity className={`w-4 h-4 text-emerald-400 ${isHealthChecking ? 'animate-spin' : ''}`} />
+            <span>{isHealthChecking ? 'Verifying Gateways...' : 'Run Health Check'}</span>
+          </button>
+
+          {/* Reload Settings Button */}
           <button
             id="refresh-gateways-btn"
             type="button"
             onClick={loadGateways}
             disabled={isLoading}
-            className="px-4 py-2.5 rounded-2xl border border-gray-200 hover:bg-gray-50 text-sm font-semibold text-gray-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
+            className="px-4 py-2.5 rounded-2xl border border-gray-200 hover:bg-gray-50 text-sm font-semibold text-gray-700 transition-colors flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className={`w-4 h-4 text-gray-500 ${isLoading ? 'animate-spin' : ''}`} />
             <span>{isLoading ? 'Reloading...' : 'Reload Settings'}</span>
           </button>
         </div>
       </div>
+
+      {/* Health Check Results Report Dashboard (Shown when report exists or running) */}
+      {(healthReport || isHealthChecking) && (
+        <div
+          id="health-check-results-panel"
+          className="bg-white rounded-3xl p-6 sm:p-7 border border-emerald-200/80 shadow-xs space-y-4 relative overflow-hidden"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div className="flex items-center space-x-3">
+              <div
+                className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold ${
+                  isHealthChecking
+                    ? 'bg-blue-50 text-blue-600'
+                    : healthReport?.unreachableCount
+                    ? 'bg-rose-50 text-rose-600'
+                    : healthReport?.warningCount
+                    ? 'bg-amber-50 text-amber-600'
+                    : 'bg-emerald-50 text-emerald-600'
+                }`}
+              >
+                {isHealthChecking ? (
+                  <Activity className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Server className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-extrabold text-gray-900 text-base">Server-Side Gateway Verification Report</h3>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    Live Server Ping
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {isHealthChecking
+                    ? 'Executing server-side reachability checks, latency diagnostics, and credential format validations...'
+                    : `Verified ${healthReport?.totalChecked || 0} providers at ${new Date(
+                        healthReport?.timestamp || ''
+                      ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`}
+                </p>
+              </div>
+            </div>
+
+            {!isHealthChecking && (
+              <button
+                type="button"
+                onClick={handleRunHealthCheck}
+                className="px-3 py-1.5 rounded-xl border border-gray-200 hover:bg-gray-50 text-xs font-bold text-gray-700 flex items-center space-x-1.5 self-start sm:self-auto cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
+                <span>Re-verify</span>
+              </button>
+            )}
+          </div>
+
+          {/* Quick Metrics Bar */}
+          {healthReport && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+              <div className="p-3.5 bg-emerald-50/70 border border-emerald-200/60 rounded-2xl">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Healthy & Reachable</span>
+                <div className="text-xl font-black text-emerald-800">{healthReport.healthyCount} Verified</div>
+              </div>
+
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200/60 rounded-2xl">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Pending / Action Needed</span>
+                <div className="text-xl font-black text-amber-800">{healthReport.warningCount} Notice</div>
+              </div>
+
+              <div className="p-3.5 bg-rose-50/70 border border-rose-200/60 rounded-2xl">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700">Unreachable Endpoints</span>
+                <div className="text-xl font-black text-rose-800">{healthReport.unreachableCount} Down</div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200/60 rounded-2xl">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Vault Security</span>
+                <div className="text-xl font-black text-slate-800">Protected</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Overview Stats Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -314,6 +448,7 @@ export const PaymentGatewaysSettings: React.FC = () => {
             [
               { id: 'all', label: 'All Gateways' },
               { id: 'enabled', label: 'Active Only' },
+              { id: 'configured', label: 'Credentials Configured' },
               { id: 'live', label: 'Live Mode' },
               { id: 'test', label: 'Test / Sandbox' },
             ] as const
@@ -351,12 +486,15 @@ export const PaymentGatewaysSettings: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredGateways.map((meta) => {
             const config = gatewaysMap[meta.id] || DEFAULT_PAYMENT_GATEWAYS[meta.id]!;
+            const healthItem = healthReport?.results[meta.id];
             return (
               <PaymentGatewayCard
                 key={meta.id}
                 gateway={meta}
                 config={config}
                 isSaving={isSaving}
+                healthItem={healthItem}
+                isHealthChecking={isHealthChecking}
                 onToggleEnabled={handleToggleEnabled}
                 onModeChange={handleModeChange}
                 onOpenConfig={(g) => setActiveConfigGateway(g)}

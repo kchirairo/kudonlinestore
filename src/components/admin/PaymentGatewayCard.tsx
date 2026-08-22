@@ -9,14 +9,20 @@ import {
   Zap,
   Globe,
   Wallet,
+  Activity,
+  AlertTriangle,
+  Lock,
+  Radio,
 } from 'lucide-react';
 import { GatewayMetadata } from '../../constants/paymentGateways';
-import { PaymentGatewayItem, PaymentGatewayMode } from '../../types';
+import { PaymentGatewayItem, PaymentGatewayMode, GatewayHealthItem } from '../../types';
 
 interface PaymentGatewayCardProps {
   gateway: GatewayMetadata;
   config: PaymentGatewayItem;
   isSaving: boolean;
+  healthItem?: GatewayHealthItem;
+  isHealthChecking?: boolean;
   onToggleEnabled: (gatewayId: string, enabled: boolean) => void;
   onModeChange: (gateway: GatewayMetadata, targetMode: PaymentGatewayMode) => void;
   onOpenConfig: (gateway: GatewayMetadata) => void;
@@ -26,6 +32,8 @@ export const PaymentGatewayCard: React.FC<PaymentGatewayCardProps> = ({
   gateway,
   config,
   isSaving,
+  healthItem,
+  isHealthChecking = false,
   onToggleEnabled,
   onModeChange,
   onOpenConfig,
@@ -135,25 +143,95 @@ export const PaymentGatewayCard: React.FC<PaymentGatewayCardProps> = ({
 
             {/* Configured Credentials Badge */}
             <span
-              className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-xs font-medium ${
+              className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl text-xs font-semibold ${
                 isConfigured
-                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                   : 'bg-amber-50 text-amber-700 border border-amber-200'
               }`}
             >
               {isConfigured ? (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Configured</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Credentials configured</span>
                 </>
               ) : (
                 <>
                   <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Not configured</span>
+                  <span>Credentials not configured</span>
                 </>
               )}
             </span>
+
+            {/* Server-Side Health Verification Status Badge */}
+            {isHealthChecking && (
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
+                <Activity className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                <span>Checking reachability...</span>
+              </span>
+            )}
+
+            {!isHealthChecking && healthItem && (
+              <span
+                id={`health-indicator-${gateway.id}`}
+                title={healthItem.message}
+                className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold transition-all ${
+                  healthItem.status === 'healthy'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                    : healthItem.status === 'warning'
+                    ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                    : healthItem.status === 'unreachable'
+                    ? 'bg-rose-50 text-rose-800 border border-rose-300'
+                    : 'bg-gray-100 text-gray-700 border border-gray-300'
+                }`}
+              >
+                {healthItem.status === 'healthy' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Reachable ({healthItem.latencyMs ? `${healthItem.latencyMs}ms` : 'Online'})</span>
+                  </>
+                )}
+                {healthItem.status === 'warning' && (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>Warning: Action needed</span>
+                  </>
+                )}
+                {healthItem.status === 'unreachable' && (
+                  <>
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>Endpoint unreachable</span>
+                  </>
+                )}
+                {healthItem.status === 'not_configured' && (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                    <span>Unverified (Not Configured)</span>
+                  </>
+                )}
+              </span>
+            )}
           </div>
+
+          {/* Health Check Server Diagnostic Note */}
+          {healthItem && !isHealthChecking && (
+            <div
+              className={`p-2.5 rounded-2xl text-[11px] leading-relaxed flex items-start space-x-2 ${
+                healthItem.status === 'healthy'
+                  ? 'bg-emerald-50/70 border border-emerald-100 text-emerald-900'
+                  : healthItem.status === 'warning'
+                  ? 'bg-amber-50/70 border border-amber-100 text-amber-900'
+                  : healthItem.status === 'unreachable'
+                  ? 'bg-rose-50/70 border border-rose-100 text-rose-900'
+                  : 'bg-gray-50 border border-gray-200 text-gray-600'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-70" />
+              <div className="flex-1">
+                <span className="font-bold">Server Verification: </span>
+                <span>{healthItem.message}</span>
+              </div>
+            </div>
+          )}
 
           {/* Feature Highlights */}
           <div className="pt-2">

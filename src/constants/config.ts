@@ -181,10 +181,13 @@ export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   ],
 };
 
-// Payment Gateways Supported (Interface prepared for South African integrations like Yoco/PayFast/Ozow)
+// Payment Gateways Supported (South African & Global integrations)
 export const PAYMENT_METHODS = [
   { id: 'yoco', name: 'Yoco Secure Payment', desc: 'Pay with Credit/Debit Card or Instant EFT via Yoco' },
-  { id: 'card', name: 'Credit or Debit Card', desc: 'Instant & Secure via PayFast / Peach' },
-  { id: 'ozow', name: 'Instant EFT (Ozow / Capitec Pay)', desc: 'Zero fees from all major SA banks' },
-  { id: 'cod', name: 'Cash on Delivery', desc: 'Available for selected Gauteng / WC metro areas' },
+  { id: 'card', name: 'Credit or Debit Card', desc: 'Direct Visa & Mastercard online payment' },
+  { id: 'cod', name: 'Cash on Delivery (COD)', desc: 'Pay cash upon parcel delivery by courier' },
+  { id: 'payfast', name: 'PayFast South Africa', desc: 'Pay with Instant EFT, Debit Card or Mobicred' },
+  { id: 'ozow', name: 'Instant EFT (Ozow / Capitec Pay)', desc: 'Instant bank transfer from all major SA banks' },
+  { id: 'paypal', name: 'PayPal Checkout', desc: 'Global payment with PayPal balance & cards' },
+  { id: 'peach_payments', name: 'Peach Payments', desc: 'Enterprise card & digital wallet processing' },
 ];

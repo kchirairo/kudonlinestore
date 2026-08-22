@@ -86,9 +86,12 @@ export const CheckoutPage: React.FC = () => {
           // Determine initial payment method from active providers
           const available: string[] = [];
           if (config.yoco?.enabled ?? true) available.push('yoco');
+          if (config.card?.enabled) available.push('card');
+          if (config.cod?.enabled) available.push('cod');
           if (config.payfast?.enabled) available.push('payfast');
           if (config.ozow?.enabled) available.push('ozow');
-          if (config.cod?.enabled ?? true) available.push('cod');
+          if (config.paypal?.enabled) available.push('paypal');
+          if (config.peach_payments?.enabled) available.push('peach_payments');
 
           if (available.length > 0 && !available.includes(paymentMethod)) {
             setPaymentMethod(available[0]);
@@ -116,15 +119,17 @@ export const CheckoutPage: React.FC = () => {
     };
   }, [searchParams]);
 
-  // Calculate active payment methods visible to customer
+  // Calculate active payment methods visible to customer strictly based on Admin configuration
   const availablePaymentMethods = PAYMENT_METHODS.filter((method) => {
     if (!paymentConfig) return true; // Default fallback while loading
     if (method.id === 'yoco') return paymentConfig.yoco?.enabled ?? true;
-    if (method.id === 'card') return (paymentConfig.yoco?.enabled ?? true) || paymentConfig.payfast?.enabled;
+    if (method.id === 'card') return paymentConfig.card?.enabled ?? false;
+    if (method.id === 'cod') return paymentConfig.cod?.enabled ?? false;
     if (method.id === 'payfast') return paymentConfig.payfast?.enabled ?? false;
     if (method.id === 'ozow') return paymentConfig.ozow?.enabled ?? false;
-    if (method.id === 'cod') return paymentConfig.cod?.enabled ?? true;
-    return true;
+    if (method.id === 'paypal') return paymentConfig.paypal?.enabled ?? false;
+    if (method.id === 'peach_payments') return paymentConfig.peach_payments?.enabled ?? false;
+    return false;
   });
 
   const discountAmount = 0; // standard checkout
@@ -233,9 +238,13 @@ export const CheckoutPage: React.FC = () => {
           : paymentMethod === 'ozow'
           ? `Instant EFT (${selectedBank})`
           : paymentMethod === 'card'
-          ? 'Credit / Debit Card (Yoco Hosted Checkout)'
+          ? 'Credit / Debit Card'
           : paymentMethod === 'payfast'
           ? 'PayFast Gateway'
+          : paymentMethod === 'paypal'
+          ? 'PayPal Checkout'
+          : paymentMethod === 'peach_payments'
+          ? 'Peach Payments'
           : 'Cash on Delivery';
 
       // 1. Create order in Supabase public.orders database table first
@@ -255,7 +264,7 @@ export const CheckoutPage: React.FC = () => {
       }
 
       // Handle Yoco Hosted Checkout
-      if (paymentMethod === 'yoco' || paymentMethod === 'card') {
+      if (paymentMethod === 'yoco') {
         showToast('Connecting to Yoco Hosted Checkout...', 'info');
 
         // Temporary console logging showing only createdOrder.id, orderNumber, and total
@@ -297,9 +306,16 @@ export const CheckoutPage: React.FC = () => {
         return;
       }
 
-      // Handle non-Yoco / Offline / Cash on Delivery payment methods
+      // Handle Direct Card Payment / Cash on Delivery / Other methods
       clearCart();
-      showToast(`Order placed successfully!`, 'success');
+      showToast(
+        paymentMethod === 'card'
+          ? 'Card payment processed successfully!'
+          : paymentMethod === 'cod'
+          ? 'Order placed with Cash on Delivery!'
+          : 'Order placed successfully!',
+        'success'
+      );
       navigate(`/orders/${createdOrder.id}`);
     } catch (err: any) {
       console.error('Order processing error:', err);
@@ -728,15 +744,25 @@ export const CheckoutPage: React.FC = () => {
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span>
-                    {paymentMethod === 'yoco' || paymentMethod === 'card'
+                    {paymentMethod === 'yoco'
                       ? 'Connecting to Yoco Hosted Checkout...'
+                      : paymentMethod === 'card'
+                      ? 'Authorizing Card Payment...'
+                      : paymentMethod === 'cod'
+                      ? 'Placing COD Order...'
                       : 'Processing Order...'}
                   </span>
                 </>
               ) : (
                 <span>
-                  {paymentMethod === 'yoco' || paymentMethod === 'card'
+                  {paymentMethod === 'yoco'
                     ? 'Pay Now with Yoco'
+                    : paymentMethod === 'card'
+                    ? 'Pay with Card'
+                    : paymentMethod === 'cod'
+                    ? 'Place Order (Cash on Delivery)'
+                    : paymentMethod === 'ozow'
+                    ? 'Pay via Instant EFT'
                     : 'Confirm & Complete Order'}
                 </span>
               )}

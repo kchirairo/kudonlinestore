@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X,
   ShieldCheck,
+  ShieldAlert,
   Key,
   ExternalLink,
   Info,
@@ -10,6 +11,8 @@ import {
   HelpCircle,
   Save,
   Lock,
+  Server,
+  Check,
 } from 'lucide-react';
 import { GatewayMetadata } from '../../constants/paymentGateways';
 import { PaymentGatewayItem, PaymentGatewayMode } from '../../types';
@@ -36,7 +39,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
   const [publicIdentifier, setPublicIdentifier] = useState<string>('');
   const [isConfigured, setIsConfigured] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [showSecretsHelp, setShowSecretsHelp] = useState<boolean>(false);
+  const [showVaultInfo, setShowVaultInfo] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen && currentConfig && gatewayMeta) {
@@ -71,7 +74,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
       const updatedItem: Partial<PaymentGatewayItem> = {
         enabled,
         mode,
-        configured: isConfigured || (publicIdentifier.trim().length > 0),
+        configured: isConfigured,
         [pKey]: publicIdentifier.trim(),
       };
 
@@ -90,7 +93,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
       <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-gray-100 space-y-6 relative my-8">
         {/* Header */}
         <div className="flex items-start justify-between pb-4 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-3.5">
             <div
               className="w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-md shrink-0"
               style={{ backgroundColor: gatewayMeta.brandColor }}
@@ -99,7 +102,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-xl font-bold text-gray-900">{gatewayMeta.name} Configuration</h3>
+                <h3 className="text-xl font-black text-gray-900">{gatewayMeta.name} Configuration</h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-700">
                   {gatewayMeta.badge}
                 </span>
@@ -116,7 +119,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="space-y-6">
+        <form onSubmit={handleSave} className="space-y-5">
           {/* Status & Mode Row */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Enable/Disable Toggle */}
@@ -141,7 +144,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
 
             {/* Mode Selector */}
             <div className="p-4 rounded-2xl border border-gray-200/80 bg-gray-50/50 space-y-2">
-              <span className="text-sm font-bold text-gray-800 block">Environment Mode</span>
+              <span className="text-sm font-bold text-gray-800 block">Processing Mode</span>
               <div className="flex items-center space-x-2">
                 {gatewayMeta.supportedModes.map((sm) => (
                   <button
@@ -164,88 +167,149 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
             </div>
           </div>
 
-          {/* Public Identifier Input (Never Secret Keys) */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label
-                htmlFor={`public-id-${gatewayMeta.id}`}
-                className="text-sm font-bold text-gray-800 flex items-center space-x-1.5"
-              >
-                <Key className="w-4 h-4 text-gray-500" />
-                <span>{gatewayMeta.publicIdentifierLabel}</span>
-              </label>
-              <span className="text-[11px] text-gray-400 font-medium">Public client identifier</span>
-            </div>
-            <input
-              id={`public-id-${gatewayMeta.id}`}
-              type="text"
-              value={publicIdentifier}
-              onChange={(e) => setPublicIdentifier(e.target.value)}
-              placeholder={gatewayMeta.publicIdentifierPlaceholder}
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-mono focus:border-[#ff6452] focus:ring-2 focus:ring-rose-500/20 outline-none transition-all"
-            />
-            <p className="text-xs text-gray-500">
-              Safe public key/identifier stored in database and used by client checkout SDK.
-            </p>
-          </div>
-
-          {/* Credentials Status & Security Architecture Notice */}
-          <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
-                <div>
-                  <h4 className="text-sm font-bold text-emerald-950">Credential Security</h4>
-                  <p className="text-xs text-emerald-800">
-                    Protected by Supabase Edge Functions server-side vault
+          {/* Secure Credentials State Panel (Hiding Sensitive Keys) */}
+          <div
+            className={`p-5 rounded-2xl border transition-all ${
+              isConfigured
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                : 'bg-amber-50/70 border-amber-200 text-amber-950'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start space-x-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    isConfigured
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {isConfigured ? (
+                    <ShieldCheck className="w-5 h-5" />
+                  ) : (
+                    <ShieldAlert className="w-5 h-5" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      API Credentials State
+                    </span>
+                  </div>
+                  <h4 className="text-base font-black flex items-center space-x-2">
+                    <span>
+                      {isConfigured ? 'Credentials configured' : 'Credentials not configured'}
+                    </span>
+                  </h4>
+                  <p className="text-xs text-gray-600 leading-relaxed">
+                    {isConfigured
+                      ? 'API private keys and secret credentials are securely stored in the server environment vault.'
+                      : 'Secret API keys have not been registered in the server environment yet.'}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white text-emerald-700 border border-emerald-200 shadow-xs">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{isConfigured ? 'Credentials Configured' : 'Ready to Connect'}</span>
+              {/* Status Badge */}
+              <div className="shrink-0">
+                <span
+                  className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-bold border shadow-xs ${
+                    isConfigured
+                      ? 'bg-white text-emerald-700 border-emerald-300'
+                      : 'bg-white text-amber-800 border-amber-300'
+                  }`}
+                >
+                  {isConfigured ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  )}
+                  <span>{isConfigured ? 'Credentials configured' : 'Credentials not configured'}</span>
+                </span>
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <label className="flex items-center space-x-2 cursor-pointer text-xs font-semibold text-emerald-900">
-                <input
-                  id={`mark-configured-${gatewayMeta.id}`}
-                  type="checkbox"
-                  checked={isConfigured}
-                  onChange={(e) => setIsConfigured(e.target.checked)}
-                  className="rounded text-emerald-600 focus:ring-emerald-500"
-                />
-                <span>Mark secret credentials configured in server environment</span>
-              </label>
+            {/* Secret Key Masked Display */}
+            <div className="mt-4 pt-3.5 border-t border-gray-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-2 text-xs">
+                <Lock className="w-3.5 h-3.5 text-gray-500" />
+                <span className="text-gray-600 font-semibold">Sensitive Key:</span>
+                <span className="font-mono text-gray-700 bg-white/80 px-2 py-0.5 rounded border text-[11px]">
+                  {isConfigured ? '●●●●●●●●●●●● (Protected in Server Vault)' : 'No key detected'}
+                </span>
+              </div>
 
+              {/* State Toggle Button */}
               <button
                 type="button"
-                onClick={() => setShowSecretsHelp(!showSecretsHelp)}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 underline flex items-center space-x-1"
+                id={`toggle-configured-btn-${gatewayMeta.id}`}
+                onClick={() => setIsConfigured(!isConfigured)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  isConfigured
+                    ? 'bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100/50'
+                    : 'bg-amber-600 text-white hover:bg-amber-700 shadow-xs'
+                }`}
               >
-                <HelpCircle className="w-3.5 h-3.5" />
-                <span>{showSecretsHelp ? 'Hide Secret Key Setup' : 'How to set secret keys?'}</span>
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  {isConfigured ? 'Change to Not Configured' : 'Mark as Credentials Configured'}
+                </span>
               </button>
             </div>
+          </div>
 
-            {/* Secret Key Setup Accordion */}
-            {showSecretsHelp && (
-              <div className="mt-3 pt-3 border-t border-emerald-200/80 text-xs text-gray-700 space-y-2 bg-white/80 p-3.5 rounded-xl border">
-                <div className="flex items-center space-x-1.5 font-bold text-gray-900">
-                  <Lock className="w-3.5 h-3.5 text-rose-500" />
-                  <span>Never place secret keys in frontend code</span>
-                </div>
-                <p className="text-gray-600 leading-relaxed">
-                  For bank-grade compliance, secret keys are never stored in public database tables or frontend bundles.
-                  Set your private key in your server environment or Supabase Edge Functions:
-                </p>
-                <div className="bg-gray-900 text-gray-100 p-2.5 rounded-lg font-mono text-[11px] select-all">
-                  {gatewayMeta.secretKeyEnvName}=your_secret_live_key_here
-                </div>
-                <p className="text-[11px] text-gray-500">{gatewayMeta.guideNotes}</p>
+          {/* Public Identifier / Public Key (Safe, Non-sensitive) */}
+          {gatewayMeta.publicIdentifierKey && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor={`public-id-${gatewayMeta.id}`}
+                  className="text-xs font-bold text-gray-800 flex items-center space-x-1.5"
+                >
+                  <Key className="w-3.5 h-3.5 text-gray-500" />
+                  <span>{gatewayMeta.publicIdentifierLabel}</span>
+                </label>
+                <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+                  Public / Non-sensitive
+                </span>
               </div>
+              <input
+                id={`public-id-${gatewayMeta.id}`}
+                type="text"
+                value={publicIdentifier}
+                onChange={(e) => setPublicIdentifier(e.target.value)}
+                placeholder={gatewayMeta.publicIdentifierPlaceholder}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 text-xs font-mono focus:border-[#ff6452] focus:ring-2 focus:ring-rose-500/20 outline-none transition-all"
+              />
+              <p className="text-[11px] text-gray-500">
+                Safe public identifier used by client-side checkout. Secret private keys remain hidden on the server.
+              </p>
+            </div>
+          )}
+
+          {/* Vault Security Note */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 text-xs text-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2 font-bold text-slate-900">
+                <Server className="w-3.5 h-3.5 text-[#ff6452]" />
+                <span>Server-Side Secret Key Protection</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVaultInfo(!showVaultInfo)}
+                className="text-[11px] font-bold text-[#ff6452] hover:underline flex items-center space-x-1"
+              >
+                <HelpCircle className="w-3 h-3" />
+                <span>{showVaultInfo ? 'Hide details' : 'Security details'}</span>
+              </button>
+            </div>
+            {showVaultInfo && (
+              <p className="text-[11px] text-slate-600 leading-relaxed pt-1 border-t border-slate-200">
+                For bank-grade PCI-DSS compliance, private secret API keys (e.g.{' '}
+                <code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">
+                  {gatewayMeta.secretKeyEnvName}
+                </code>
+                ) are never typed into or displayed in the browser UI. They are configured securely as server environment secrets.
+              </p>
             )}
           </div>
 
@@ -255,7 +319,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
               href={gatewayMeta.docUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center space-x-1 text-[#ff6452] font-semibold hover:underline"
+              className="flex items-center space-x-1 text-[#ff6452] font-semibold hover:underline text-xs"
             >
               <span>{gatewayMeta.name} Developer Docs</span>
               <ExternalLink className="w-3 h-3" />
@@ -264,7 +328,7 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
               href={gatewayMeta.websiteUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center space-x-1 text-gray-500 hover:text-gray-800"
+              className="flex items-center space-x-1 text-gray-500 hover:text-gray-800 text-xs"
             >
               <span>Merchant Portal</span>
               <ExternalLink className="w-3 h-3" />
@@ -272,12 +336,12 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-end space-x-3 pt-3 border-t border-gray-100">
             <button
               id={`cancel-config-${gatewayMeta.id}`}
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              className="px-4 py-2.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -285,9 +349,9 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
               id={`save-config-${gatewayMeta.id}`}
               type="submit"
               disabled={isSaving}
-              className="px-6 py-2.5 rounded-xl bg-[#ff6452] hover:bg-[#e05342] text-white text-sm font-bold shadow-lg shadow-rose-500/20 transition-all flex items-center space-x-2 disabled:opacity-50"
+              className="px-6 py-2.5 rounded-xl bg-[#ff6452] hover:bg-[#e05342] text-white text-xs font-bold shadow-md transition-all flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
             >
-              <Save className="w-4 h-4" />
+              <Save className="w-3.5 h-3.5" />
               <span>{isSaving ? 'Saving...' : 'Save Configuration'}</span>
             </button>
           </div>
@@ -296,3 +360,4 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
     </div>
   );
 };
+

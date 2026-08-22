@@ -189,6 +189,8 @@ export interface PaymentGatewayItem {
 
 export interface PaymentGatewaysMap {
   yoco?: PaymentGatewayItem;
+  card?: PaymentGatewayItem;
+  cod?: PaymentGatewayItem;
   paypal?: PaymentGatewayItem;
   payfast?: PaymentGatewayItem;
   ozow?: PaymentGatewayItem;
@@ -222,7 +224,7 @@ export interface SettingsTableRow {
 }
 
 export interface PaymentGatewayConfig {
-  activeProvider?: 'yoco' | 'paypal' | 'payfast' | 'ozow' | 'peach_payments' | 'all' | string;
+  activeProvider?: 'yoco' | 'card' | 'cod' | 'paypal' | 'payfast' | 'ozow' | 'peach_payments' | 'all' | string;
   yoco?: {
     enabled: boolean;
     mode: 'test' | 'live';
@@ -230,6 +232,17 @@ export interface PaymentGatewayConfig {
     secretKey?: string;
     integrationMethod?: 'sdk' | 'hosted' | 'hybrid';
     enable3DS?: boolean;
+    configured?: boolean;
+  };
+  card?: {
+    enabled: boolean;
+    mode: 'test' | 'live';
+    publicKey?: string;
+    configured?: boolean;
+  };
+  cod?: {
+    enabled: boolean;
+    instructions?: string;
     configured?: boolean;
   };
   paypal?: {
@@ -258,10 +271,6 @@ export interface PaymentGatewayConfig {
     mode: 'test' | 'live';
     entityId?: string;
     configured?: boolean;
-  };
-  cod?: {
-    enabled: boolean;
-    instructions: string;
   };
   lastUpdated?: string;
 }
@@ -364,5 +373,31 @@ export interface GeneralStoreSettings {
   contactPhone: string;
   storeDescription: string;
   lastUpdated?: string;
+}
+
+export type GatewayHealthStatus = 'healthy' | 'warning' | 'unreachable' | 'not_configured' | 'checking';
+
+export interface GatewayHealthItem {
+  gatewayId: string;
+  gatewayName?: string;
+  status: GatewayHealthStatus;
+  reachable: boolean;
+  credentialsValid: boolean;
+  latencyMs?: number;
+  message: string;
+  checkedAt: string;
+  httpStatus?: number;
+  environmentMode?: 'test' | 'live' | 'sandbox' | string;
+  endpointUrl?: string;
+}
+
+export interface GatewayHealthCheckReport {
+  success: boolean;
+  timestamp: string;
+  totalChecked: number;
+  healthyCount: number;
+  warningCount: number;
+  unreachableCount: number;
+  results: Record<string, GatewayHealthItem>;
 }
 
