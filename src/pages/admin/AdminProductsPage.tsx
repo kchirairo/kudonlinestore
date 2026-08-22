@@ -27,11 +27,13 @@ import {
   FileSpreadsheet,
   FileDown,
   ChevronDown,
+  UploadCloud,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Product, ProductCategory } from '../../types';
 import { ConfirmationModal } from '../../components/admin/ConfirmationModal';
 import { BulkEditModal } from '../../components/admin/BulkEditModal';
+import { CsvImportModal } from '../../components/admin/CsvImportModal';
 import { DatabaseErrorBanner } from '../../components/DatabaseErrorBanner';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
@@ -71,9 +73,10 @@ export const AdminProductsPage: React.FC = () => {
   const [inlineEdits, setInlineEdits] = useState<Record<string, InlineRowEdit>>({});
   const [isSavingInline, setIsSavingInline] = useState<boolean>(false);
 
-  // CSV Export State
+  // CSV Export & Import State
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isExportDropdownOpen, setIsExportDropdownOpen] = useState<boolean>(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
   // Modal deletion state
@@ -567,6 +570,16 @@ export const AdminProductsPage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* CSV Import Button */}
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 font-bold rounded-2xl text-xs transition-all shadow-2xs border border-gray-200 cursor-pointer"
+            title="Import products from a CSV file for bulk creation or updates"
+          >
+            <UploadCloud className="w-4 h-4 text-blue-600" />
+            <span>Import CSV</span>
+          </button>
 
           {/* Quick Edit Grid Mode Toggle */}
           <button
@@ -1289,6 +1302,18 @@ export const AdminProductsPage: React.FC = () => {
         categories={categories}
         onSave={handleSaveBulkUpdates}
         isSaving={isSavingBulk}
+      />
+
+      {/* CSV Import Modal Component */}
+      <CsvImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => {
+          showToast('CSV import completed successfully!', 'success');
+          fetchProducts();
+        }}
+        existingProducts={products}
+        categories={categories}
       />
 
       {/* Confirmation Modal for Single Product Deletion */}

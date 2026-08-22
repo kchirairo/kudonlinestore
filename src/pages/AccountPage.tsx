@@ -30,7 +30,7 @@ export const AccountPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut, showToast } = useShop();
-  const { loading: isAuthLoading, role } = useAuth();
+  const { loading: isAuthLoading, role, refetchProfile } = useAuth();
 
   const [isSignUp, setIsSignUp] = useState<boolean>(false);
   const [isForgotPassword, setIsForgotPassword] = useState<boolean>(false);
@@ -109,7 +109,9 @@ export const AccountPage: React.FC = () => {
     e.preventDefault();
     setLoginError(null);
 
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !password) {
       showToast('Please enter both email and password.', 'error');
       return;
     }
@@ -122,26 +124,30 @@ export const AccountPage: React.FC = () => {
           const redirectUrl = getAuthRedirectUrl('/auth/callback');
           console.log('[Auth] Signing up with emailRedirectTo:', redirectUrl);
           const { data, error } = await supabase.auth.signUp({
-            email: email.trim(),
+            email: cleanEmail,
             password,
             options: {
-              data: { full_name: fullName.trim() || email.split('@')[0] },
+              data: { full_name: fullName.trim() || cleanEmail.split('@')[0] },
               emailRedirectTo: redirectUrl,
             },
           });
           if (error) throw error;
           if (data.session) {
             showToast('Account created and signed in successfully!', 'success');
+            await refetchProfile();
           } else {
             showToast('Account created! Please check your email to verify your account.', 'success');
           }
         } else {
           // 1. Authenticate with Supabase
           const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email: email.trim(),
+            email: cleanEmail,
             password,
           });
-          if (authError) throw authError;
+
+          if (authError) {
+            throw authError;
+          }
 
           // 2. Get the authenticated user from supabase.auth.getUser()
           const {
@@ -217,9 +223,13 @@ export const AccountPage: React.FC = () => {
           }
 
           console.log('Profile role:', userRole || 'none');
+          await refetchProfile();
 
           // 4. Wait for profile query to finish before performing any redirect
-          const returnUrl = (location.state as any)?.returnUrl || new URLSearchParams(location.search).get('returnUrl') || '/';
+          const returnUrl =
+            (location.state as any)?.returnUrl ||
+            new URLSearchParams(location.search).get('returnUrl') ||
+            '/';
 
           if (userRole === 'admin') {
             console.log('Redirecting to: /admin');
@@ -260,19 +270,15 @@ export const AccountPage: React.FC = () => {
         setIsSubmitting(false);
       }
     } else {
-      // Demo authentication mode when Supabase credentials are not configured
-      setTimeout(() => {
-        showToast(`Signed in in Demo Mode as ${email}`);
+      setTimeout(async () => {
+        showToast(`Signed in as ${cleanEmail}`);
+        const returnUrl =
+          (location.state as any)?.returnUrl ||
+          new URLSearchParams(location.search).get('returnUrl') ||
+          '/';
+        navigate(returnUrl, { replace: true });
         setIsSubmitting(false);
-        const returnUrl = (location.state as any)?.returnUrl || new URLSearchParams(location.search).get('returnUrl') || '/';
-        if (localStorage.getItem('kud_store_demo_admin') === 'true') {
-          console.log('Redirecting to: /admin');
-          navigate('/admin', { replace: true });
-        } else {
-          console.log(`Redirecting to: ${returnUrl}`);
-          navigate(returnUrl, { replace: true });
-        }
-      }, 500);
+      }, 300);
     }
   };
 

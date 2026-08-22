@@ -1342,6 +1342,91 @@ export const adminService = {
   },
 
   /**
+   * Bulk import products from CSV data with support for create, update, and mixed modes
+   */
+  async bulkImportProducts(
+    items: Array<{
+      action: 'create' | 'update';
+      id?: string;
+      data: Partial<Product>;
+    }>,
+    mode: 'create_and_update' | 'create_only' | 'update_only' = 'create_and_update'
+  ): Promise<{
+    success: boolean;
+    createdCount: number;
+    updatedCount: number;
+    failedCount: number;
+    errors: string[];
+  }> {
+    if (!items || items.length === 0) {
+      return { success: true, createdCount: 0, updatedCount: 0, failedCount: 0, errors: [] };
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let failedCount = 0;
+    const errors: string[] = [];
+
+    // Filter items based on selected mode
+    const itemsToProcess = items.filter((item) => {
+      if (mode === 'create_only') return item.action === 'create' || !item.id;
+      if (mode === 'update_only') return item.action === 'update' && Boolean(item.id);
+      return true;
+    });
+
+    if (itemsToProcess.length === 0) {
+      return {
+        success: false,
+        createdCount: 0,
+        updatedCount: 0,
+        failedCount: 0,
+        errors: ['No matching rows to process for the selected import mode.'],
+      };
+    }
+
+    for (const item of itemsToProcess) {
+      try {
+        const pData = item.data;
+        const isUpdate = (mode === 'create_and_update' && item.action === 'update' && item.id) ||
+                         (mode === 'update_only' && item.id);
+
+        if (isUpdate && item.id) {
+          // Perform Update
+          const res = await this.updateProduct(item.id, pData);
+          if (res.success) {
+            updatedCount++;
+          } else {
+            failedCount++;
+            errors.push(`Row "${pData.name || item.id}": ${res.error || 'Failed to update'}`);
+          }
+        } else {
+          // Perform Create
+          const res = await this.createProduct(pData);
+          if (res.success) {
+            createdCount++;
+          } else {
+            failedCount++;
+            errors.push(`Row "${pData.name || 'New Item'}": ${res.error || 'Failed to create'}`);
+          }
+        }
+      } catch (rowErr: any) {
+        failedCount++;
+        errors.push(`Error processing "${item.data.name || 'item'}": ${rowErr?.message || 'Unknown error'}`);
+      }
+    }
+
+    const overallSuccess = (createdCount + updatedCount) > 0 || failedCount === 0;
+
+    return {
+      success: overallSuccess,
+      createdCount,
+      updatedCount,
+      failedCount,
+      errors,
+    };
+  },
+
+  /**
    * Delete product directly from Supabase public.products
    */
   async deleteProduct(id: string): Promise<{ success: boolean; error?: string }> {
