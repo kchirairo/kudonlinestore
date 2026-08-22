@@ -24,23 +24,19 @@ export const PromoBanner: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
 
-  if (!promoBanner || !promoBanner.enabled) {
-    return null;
-  }
-
   const {
     layout = 'split',
-    headline,
-    subtext,
-    badgeText,
+    headline = '',
+    subtext = '',
+    badgeText = '',
     showBadge = true,
     ctaText = 'Shop Now',
     ctaLink = '/search',
     showCta = true,
     mediaType = 'image',
-    mediaUrl,
-    mediaPosterUrl,
-    mediaAltText,
+    mediaUrl = '',
+    mediaPosterUrl = '',
+    mediaAltText = '',
     videoAutoplay = true,
     videoMuted = true,
     videoLoop = true,
@@ -49,7 +45,7 @@ export const PromoBanner: React.FC = () => {
     textColor = 'dark',
     accentBadgeColor = '#ff6452',
     slides = [],
-  } = promoBanner;
+  } = promoBanner || {};
 
   // Multi-slide handling
   const isMultiSlide = layout === 'slides' && slides.length > 1;
@@ -66,12 +62,16 @@ export const PromoBanner: React.FC = () => {
 
   // Auto rotate slides if multi-slide
   useEffect(() => {
-    if (!isMultiSlide) return;
+    if (!isMultiSlide || !promoBanner?.enabled) return;
     const timer = setInterval(() => {
       setCurrentSlideIndex((prev) => (prev + 1) % slides.length);
     }, 6000);
     return () => clearInterval(timer);
-  }, [isMultiSlide, slides.length]);
+  }, [isMultiSlide, slides.length, promoBanner?.enabled]);
+
+  if (!promoBanner || !promoBanner.enabled) {
+    return null;
+  }
 
   const handleCtaClick = () => {
     if (!currentCtaLink) return;

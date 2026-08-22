@@ -31,17 +31,15 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
   onSave,
   onTriggerLiveConfirm,
 }) => {
-  if (!isOpen || !gatewayMeta) return null;
-
-  const [enabled, setEnabled] = useState<boolean>(currentConfig?.enabled ?? false);
-  const [mode, setMode] = useState<PaymentGatewayMode>(currentConfig?.mode ?? gatewayMeta.defaultMode);
+  const [enabled, setEnabled] = useState<boolean>(false);
+  const [mode, setMode] = useState<PaymentGatewayMode>('test');
   const [publicIdentifier, setPublicIdentifier] = useState<string>('');
-  const [isConfigured, setIsConfigured] = useState<boolean>(currentConfig?.configured ?? false);
+  const [isConfigured, setIsConfigured] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [showSecretsHelp, setShowSecretsHelp] = useState<boolean>(false);
 
   useEffect(() => {
-    if (currentConfig && gatewayMeta) {
+    if (isOpen && currentConfig && gatewayMeta) {
       setEnabled(currentConfig.enabled ?? false);
       setMode(currentConfig.mode ?? gatewayMeta.defaultMode);
       setIsConfigured(currentConfig.configured ?? false);
@@ -53,7 +51,9 @@ export const PaymentGatewayConfigModal: React.FC<PaymentGatewayConfigModalProps>
         setPublicIdentifier('');
       }
     }
-  }, [currentConfig, gatewayMeta]);
+  }, [isOpen, currentConfig, gatewayMeta]);
+
+  if (!isOpen || !gatewayMeta) return null;
 
   const handleModeChange = (newMode: PaymentGatewayMode) => {
     if (newMode === 'live' && mode !== 'live') {

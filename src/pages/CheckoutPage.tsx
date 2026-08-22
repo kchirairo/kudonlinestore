@@ -63,6 +63,8 @@ export const CheckoutPage: React.FC = () => {
   });
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState<boolean>(false);
 
   // 1. Guard against guest checkouts: require login (only after auth check resolves)
   useEffect(() => {
@@ -177,9 +179,6 @@ export const CheckoutPage: React.FC = () => {
       [name]: value,
     }));
   };
-
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [paymentSuccess, setPaymentSuccess] = useState<boolean>(false);
 
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();

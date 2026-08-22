@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Layers,
@@ -55,34 +55,39 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
   onSave,
   isSaving,
 }) => {
-  if (!isOpen || selectedProducts.length === 0) return null;
-
   // Initialize editing state for all selected products
-  const [items, setItems] = useState<ProductEditState[]>(() => {
-    return selectedProducts.map((p) => {
-      const img =
-        (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim())) ||
-        (typeof (p as any).image_url === 'string' && (p as any).image_url.trim()) ||
-        'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=200&q=80';
+  const [items, setItems] = useState<ProductEditState[]>([]);
 
-      return {
-        id: p.id,
-        name: p.name,
-        brand: p.brand,
-        category: p.category,
-        sku: p.sku,
-        image: img,
-        initialPrice: p.price,
-        price: p.price,
-        initialOriginalPrice: p.originalPrice,
-        originalPrice: p.originalPrice,
-        initialStock: p.stock ?? (p.inStock ? 10 : 0),
-        stock: p.stock ?? (p.inStock ? 10 : 0),
-        initialIsActive: p.isActive !== false,
-        isActive: p.isActive !== false,
-      };
-    });
-  });
+  // Sync selected products into state when modal opens or selection changes
+  useEffect(() => {
+    if (isOpen && selectedProducts && selectedProducts.length > 0) {
+      setItems(
+        selectedProducts.map((p) => {
+          const img =
+            (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim())) ||
+            (typeof (p as any).image_url === 'string' && (p as any).image_url.trim()) ||
+            'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=200&q=80';
+
+          return {
+            id: p.id,
+            name: p.name,
+            brand: p.brand,
+            category: p.category,
+            sku: p.sku,
+            image: img,
+            initialPrice: p.price,
+            price: p.price,
+            initialOriginalPrice: p.originalPrice,
+            originalPrice: p.originalPrice,
+            initialStock: p.stock ?? (p.inStock ? 10 : 0),
+            stock: p.stock ?? (p.inStock ? 10 : 0),
+            initialIsActive: p.isActive !== false,
+            isActive: p.isActive !== false,
+          };
+        })
+      );
+    }
+  }, [isOpen, selectedProducts]);
 
   // Keep search filter within modal
   const [searchFilter, setSearchFilter] = useState('');
@@ -125,9 +130,11 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
         item.originalPrice !== item.initialOriginalPrice ||
         item.stock !== item.initialStock ||
         item.isActive !== item.initialIsActive ||
-        (categoryBatchValue && item.category !== selectedProducts.find((p) => p.id === item.id)?.category)
+        (categoryBatchValue && item.category !== selectedProducts?.find((p) => p.id === item.id)?.category)
     ).length;
   }, [items, categoryBatchValue, selectedProducts]);
+
+  if (!isOpen || !selectedProducts || selectedProducts.length === 0) return null;
 
   // Apply Batch Stock
   const handleApplyBatchStock = () => {
