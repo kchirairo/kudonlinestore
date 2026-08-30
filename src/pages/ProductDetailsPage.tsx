@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Share2,
   Sparkles,
+  QrCode,
 } from 'lucide-react';
 import { productService } from '../services/productService';
 import { useShop } from '../context/ShopContext';
@@ -21,12 +22,24 @@ import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { SEOHead } from '../components/SEOHead';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { ProductCard } from '../components/ProductCard';
+import { ProductImageGallery } from '../components/ProductImageGallery';
 import { generateProductJsonLd, categoryToSlug, getSiteUrl } from '../utils/seo';
+import { marketingService } from '../services/marketingService';
+import { getCurrentAttribution } from '../utils/utmTracker';
+import { ProductSocialPromoModal } from '../components/social/ProductSocialPromoModal';
 
 export const ProductDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { addToCart, isFavourite, toggleFavourite, showToast, user } = useShop();
+  const {
+    addToCart,
+    isFavourite,
+    toggleFavourite,
+    showToast,
+    user,
+    isAccountDisabled,
+    accountStatus,
+  } = useShop();
 
   const [product, setProduct] = useState<Product | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
@@ -35,6 +48,8 @@ export const ProductDetailsPage: React.FC = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [selectedVariant, setSelectedVariant] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
+  const [isPromoModalOpen, setIsPromoModalOpen] = useState<boolean>(false);
+  const [attribution] = useState(getCurrentAttribution());
 
   const fetchProduct = () => {
     if (!id) return;
@@ -49,6 +64,11 @@ export const ProductDetailsPage: React.FC = () => {
           setSelectedVariant(res.sizeOrVariant);
         }
         setIsLoading(false);
+
+        // Track product view for Social Commerce & Marketing Analytics
+        if (res) {
+          marketingService.trackProductView(res, user);
+        }
 
         if (res?.category) {
           productService
@@ -133,7 +153,17 @@ export const ProductDetailsPage: React.FC = () => {
       navigate('/account', { state: { returnUrl: `/product/${product.id}` } });
       return;
     }
+    if (isAccountDisabled) {
+      showToast(
+        accountStatus === 'on_hold'
+          ? 'Your account is currently on hold. Adding items to cart is restricted.'
+          : 'Your account has been disabled. Adding items to cart is restricted.',
+        'error'
+      );
+      return;
+    }
     addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
+    marketingService.trackAddToCart(product, quantity, user);
   };
 
   const handleBuyNow = () => {
@@ -142,7 +172,17 @@ export const ProductDetailsPage: React.FC = () => {
       navigate('/account', { state: { returnUrl: `/product/${product.id}` } });
       return;
     }
+    if (isAccountDisabled) {
+      showToast(
+        accountStatus === 'on_hold'
+          ? 'Your account is currently on hold. New purchases are suspended.'
+          : 'Your account has been disabled. New purchases are not permitted.',
+        'error'
+      );
+      return;
+    }
     addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
+    marketingService.trackAddToCart(product, quantity, user);
     navigate('/cart');
   };
 
@@ -213,8 +253,8 @@ export const ProductDetailsPage: React.FC = () => {
           />
         </div>
 
-        {/* Top Navigation & Share Bar */}
-        <div className="flex items-center justify-between mb-6">
+        {/* Top Navigation, Social Badge & Share Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <button
             id="product-back-btn"
             onClick={() => navigate(-1)}
@@ -225,84 +265,44 @@ export const ProductDetailsPage: React.FC = () => {
             <span>Back</span>
           </button>
 
-          <button
-            id="product-top-share-btn"
-            onClick={handleShare}
-            className="flex items-center gap-1.5 text-xs font-bold text-gray-700 dark:text-slate-300 hover:text-[#ff6452] dark:hover:text-[#ff6452] bg-gray-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-3.5 py-1.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-2xs border border-gray-200/50 dark:border-slate-700"
-            title="Share this product"
-            aria-label="Share this product with contacts"
-          >
-            <Share2 className="w-3.5 h-3.5 text-[#ff6452]" />
-            <span>Share</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              id="product-promo-campaign-btn"
+              onClick={() => setIsPromoModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs font-bold text-gray-700 dark:text-slate-200 hover:text-white bg-gray-100 hover:bg-gray-900 dark:bg-slate-800 dark:hover:bg-white dark:hover:text-gray-900 px-3.5 py-1.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-2xs border border-gray-200/60 dark:border-slate-700"
+              title="Generate trackable social links"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#ff6452]" />
+              <span>Social Links & QR</span>
+            </button>
+
+            <button
+              id="product-top-share-btn"
+              onClick={() => setIsPromoModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs font-bold text-gray-700 dark:text-slate-300 hover:text-[#ff6452] dark:hover:text-[#ff6452] bg-gray-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-3.5 py-1.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-2xs border border-gray-200/50 dark:border-slate-700"
+              title="Share this product"
+              aria-label="Share this product with contacts"
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#ff6452]" />
+              <span>Share</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
-          {/* Left Column: Image Gallery */}
-          <div className="flex flex-col gap-4">
-            <div className="relative w-full aspect-square bg-gray-50 dark:bg-slate-800 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-800 shadow-xs">
-              <img
-                src={product.images[selectedImageIndex] || product.images[0]}
-                alt={`${product.name} - ${product.brand || 'KUD'} ${product.category} South Africa (Image ${selectedImageIndex + 1})`}
-                className="w-full h-full object-cover"
-                decoding="async"
-                fetchPriority="high"
-              />
-
-              {/* Badges */}
-              <div className="absolute top-4 left-4 flex flex-col gap-2 pointer-events-none">
-                {product.discountPercentage && (
-                  <span className="bg-[#ff6452] text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">
-                    -{product.discountPercentage}% OFF
-                  </span>
-                )}
-                {product.condition && (
-                  <span className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md text-gray-900 dark:text-white text-xs font-semibold px-3 py-1 rounded-full border border-gray-200 dark:border-slate-700 shadow-sm">
-                    {product.condition}
-                  </span>
-                )}
-              </div>
-
-              {/* Favourite Button */}
-              <button
-                onClick={() => toggleFavourite(product.id)}
-                className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md flex items-center justify-center text-[#ff6452] hover:bg-white dark:hover:bg-slate-800 shadow-md active:scale-95 transition-all cursor-pointer border border-transparent dark:border-slate-700"
-                aria-label={isFav ? 'Remove from favourites' : 'Add to favourites'}
-              >
-                <Star
-                  className={`w-5 h-5 ${
-                    isFav ? 'fill-[#ff6452] text-[#ff6452]' : 'text-gray-400 dark:text-slate-400'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* Gallery Thumbnails */}
-            {product.images.length > 1 && (
-              <div className="flex items-center gap-3 overflow-x-auto pb-2">
-                {product.images.map((img, idx) => (
-                  <button
-                    key={`${product.id}-img-${idx}`}
-                    onClick={() => setSelectedImageIndex(idx)}
-                    className={`w-16 h-16 rounded-2xl overflow-hidden border-2 transition-all shrink-0 cursor-pointer ${
-                      selectedImageIndex === idx
-                        ? 'border-[#ff6452] scale-105 shadow-sm'
-                        : 'border-transparent opacity-70 hover:opacity-100'
-                    }`}
-                    aria-label={`View image ${idx + 1} of ${product.name}`}
-                  >
-                    <img
-                      src={img}
-                      alt={`${product.name} thumbnail ${idx + 1}`}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Left Column: Mobile-Friendly Swipeable Image Gallery */}
+          <ProductImageGallery
+            images={product.images}
+            productName={product.name}
+            brand={product.brand}
+            category={product.category}
+            discountPercentage={product.discountPercentage}
+            condition={product.condition}
+            isFavourite={isFav}
+            onToggleFavourite={() => toggleFavourite(product.id)}
+            selectedIndex={selectedImageIndex}
+            onSelectIndex={setSelectedImageIndex}
+          />
 
           {/* Right Column: Product Info & Actions */}
           <div className="flex flex-col justify-between space-y-6">
@@ -415,16 +415,28 @@ export const ProductDetailsPage: React.FC = () => {
                     <p className="text-[11px] text-gray-500 dark:text-slate-400">Send directly to your contacts via WhatsApp, SMS or apps</p>
                   </div>
                 </div>
-                <button
-                  id="product-inline-share-btn"
-                  type="button"
-                  onClick={handleShare}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-[#ff6452] hover:text-white dark:hover:bg-[#ff6452] text-gray-800 dark:text-slate-200 text-xs font-bold rounded-xl border border-gray-200 dark:border-slate-700 hover:border-transparent transition-all shadow-2xs cursor-pointer shrink-0 active:scale-95"
-                  aria-label="Share product with contacts"
-                >
-                  <Share2 className="w-3.5 h-3.5 text-[#ff6452]" />
-                  <span>Share</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    id="product-inline-promo-btn"
+                    type="button"
+                    onClick={() => setIsPromoModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#ff6452] text-white hover:bg-[#e05342] text-xs font-bold rounded-xl transition-all shadow-2xs cursor-pointer shrink-0 active:scale-95"
+                    aria-label="Generate trackable campaign links"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Social Link</span>
+                  </button>
+                  <button
+                    id="product-inline-share-btn"
+                    type="button"
+                    onClick={handleShare}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-gray-100 text-gray-800 dark:text-slate-200 text-xs font-bold rounded-xl border border-gray-200 dark:border-slate-700 hover:border-transparent transition-all shadow-2xs cursor-pointer shrink-0 active:scale-95"
+                    aria-label="Share product with contacts"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-[#ff6452]" />
+                    <span>Share</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -499,6 +511,13 @@ export const ProductDetailsPage: React.FC = () => {
           </section>
         )}
       </div>
+
+      {/* Social Commerce Link Generator & QR Code Modal */}
+      <ProductSocialPromoModal
+        product={product}
+        isOpen={isPromoModalOpen}
+        onClose={() => setIsPromoModalOpen(false)}
+      />
     </>
   );
 };

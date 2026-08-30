@@ -1,25 +1,47 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
-  Upload,
-  Image as ImageIcon,
   Save,
+  Eye,
   AlertCircle,
-  Trash2,
-  RefreshCw,
-  Star,
-  ChevronLeft,
-  ChevronRight,
+  CheckCircle2,
   Sparkles,
+  RefreshCw,
+  Layers,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
-import { ProductCategory, ProductCondition, Product } from '../../types';
+import {
+  ProductCategory,
+  ProductCondition,
+  ProductPublishStatus,
+  ProductVariantItem,
+  ProductVideoItem,
+  Product,
+} from '../../types';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
-import { convertImageToWebP } from '../../utils/imageUpload';
-import { SkuGeneratorWidget } from '../../components/admin/SkuGeneratorWidget';
 import { generateUniqueSku } from '../../utils/skuGenerator';
+import { convertImageToWebP } from '../../utils/imageUpload';
+
+// Subcomponents
+import { ProductBasicInfoSection } from '../../components/admin/product-editor/ProductBasicInfoSection';
+import { ProductPricingInventorySection } from '../../components/admin/product-editor/ProductPricingInventorySection';
+import { ProductVariantsManager } from '../../components/admin/product-editor/ProductVariantsManager';
+import {
+  ProductMediaManager,
+  StagedImageItem,
+  StagedVideoItem,
+} from '../../components/admin/product-editor/ProductMediaManager';
+import { ProductCategoryFields } from '../../components/admin/product-editor/ProductCategoryFields';
+import { ProductSeoSection } from '../../components/admin/product-editor/ProductSeoSection';
+import { ProductShippingSection } from '../../components/admin/product-editor/ProductShippingSection';
+import { ProductEditorSidebar } from '../../components/admin/product-editor/ProductEditorSidebar';
+import { ProductLivePreviewModal } from '../../components/admin/product-editor/ProductLivePreviewModal';
+
+const DRAFT_LOCAL_STORAGE_KEY = 'kud_store_product_draft_add';
 
 export const AdminAddProductPage: React.FC = () => {
   const navigate = useNavigate();
@@ -29,770 +51,803 @@ export const AdminAddProductPage: React.FC = () => {
   const [existingProducts, setExistingProducts] = useState<Product[]>([]);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const [successMsg, setSuccessMsg] = useState<string>('');
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
 
-  // Form State
+  // Draft recovery state
+  const [hasRestorableDraft, setHasRestorableDraft] = useState<boolean>(false);
+  const [draftTimestamp, setDraftTimestamp] = useState<string>('');
+
+  // Live Preview Modal
+  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+
+  // ----------------------------------------------------
+  // FORM STATE
+  // ----------------------------------------------------
   const [name, setName] = useState<string>('');
-  const [brand, setBrand] = useState<string>('');
-  const [category, setCategory] = useState<string>('Beauty');
-  const [description, setDescription] = useState<string>('');
-  const [price, setPrice] = useState<string>('');
-  const [originalPrice, setOriginalPrice] = useState<string>('');
-  const [stock, setStock] = useState<string>('20');
+  const [brand, setBrand] = useState<string>('KUD Store');
+  const [category, setCategory] = useState<ProductCategory>('Beauty');
+  const [subCategory, setSubCategory] = useState<string>('');
+  const [productType, setProductType] = useState<string>('Physical Product');
   const [sku, setSku] = useState<string>('');
   const [sizeOrVariant, setSizeOrVariant] = useState<string>('');
   const [condition, setCondition] = useState<ProductCondition>('Brand New');
-  const [isFeatured, setIsFeatured] = useState<boolean>(false);
+  const [shortDescription, setShortDescription] = useState<string>('');
+  const [description, setDescription] = useState<string>('');
+  const [tags, setTags] = useState<string[]>([]);
+
+  // Pricing & Inventory
+  const [price, setPrice] = useState<string>('');
+  const [originalPrice, setOriginalPrice] = useState<string>('');
+  const [costPrice, setCostPrice] = useState<string>('');
+  const [stock, setStock] = useState<string>('20');
+  const [lowStockThreshold, setLowStockThreshold] = useState<string>('5');
+  const [trackInventory, setTrackInventory] = useState<boolean>(true);
+  const [allowBackorders, setAllowBackorders] = useState<boolean>(false);
+
+  // Status & Visibility
+  const [productStatus, setProductStatus] = useState<ProductPublishStatus>('active');
+  const [scheduledAt, setScheduledAt] = useState<string>('');
   const [isActive, setIsActive] = useState<boolean>(true);
+  const [isFeatured, setIsFeatured] = useState<boolean>(false);
 
-  // Image Upload State
-  const [imageFiles, setImageFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [imageUrlInput, setImageUrlInput] = useState<string>('');
-  const [extraImageUrls, setExtraImageUrls] = useState<string[]>([]);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
+  // Media
+  const [images, setImages] = useState<StagedImageItem[]>([]);
+  const [videos, setVideos] = useState<StagedVideoItem[]>([]);
+  const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
+  const [mediaUploadProgress, setMediaUploadProgress] = useState<number>(0);
 
-  // Replacement State
-  const [replacingFileIndex, setReplacingFileIndex] = useState<number | null>(null);
-  const replaceSingleFileInputRef = useRef<HTMLInputElement | null>(null);
-  const replaceAllFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Variants
+  const [variants, setVariants] = useState<ProductVariantItem[]>([]);
 
+  // Category Specific Attributes
+  const [categoryAttributes, setCategoryAttributes] = useState<Record<string, any>>({});
+
+  // SEO
+  const [seoTitle, setSeoTitle] = useState<string>('');
+  const [metaDescription, setMetaDescription] = useState<string>('');
+  const [slug, setSlug] = useState<string>('');
+  const [focusKeywords, setFocusKeywords] = useState<string[]>([]);
+
+  // Shipping
+  const [weight, setWeight] = useState<string>('0.5');
+  const [shippingLength, setShippingLength] = useState<string>('20');
+  const [shippingWidth, setShippingWidth] = useState<string>('15');
+  const [shippingHeight, setShippingHeight] = useState<string>('10');
+  const [shippingClass, setShippingClass] = useState<string>('Standard Courier');
+  const [isFreeShipping, setIsFreeShipping] = useState<boolean>(false);
+  const [requiresShipping, setRequiresShipping] = useState<boolean>(true);
+
+  // ----------------------------------------------------
+  // INITIAL DATA FETCH
+  // ----------------------------------------------------
   useEffect(() => {
     adminService.getCategories().then((res) => {
-      setCategories(res.map((c) => c.name));
+      if (res && res.length > 0) {
+        setCategories(res.map((c) => c.name));
+      } else {
+        setCategories(['Beauty', 'Home', 'Sports & Leisure', 'Technology', 'Books', 'Others']);
+      }
     });
+
     adminService.getProducts().then((res) => {
-      setExistingProducts(res);
+      setExistingProducts(res || []);
     });
+
+    // Check for existing saved draft in localStorage
+    try {
+      const saved = localStorage.getItem(DRAFT_LOCAL_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.name || parsed.description || parsed.price)) {
+          setHasRestorableDraft(true);
+          setDraftTimestamp(parsed._savedAt ? new Date(parsed._savedAt).toLocaleTimeString() : 'earlier');
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read draft from localStorage', e);
+    }
   }, []);
 
-  const handleFilesSelected = (files: FileList | File[]) => {
-    const validFiles: File[] = [];
+  // ----------------------------------------------------
+  // AUTO-SAVE DRAFT TO LOCALSTORAGE
+  // ----------------------------------------------------
+  useEffect(() => {
+    if (!name && !price && !description) return;
 
-    Array.from(files).forEach((file) => {
-      if (!file.type.startsWith('image/')) {
-        setErrorMsg('Please upload valid image files (PNG, JPG, WEBP, AVIF).');
-        return;
+    const draftData = {
+      name,
+      brand,
+      category,
+      subCategory,
+      productType,
+      sku,
+      sizeOrVariant,
+      condition,
+      shortDescription,
+      description,
+      tags,
+      price,
+      originalPrice,
+      costPrice,
+      stock,
+      lowStockThreshold,
+      trackInventory,
+      allowBackorders,
+      productStatus,
+      isActive,
+      isFeatured,
+      images: images.map((img) => ({ id: img.id, url: img.url, altText: img.altText, isRemote: img.isRemote })),
+      variants,
+      categoryAttributes,
+      seoTitle,
+      metaDescription,
+      slug,
+      focusKeywords,
+      weight,
+      shippingLength,
+      shippingWidth,
+      shippingHeight,
+      shippingClass,
+      isFreeShipping,
+      requiresShipping,
+      _savedAt: new Date().toISOString(),
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_LOCAL_STORAGE_KEY, JSON.stringify(draftData));
+        setLastSavedAt(new Date());
+      } catch (e) {
+        console.warn('LocalStorage draft save error', e);
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setErrorMsg(`File "${file.name}" exceeds the 10MB limit.`);
-        return;
-      }
-      validFiles.push(file);
+    }, 2500);
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setImagePreviews((prev) => [...prev, reader.result as string]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    return () => clearTimeout(timer);
+  }, [
+    name,
+    brand,
+    category,
+    subCategory,
+    productType,
+    sku,
+    sizeOrVariant,
+    condition,
+    shortDescription,
+    description,
+    tags,
+    price,
+    originalPrice,
+    costPrice,
+    stock,
+    lowStockThreshold,
+    trackInventory,
+    allowBackorders,
+    productStatus,
+    isActive,
+    isFeatured,
+    images,
+    variants,
+    categoryAttributes,
+    seoTitle,
+    metaDescription,
+    slug,
+    focusKeywords,
+    weight,
+    shippingLength,
+    shippingWidth,
+    shippingHeight,
+    shippingClass,
+    isFreeShipping,
+    requiresShipping,
+  ]);
 
-    if (validFiles.length > 0) {
-      setErrorMsg('');
-      setImageFiles((prev) => [...prev, ...validFiles]);
+  const handleRestoreDraft = () => {
+    try {
+      const saved = localStorage.getItem(DRAFT_LOCAL_STORAGE_KEY);
+      if (!saved) return;
+      const d = JSON.parse(saved);
+      if (d.name !== undefined) setName(d.name);
+      if (d.brand !== undefined) setBrand(d.brand);
+      if (d.category !== undefined) setCategory(d.category);
+      if (d.subCategory !== undefined) setSubCategory(d.subCategory);
+      if (d.productType !== undefined) setProductType(d.productType);
+      if (d.sku !== undefined) setSku(d.sku);
+      if (d.sizeOrVariant !== undefined) setSizeOrVariant(d.sizeOrVariant);
+      if (d.condition !== undefined) setCondition(d.condition);
+      if (d.shortDescription !== undefined) setShortDescription(d.shortDescription);
+      if (d.description !== undefined) setDescription(d.description);
+      if (d.tags !== undefined) setTags(d.tags);
+      if (d.price !== undefined) setPrice(d.price);
+      if (d.originalPrice !== undefined) setOriginalPrice(d.originalPrice);
+      if (d.costPrice !== undefined) setCostPrice(d.costPrice);
+      if (d.stock !== undefined) setStock(d.stock);
+      if (d.lowStockThreshold !== undefined) setLowStockThreshold(d.lowStockThreshold);
+      if (d.trackInventory !== undefined) setTrackInventory(d.trackInventory);
+      if (d.allowBackorders !== undefined) setAllowBackorders(d.allowBackorders);
+      if (d.productStatus !== undefined) setProductStatus(d.productStatus);
+      if (d.isActive !== undefined) setIsActive(d.isActive);
+      if (d.isFeatured !== undefined) setIsFeatured(d.isFeatured);
+      if (d.images !== undefined) setImages(d.images);
+      if (d.variants !== undefined) setVariants(d.variants);
+      if (d.categoryAttributes !== undefined) setCategoryAttributes(d.categoryAttributes);
+      if (d.seoTitle !== undefined) setSeoTitle(d.seoTitle);
+      if (d.metaDescription !== undefined) setMetaDescription(d.metaDescription);
+      if (d.slug !== undefined) setSlug(d.slug);
+      if (d.focusKeywords !== undefined) setFocusKeywords(d.focusKeywords);
+      if (d.weight !== undefined) setWeight(d.weight);
+      if (d.shippingLength !== undefined) setShippingLength(d.shippingLength);
+      if (d.shippingWidth !== undefined) setShippingWidth(d.shippingWidth);
+      if (d.shippingHeight !== undefined) setShippingHeight(d.shippingHeight);
+      if (d.shippingClass !== undefined) setShippingClass(d.shippingClass);
+      if (d.isFreeShipping !== undefined) setIsFreeShipping(d.isFreeShipping);
+      if (d.requiresShipping !== undefined) setRequiresShipping(d.requiresShipping);
+
+      setHasRestorableDraft(false);
+      showToast('Restored unsaved draft from your previous session.', 'info');
+    } catch (e) {
+      console.error('Failed to restore draft', e);
     }
   };
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFilesSelected(e.target.files);
-      e.target.value = '';
-    }
+  const handleDiscardDraft = () => {
+    localStorage.removeItem(DRAFT_LOCAL_STORAGE_KEY);
+    setHasRestorableDraft(false);
   };
 
-  // Replace a specific staged file
-  const handleTriggerReplaceFile = (index: number) => {
-    setReplacingFileIndex(index);
-    if (replaceSingleFileInputRef.current) {
-      replaceSingleFileInputRef.current.value = '';
-      replaceSingleFileInputRef.current.click();
-    }
-  };
-
-  const handleReplaceSingleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (replacingFileIndex === null || !e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
-    if (!file.type.startsWith('image/')) {
-      setErrorMsg('Please select a valid image file.');
-      return;
-    }
+  // ----------------------------------------------------
+  // MEDIA HANDLERS
+  // ----------------------------------------------------
+  const handleUploadNewImages = async (files: File[]) => {
+    setErrorMsg('');
+    setIsUploadingMedia(true);
+    setMediaUploadProgress(20);
 
     try {
-      const optimized = await convertImageToWebP(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          const idx = replacingFileIndex;
-          setImageFiles((prev) => prev.map((f, i) => (i === idx ? optimized : f)));
-          setImagePreviews((prev) => prev.map((p, i) => (i === idx ? (reader.result as string) : p)));
-          showToast('Image replaced successfully.', 'info');
-        }
-      };
-      reader.readAsDataURL(optimized);
-    } finally {
-      setReplacingFileIndex(null);
-    }
-  };
+      const newItems: StagedImageItem[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const webpFile = await convertImageToWebP(file);
+        const reader = new FileReader();
 
-  // Replace All Staged Images
-  const handleTriggerReplaceAll = () => {
-    if (replaceAllFileInputRef.current) {
-      replaceAllFileInputRef.current.value = '';
-      replaceAllFileInputRef.current.click();
-    }
-  };
+        const previewDataUrl = await new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(webpFile);
+        });
 
-  const handleReplaceAllFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    setImageFiles([]);
-    setImagePreviews([]);
-    setExtraImageUrls([]);
-    handleFilesSelected(e.target.files);
-    showToast('Gallery replaced with newly selected images.', 'info');
-  };
+        newItems.push({
+          id: `img-staged-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+          url: previewDataUrl,
+          file: webpFile,
+          altText: `${name || 'Product'} photo ${images.length + i + 1}`,
+          sizeBytes: webpFile.size,
+        });
 
-  // Remove single file
-  const handleRemoveFile = (index: number) => {
-    setImageFiles((prev) => prev.filter((_, i) => i !== index));
-    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
-    showToast('Image removed from staging.', 'info');
-  };
-
-  // Clear all staged images
-  const handleClearAllStaged = () => {
-    setImageFiles([]);
-    setImagePreviews([]);
-    setExtraImageUrls([]);
-    showToast('All staged images removed.', 'info');
-  };
-
-  // Make Primary File
-  const handleMakePrimaryFile = (index: number) => {
-    if (index === 0 || index >= imageFiles.length) return;
-    const targetFile = imageFiles[index];
-    const targetPrev = imagePreviews[index];
-
-    const restFiles = imageFiles.filter((_, i) => i !== index);
-    const restPrevs = imagePreviews.filter((_, i) => i !== index);
-
-    setImageFiles([targetFile, ...restFiles]);
-    setImagePreviews([targetPrev, ...restPrevs]);
-    showToast('Primary cover image updated.', 'success');
-  };
-
-  // Move Staged File Left/Right
-  const handleMoveFile = (index: number, direction: 'left' | 'right') => {
-    const newIdx = direction === 'left' ? index - 1 : index + 1;
-    if (newIdx < 0 || newIdx >= imageFiles.length) return;
-
-    const copyFiles = [...imageFiles];
-    const copyPrevs = [...imagePreviews];
-
-    const tempF = copyFiles[index];
-    copyFiles[index] = copyFiles[newIdx];
-    copyFiles[newIdx] = tempF;
-
-    const tempP = copyPrevs[index];
-    copyPrevs[index] = copyPrevs[newIdx];
-    copyPrevs[newIdx] = tempP;
-
-    setImageFiles(copyFiles);
-    setImagePreviews(copyPrevs);
-  };
-
-  const handleAddImageUrl = () => {
-    const trimmed = imageUrlInput.trim();
-    if (trimmed) {
-      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-        setErrorMsg('Please enter a valid image URL starting with http:// or https://');
-        return;
+        setMediaUploadProgress(Math.min(90, 20 + Math.round(((i + 1) / files.length) * 70)));
       }
-      setExtraImageUrls((prev) => [...prev, trimmed]);
-      setImageUrlInput('');
-      setErrorMsg('');
-      showToast('Image URL added.', 'info');
+
+      setImages((prev) => [...prev, ...newItems]);
+      setMediaUploadProgress(100);
+      showToast(`Added ${files.length} product image(s)`, 'success');
+    } catch (err: any) {
+      console.error('Image staging error:', err);
+      setErrorMsg(err?.message || 'Error processing image uploads');
+    } finally {
+      setIsUploadingMedia(false);
+      setMediaUploadProgress(0);
     }
   };
 
-  const handleRemoveExtraUrl = (index: number) => {
-    setExtraImageUrls((prev) => prev.filter((_, i) => i !== index));
+  const handleUploadNewVideo = async (file: File) => {
+    setErrorMsg('');
+    setIsUploadingMedia(true);
+    try {
+      const previewUrl = URL.createObjectURL(file);
+      const newVideo: StagedVideoItem = {
+        id: `vid-staged-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        url: previewUrl,
+        file: file,
+        title: file.name,
+        sizeBytes: file.size,
+        isPrimary: videos.length === 0,
+      };
+      setVideos((prev) => [...prev, newVideo]);
+      showToast('Video added to staging', 'success');
+    } catch (err: any) {
+      console.error('Video upload error:', err);
+      setErrorMsg('Failed to stage video file');
+    } finally {
+      setIsUploadingMedia(false);
+    }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleImageReplace = async (index: number, newFile: File) => {
+    try {
+      const webpFile = await convertImageToWebP(newFile);
+      const reader = new FileReader();
+      const previewDataUrl = await new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(webpFile);
+      });
+
+      setImages((prev) =>
+        prev.map((item, idx) =>
+          idx === index
+            ? {
+                ...item,
+                url: previewDataUrl,
+                file: webpFile,
+                sizeBytes: webpFile.size,
+              }
+            : item
+        )
+      );
+
+      showToast(`Image #${index + 1} replaced`, 'success');
+    } catch (err: any) {
+      console.error('Failed to replace image', err);
+      setErrorMsg('Failed to replace image');
+    }
+  };
+
+  const handleImageDelete = async (index: number) => {
+    setImages((prev) => prev.filter((_, idx) => idx !== index));
+    showToast(`Image #${index + 1} removed`, 'info');
+  };
+
+  const handleVideoReplace = async (index: number, newFile: File) => {
+    try {
+      const previewUrl = URL.createObjectURL(newFile);
+      setVideos((prev) =>
+        prev.map((v, idx) =>
+          idx === index
+            ? {
+                ...v,
+                url: previewUrl,
+                file: newFile,
+                title: newFile.name,
+                sizeBytes: newFile.size,
+              }
+            : v
+        )
+      );
+      showToast('Video replaced', 'success');
+    } catch (err: any) {
+      console.error('Failed to replace video', err);
+    }
+  };
+
+  const handleVideoDelete = async (index: number) => {
+    setVideos((prev) => prev.filter((_, idx) => idx !== index));
+    showToast('Video removed', 'info');
+  };
+
+  // ----------------------------------------------------
+  // SUBMIT / CREATE PRODUCT
+  // ----------------------------------------------------
+  const handleSaveProduct = async (overrideStatus?: ProductPublishStatus) => {
     setErrorMsg('');
+    setSuccessMsg('');
 
     // Validation
     if (!name.trim()) {
       setErrorMsg('Product name is required.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    if (!price || Number(price) < 0) {
-      setErrorMsg('Price must be a valid number greater than or equal to 0.');
+    const parsedPrice = parseFloat(price);
+    if (isNaN(parsedPrice) || parsedPrice < 0) {
+      setErrorMsg('Please enter a valid selling price.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    if (!stock || Number(stock) < 0) {
-      setErrorMsg('Stock quantity must be greater than or equal to 0.');
-      return;
-    }
-
-    if (!category) {
-      setErrorMsg('Please select a product category.');
+    if (!description.trim()) {
+      setErrorMsg('Please enter a full product description.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
     setIsSaving(true);
 
     try {
-      const allUrls = [...extraImageUrls];
-      if (imageUrlInput.trim() && !allUrls.includes(imageUrlInput.trim())) {
-        allUrls.push(imageUrlInput.trim());
+      // 1. Separate raw Files from existing remote URLs
+      const filesToUpload: File[] = [];
+      const finalImageUrls: string[] = [];
+
+      for (const img of images) {
+        if (img.file) {
+          filesToUpload.push(img.file);
+        } else if (img.url && !img.url.startsWith('blob:') && !img.url.startsWith('data:')) {
+          finalImageUrls.push(img.url);
+        }
       }
 
+      // Videos to upload
+      const videoFilesToUpload: File[] = [];
+      const finalVideoItems: ProductVideoItem[] = [];
+
+      for (const vid of videos) {
+        if (vid.file) {
+          videoFilesToUpload.push(vid.file);
+        } else if (vid.url && !vid.url.startsWith('blob:')) {
+          finalVideoItems.push({
+            id: vid.id,
+            url: vid.url,
+            title: vid.title,
+            durationSeconds: vid.durationSeconds,
+            sizeBytes: vid.sizeBytes,
+            isPrimary: vid.isPrimary,
+          });
+        }
+      }
+
+      // Sku Fallback
       const finalSku =
         sku.trim() ||
         generateUniqueSku({
-          name: name.trim() || 'Product',
+          name,
           category,
           brand,
           sizeOrVariant,
           existingProducts,
         });
 
+      // Calculate profit margin
+      const numCost = parseFloat(costPrice) || 0;
+      const profitMarginVal =
+        numCost > 0 && parsedPrice > 0
+          ? Number((((parsedPrice - numCost) / parsedPrice) * 100).toFixed(2))
+          : undefined;
+
+      // Effective target status
+      const targetPublishStatus = overrideStatus || productStatus;
+      const targetIsActive = targetPublishStatus === 'active' ? true : false;
+
+      // Package dimensions
+      const dimObj = {
+        length: parseFloat(shippingLength) || 20,
+        width: parseFloat(shippingWidth) || 15,
+        height: parseFloat(shippingHeight) || 10,
+      };
+
+      // Alt texts map
+      const altTextsMap: Record<string, string> = {};
+      images.forEach((img, idx) => {
+        if (img.altText) {
+          altTextsMap[`img_${idx}`] = img.altText;
+        }
+      });
+
+      const productPayload: Partial<Product> = {
+        name: name.trim(),
+        brand: brand.trim() || 'KUD Store',
+        category,
+        subCategory: subCategory.trim() || undefined,
+        productType,
+        shortDescription: shortDescription.trim() || undefined,
+        description: description.trim(),
+        tags,
+        price: parsedPrice,
+        originalPrice: originalPrice ? parseFloat(originalPrice) : undefined,
+        costPrice: numCost > 0 ? numCost : undefined,
+        profitMargin: profitMarginVal,
+        stock: parseInt(stock, 10) || 0,
+        lowStockThreshold: parseInt(lowStockThreshold, 10) || 5,
+        trackInventory,
+        allowBackorders,
+        sku: finalSku,
+        sizeOrVariant: sizeOrVariant.trim() || undefined,
+        condition,
+        productStatus: targetPublishStatus,
+        scheduledAt: scheduledAt || undefined,
+        isActive: targetIsActive,
+        isFeatured,
+        images: finalImageUrls,
+        videos: finalVideoItems,
+        variants,
+        categoryAttributes,
+        weight: parseFloat(weight) || 0.5,
+        dimensions: dimObj,
+        shippingClass,
+        isFreeShipping,
+        requiresShipping,
+        seoTitle: seoTitle.trim() || undefined,
+        metaDescription: metaDescription.trim() || undefined,
+        slug: slug.trim() || undefined,
+        focusKeywords,
+        imageAltTexts: altTextsMap,
+      };
+
+      console.log('[AdminAddProductPage] Submitting product payload:', productPayload);
+
       const result = await adminService.createProduct(
-        {
-          name: name.trim(),
-          brand: brand.trim() || 'KUD Store',
-          category: category as ProductCategory,
-          description: description.trim(),
-          price: Number(price),
-          originalPrice: originalPrice ? Number(originalPrice) : undefined,
-          stock: Number(stock),
-          sku: finalSku,
-          sizeOrVariant: sizeOrVariant.trim(),
-          condition,
-          isFeatured,
-          isActive,
-          images: allUrls,
-        },
-        imageFiles.length > 0 ? imageFiles : undefined
+        productPayload,
+        filesToUpload,
+        videoFilesToUpload
       );
 
-      setIsSaving(false);
-
-      if (result.success) {
-        showToast(`Product "${name}" created successfully`, 'success');
-        navigate('/admin/products');
-      } else {
-        setErrorMsg(result.error || 'Failed to save product to database.');
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Failed to create product in database.');
       }
+
+      // Clear draft on successful save
+      localStorage.removeItem(DRAFT_LOCAL_STORAGE_KEY);
+
+      showToast(`Product "${result.data.name}" created successfully!`, 'success');
+      setSuccessMsg(`Product created successfully! Redirecting to products list...`);
+
+      setTimeout(() => {
+        navigate('/admin/products');
+      }, 1200);
     } catch (err: any) {
+      console.error('Error creating product:', err);
+      setErrorMsg(err?.message || 'Error saving product. Please check your inputs.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
       setIsSaving(false);
-      setErrorMsg(err?.message || 'An error occurred while uploading product images or saving.');
     }
   };
 
-  const totalImageCount = imagePreviews.length + extraImageUrls.length;
-
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Hidden File Inputs for Replacement */}
-      <input
-        type="file"
-        accept="image/*"
-        ref={replaceSingleFileInputRef}
-        onChange={handleReplaceSingleFileChange}
-        className="hidden"
-      />
-      <input
-        type="file"
-        accept="image/*"
-        multiple
-        ref={replaceAllFileInputRef}
-        onChange={handleReplaceAllFileChange}
-        className="hidden"
-      />
+    <div className="min-h-screen bg-gray-50/50 dark:bg-slate-950 pb-24">
+      {/* Top Sticky Header */}
+      <div className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-gray-200/80 dark:border-slate-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Link
+              to="/admin/products"
+              className="p-2 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 transition-colors"
+              title="Back to Products"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-gray-400">Products</span>
+                <span className="text-[11px] text-gray-400">/</span>
+                <span className="text-[11px] font-bold text-[#ff6452]">Add New Product</span>
+              </div>
+              <h1 className="text-lg sm:text-xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">
+                {name.trim() || 'Untitled New Product'}
+              </h1>
+            </div>
+          </div>
 
-      {/* Back Button */}
-      <button
-        onClick={() => navigate('/admin/products')}
-        className="flex items-center gap-2 text-xs font-bold text-gray-600 hover:text-gray-900 bg-white border border-gray-200 px-4 py-2 rounded-2xl transition-all shadow-2xs"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        <span>Back to Products</span>
-      </button>
-
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-xs space-y-6">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Add New Product</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Create a new product listing for the KUD Store storefront catalog.
-          </p>
+          {/* Top Quick Actions */}
+          <div className="flex items-center gap-2.5 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setIsPreviewOpen(true)}
+              className="px-4 py-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Preview</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => handleSaveProduct()}
+              className="px-5 py-2 bg-[#ff6452] hover:bg-[#e05342] text-white rounded-xl text-xs font-black shadow-md shadow-rose-500/20 active:scale-95 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isSaving ? 'Publishing...' : 'Publish Product'}</span>
+            </button>
+          </div>
         </div>
+      </div>
 
+      {/* Main Content Form Container */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {/* Restorable Draft Banner */}
+        {hasRestorableDraft && (
+          <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200 font-medium">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                Unsaved draft from <strong>{draftTimestamp}</strong> was found. Would you like to restore your progress?
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleRestoreDraft}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer transition-colors"
+              >
+                Restore Draft
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardDraft}
+                className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 text-gray-700 dark:text-slate-300 rounded-xl font-bold cursor-pointer transition-colors"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Global Error Banner */}
         {errorMsg && (
-          <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-700 text-xs font-bold">
-            <AlertCircle className="w-5 h-5 shrink-0" />
+          <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-2xl flex items-center gap-3 text-rose-800 dark:text-rose-300 text-xs font-semibold">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Grid Layout */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left Column: Core Fields */}
-            <div className="space-y-4">
-              {/* Product Name */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-800">
-                  Product Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Hydrating Glow Serum 30ml"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                />
-              </div>
+        {/* Global Success Banner */}
+        {successMsg && (
+          <div className="mb-6 p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 rounded-2xl flex items-center gap-3 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+        )}
 
-              {/* Brand & Category */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">Brand</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. KUD Skin"
-                    value={brand}
-                    onChange={(e) => setBrand(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  />
-                </div>
+        {/* Two-Column Responsive Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Main Left Column (Form Sections) */}
+          <div className="lg:col-span-8 space-y-8">
+            {/* 1. Basic Information */}
+            <ProductBasicInfoSection
+              name={name}
+              setName={setName}
+              brand={brand}
+              setBrand={setBrand}
+              category={category}
+              setCategory={setCategory}
+              subCategory={subCategory}
+              setSubCategory={setSubCategory}
+              productType={productType}
+              setProductType={setProductType}
+              sku={sku}
+              setSku={setSku}
+              sizeOrVariant={sizeOrVariant}
+              setSizeOrVariant={setSizeOrVariant}
+              condition={condition}
+              setCondition={setCondition}
+              shortDescription={shortDescription}
+              setShortDescription={setShortDescription}
+              description={description}
+              setDescription={setDescription}
+              tags={tags}
+              setTags={setTags}
+              categories={categories}
+              existingProducts={existingProducts}
+            />
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">
-                    Category <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+            {/* 2. Media Manager (Images & Videos with Drag & Drop) */}
+            <ProductMediaManager
+              images={images}
+              setImages={setImages}
+              videos={videos}
+              setVideos={setVideos}
+              productName={name}
+              onImageReplace={handleImageReplace}
+              onImageDelete={handleImageDelete}
+              onVideoReplace={handleVideoReplace}
+              onVideoDelete={handleVideoDelete}
+              onUploadNewImages={handleUploadNewImages}
+              onUploadNewVideo={handleUploadNewVideo}
+              isUploading={isUploadingMedia}
+              uploadProgress={mediaUploadProgress}
+              errorMsg={errorMsg}
+            />
 
-              {/* Price & Original Price */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">
-                    Price ({STORE_CONFIG.STORE_CURRENCY}) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    required
-                    placeholder="35000"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-bold text-gray-900 focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  />
-                </div>
+            {/* 3. Pricing & Inventory */}
+            <ProductPricingInventorySection
+              price={price}
+              setPrice={setPrice}
+              originalPrice={originalPrice}
+              setOriginalPrice={setOriginalPrice}
+              costPrice={costPrice}
+              setCostPrice={setCostPrice}
+              stock={stock}
+              setStock={setStock}
+              lowStockThreshold={lowStockThreshold}
+              setLowStockThreshold={setLowStockThreshold}
+              trackInventory={trackInventory}
+              setTrackInventory={setTrackInventory}
+              allowBackorders={allowBackorders}
+              setAllowBackorders={setAllowBackorders}
+            />
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">Original Price (Slash Price)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="45000"
-                    value={originalPrice}
-                    onChange={(e) => setOriginalPrice(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  />
-                </div>
-              </div>
+            {/* 4. Product Variants Manager */}
+            <ProductVariantsManager
+              variants={variants}
+              setVariants={setVariants}
+              basePrice={parseFloat(price) || 0}
+              baseSku={sku}
+              baseStock={parseInt(stock, 10) || 0}
+            />
 
-              {/* Stock, Variant & Condition */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">
-                    Stock <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    placeholder="25"
-                    value={stock}
-                    onChange={(e) => setStock(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  />
-                </div>
+            {/* 5. Category-Specific Specifications */}
+            <ProductCategoryFields
+              category={category}
+              attributes={categoryAttributes}
+              setAttributes={setCategoryAttributes}
+            />
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-800">Variant / Size</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 30ml, M"
-                    value={sizeOrVariant}
-                    onChange={(e) => setSizeOrVariant(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  />
-                </div>
+            {/* 6. Shipping & Logistics */}
+            <ProductShippingSection
+              weight={weight}
+              setWeight={setWeight}
+              length={shippingLength}
+              setLength={setShippingLength}
+              width={shippingWidth}
+              setWidth={setShippingWidth}
+              height={shippingHeight}
+              setHeight={setShippingHeight}
+              shippingClass={shippingClass}
+              setShippingClass={setShippingClass}
+              isFreeShipping={isFreeShipping}
+              setIsFreeShipping={setIsFreeShipping}
+              requiresShipping={requiresShipping}
+              setRequiresShipping={setRequiresShipping}
+            />
 
-                <div className="space-y-1.5 col-span-2 sm:col-span-1">
-                  <label className="text-xs font-bold text-gray-800">Condition</label>
-                  <select
-                    value={condition}
-                    onChange={(e) => setCondition(e.target.value as ProductCondition)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                  >
-                    <option value="Brand New">Brand New</option>
-                    <option value="Like New">Like New</option>
-                    <option value="Refurbished">Refurbished</option>
-                    <option value="Vintage">Vintage</option>
-                    <option value="Good">Good</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Automated SKU Generator Tool */}
-              <div className="pt-1">
-                <SkuGeneratorWidget
-                  sku={sku}
-                  onChange={setSku}
-                  name={name}
-                  category={category}
-                  brand={brand}
-                  sizeOrVariant={sizeOrVariant}
-                  existingProducts={existingProducts}
-                />
-              </div>
-
-              {/* Status Toggles */}
-              <div className="flex items-center gap-6 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-800">
-                  <input
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    className="w-4 h-4 text-[#ff6452] rounded-md focus:ring-[#ff6452]"
-                  />
-                  <span>Product Active (Visible in Store)</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-800">
-                  <input
-                    type="checkbox"
-                    checked={isFeatured}
-                    onChange={(e) => setIsFeatured(e.target.checked)}
-                    className="w-4 h-4 text-[#ff6452] rounded-md focus:ring-[#ff6452]"
-                  />
-                  <span>Featured Product</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Right Column: Image Upload & Description with Replace & Delete Tools */}
-            <div className="space-y-4">
-              {/* Product Image Upload */}
-              <div className="space-y-2.5 bg-gray-50/70 p-4 rounded-3xl border border-gray-200/80">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4 text-[#ff6452]" />
-                    <label className="text-xs font-black text-gray-900">
-                      Product Images ({totalImageCount})
-                    </label>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {totalImageCount > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleTriggerReplaceAll}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-all shadow-2xs"
-                          title="Replace entire gallery"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>Replace All</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleClearAllStaged}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all shadow-2xs"
-                          title="Delete all images"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>Clear All</span>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Drag and Drop Zone */}
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      handleFilesSelected(e.dataTransfer.files);
-                    }
-                  }}
-                  className={`border-2 border-dashed transition-all rounded-3xl p-5 text-center space-y-3 ${
-                    isDragging
-                      ? 'border-[#ff6452] bg-rose-50/60 scale-[1.01]'
-                      : 'border-gray-200 hover:border-[#ff6452] bg-white'
-                  }`}
-                >
-                  {/* Previews List with Controls */}
-                  {totalImageCount > 0 ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-60 overflow-y-auto p-1">
-                        {imagePreviews.map((preview, idx) => {
-                          const fileObj = imageFiles[idx];
-                          const isPrimary = idx === 0;
-                          return (
-                            <div
-                              key={`file-prev-${idx}`}
-                              className={`relative group rounded-2xl overflow-hidden border bg-white aspect-square shadow-2xs transition-all ${
-                                isPrimary ? 'border-2 border-[#ff6452] ring-2 ring-rose-100' : 'border-gray-200'
-                              }`}
-                            >
-                              <img
-                                src={preview}
-                                alt={`Upload ${idx + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-
-                              {/* Primary Cover Badge */}
-                              <div className="absolute top-1.5 left-1.5 pointer-events-none">
-                                {isPrimary ? (
-                                  <span className="flex items-center gap-1 bg-[#ff6452] text-white text-[9px] font-black px-1.5 py-0.5 rounded-md shadow-xs">
-                                    <Star className="w-2.5 h-2.5 fill-white" /> Primary
-                                  </span>
-                                ) : (
-                                  <span className="bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-xs backdrop-blur-xs">
-                                    #{idx + 1}
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Interactive Overlay */}
-                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2">
-                                <div className="flex items-center justify-between gap-1">
-                                  {!isPrimary && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleMakePrimaryFile(idx)}
-                                      className="p-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[9px] font-bold flex items-center gap-0.5 shadow-xs"
-                                      title="Make primary cover"
-                                    >
-                                      <Star className="w-2.5 h-2.5 fill-white" />
-                                      <span>Make Primary</span>
-                                    </button>
-                                  )}
-                                  <div className="flex items-center gap-1 ml-auto">
-                                    {idx > 0 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleMoveFile(idx, 'left')}
-                                        className="p-1 bg-white/80 hover:bg-white text-gray-800 rounded-lg text-[10px]"
-                                        title="Move left"
-                                      >
-                                        <ChevronLeft className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                    {idx < imagePreviews.length - 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleMoveFile(idx, 'right')}
-                                        className="p-1 bg-white/80 hover:bg-white text-gray-800 rounded-lg text-[10px]"
-                                        title="Move right"
-                                      >
-                                        <ChevronRight className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-1.5 justify-between pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleTriggerReplaceFile(idx)}
-                                    className="flex-1 py-1 px-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 shadow-xs"
-                                    title="Replace this image"
-                                  >
-                                    <RefreshCw className="w-2.5 h-2.5" />
-                                    <span>Replace</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveFile(idx)}
-                                    className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold shadow-xs"
-                                    title="Delete image"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {extraImageUrls.map((url, idx) => (
-                          <div key={`url-prev-${idx}`} className="relative group rounded-2xl overflow-hidden border border-gray-200 bg-white aspect-square shadow-2xs">
-                            <img
-                              src={url}
-                              alt={`URL ${idx + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2">
-                              <span className="text-[9px] font-bold text-white bg-black/60 px-1 py-0.5 rounded truncate max-w-full">
-                                Remote URL
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveExtraUrl(idx)}
-                                className="self-end p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 flex items-center justify-center gap-2">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          onChange={handleImageFileChange}
-                          className="hidden"
-                          id="product-image-upload-more"
-                        />
-                        <label
-                          htmlFor="product-image-upload-more"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 hover:bg-gray-100 text-xs font-bold text-gray-800 rounded-xl cursor-pointer transition-colors shadow-2xs"
-                        >
-                          <Upload className="w-3.5 h-3.5 text-[#ff6452]" />
-                          <span>Add More Files</span>
-                        </label>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="w-12 h-12 rounded-2xl bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center">
-                        <Upload className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-gray-800">
-                          Drag & drop or click to upload photos
-                        </p>
-                        <p className="text-[11px] text-gray-400">
-                          PNG, JPG, WEBP, AVIF up to 10MB • Auto-converted to optimized WebP
-                        </p>
-                      </div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={handleImageFileChange}
-                        className="hidden"
-                        id="product-image-upload"
-                      />
-                      <label
-                        htmlFor="product-image-upload"
-                        className="inline-block px-4 py-2 bg-gray-50 border border-gray-200 hover:bg-gray-100 text-xs font-bold text-gray-800 rounded-xl cursor-pointer transition-colors shadow-2xs"
-                      >
-                        Browse Files
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-1 space-y-1.5">
-                  <span className="text-[11px] font-bold text-gray-400 block">
-                    Or append direct image URL:
-                  </span>
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      placeholder="https://images.unsplash.com/photo-..."
-                      value={imageUrlInput}
-                      onChange={(e) => setImageUrlInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddImageUrl();
-                        }
-                      }}
-                      className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddImageUrl}
-                      disabled={!imageUrlInput.trim()}
-                      className="px-3.5 py-2 bg-gray-900 hover:bg-gray-800 disabled:opacity-40 text-white text-xs font-bold rounded-2xl transition-colors"
-                    >
-                      Add URL
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-800">Product Description</label>
-                <textarea
-                  rows={5}
-                  placeholder="Describe the features, specifications, and benefits of the product..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-medium focus:bg-white focus:outline-none focus:border-[#ff6452]"
-                />
-              </div>
-            </div>
+            {/* 7. SEO & Search Snippets */}
+            <ProductSeoSection
+              productName={name}
+              seoTitle={seoTitle}
+              setSeoTitle={setSeoTitle}
+              metaDescription={metaDescription}
+              setMetaDescription={setMetaDescription}
+              slug={slug}
+              setSlug={setSlug}
+              focusKeywords={focusKeywords}
+              setFocusKeywords={setFocusKeywords}
+              fullDescription={description}
+              imagesCount={images.length}
+            />
           </div>
 
-          {/* Form Action */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={() => navigate('/admin/products')}
-              disabled={isSaving}
-              className="px-5 py-3 border border-gray-200 rounded-2xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="flex items-center gap-2 px-6 py-3 bg-[#ff6452] hover:bg-[#ff4935] text-white text-xs font-black rounded-2xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              <span>{isSaving ? 'Saving Product...' : 'Publish Product'}</span>
-            </button>
+          {/* Right Sticky Sidebar (Publishing, Status & Cover Preview) */}
+          <div className="lg:col-span-4 sticky top-20 space-y-6">
+            <ProductEditorSidebar
+              isEditMode={false}
+              productStatus={productStatus}
+              setProductStatus={setProductStatus}
+              scheduledAt={scheduledAt}
+              setScheduledAt={setScheduledAt}
+              isActive={isActive}
+              setIsActive={setIsActive}
+              isFeatured={isFeatured}
+              setIsFeatured={setIsFeatured}
+              primaryImageUrl={images[0]?.url || ''}
+              price={price}
+              stock={stock}
+              sku={sku}
+              isSaving={isSaving}
+              onSave={handleSaveProduct}
+              onOpenPreview={() => setIsPreviewOpen(true)}
+              lastSavedAt={lastSavedAt}
+            />
           </div>
-        </form>
+        </div>
       </div>
+
+      {/* Live Storefront Preview Modal */}
+      <ProductLivePreviewModal
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        name={name}
+        brand={brand}
+        price={price}
+        originalPrice={originalPrice}
+        category={category}
+        subCategory={subCategory}
+        condition={condition}
+        shortDescription={shortDescription}
+        description={description}
+        images={images.map((img) => img.url)}
+        stock={stock}
+        sku={sku}
+        variants={variants}
+        shippingClass={shippingClass}
+        isFreeShipping={isFreeShipping}
+        categoryAttributes={categoryAttributes}
+      />
     </div>
   );
 };

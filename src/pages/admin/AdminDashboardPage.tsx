@@ -13,13 +13,17 @@ import {
   ArrowRight,
   Eye,
   ShieldCheck,
+  Share2,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { AdminStats, Order, SalesDataPoint } from '../../types';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
 import { SalesChart } from '../../components/admin/SalesChart';
+import { InvoiceAnalyticsChart } from '../../components/admin/InvoiceAnalyticsChart';
 import { InventoryManagementWidget } from '../../components/admin/InventoryManagementWidget';
+import { AdminCustomerManagementWidget } from '../../components/admin/AdminCustomerManagementWidget';
+import { AdminSupportSettingsWidget } from '../../components/admin/AdminSupportSettingsWidget';
 import { STORE_CONFIG } from '../../constants/config';
 
 export const AdminDashboardPage: React.FC = () => {
@@ -144,6 +148,13 @@ export const AdminDashboardPage: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <button
+            onClick={() => navigate('/admin/marketing')}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-2xl text-xs font-bold transition-colors cursor-pointer"
+          >
+            <TrendingUp className="w-4 h-4 text-[#ff6452]" />
+            <span>Marketing Analytics</span>
+          </button>
+          <button
             onClick={() => navigate('/admin/products/new')}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-[#ff6452] hover:bg-[#ff4935] text-white px-5 py-3 rounded-2xl text-xs font-black transition-all shadow-sm cursor-pointer"
           >
@@ -158,6 +169,31 @@ export const AdminDashboardPage: React.FC = () => {
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      {/* Social Commerce & Marketing Attribution Ribbon */}
+      <div className="bg-gradient-to-r from-rose-50 via-pink-50 to-amber-50 dark:from-slate-800 dark:via-slate-800/80 dark:to-slate-800 rounded-3xl p-5 border border-rose-100 dark:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-[#ff6452] text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+            <Share2 className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-gray-900 dark:text-white">
+              Social Commerce & Campaign Attribution
+            </h4>
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Track Instagram, TikTok, Facebook conversions, pixel events, and generate trackable product links.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => navigate('/admin/marketing')}
+          className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 rounded-2xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+        >
+          <span>View Marketing Analytics</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* 8 Statistics Cards Grid */}
@@ -187,8 +223,17 @@ export const AdminDashboardPage: React.FC = () => {
       {/* Sales Overview Chart */}
       <SalesChart data={salesData} />
 
+      {/* Recharts Invoices & Financial Performance Chart */}
+      <InvoiceAnalyticsChart />
+
       {/* Inventory Management Section */}
       <InventoryManagementWidget onInventoryUpdated={loadDashboardData} />
+
+      {/* Customer Management Section */}
+      <AdminCustomerManagementWidget />
+
+      {/* Customer Support & "Need help with an order?" Real-Time Customization Widget */}
+      <AdminSupportSettingsWidget />
 
       {/* Recent Orders Table / Mobile List */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-gray-100 dark:border-slate-800 shadow-xs overflow-hidden">

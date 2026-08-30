@@ -419,7 +419,7 @@ export async function deleteImageFromStorage(
       const res = await fetch('/api/admin/storage/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePaths: pathsToDelete, bucket }),
+        body: JSON.stringify({ filePaths: pathsToDelete, fileUrls: validItems, bucket }),
       });
 
       if (res.ok) {

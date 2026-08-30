@@ -52,35 +52,56 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
  * Automatically removes the missing column(s) from the payload and retries the operation seamlessly.
  */
 export async function executeWithColumnFallback<T = any>(
-  operation: (payload: Record<string, any>) => PromiseLike<{ data?: T; error: any }>,
+  operation: (payload: Record<string, any>) => PromiseLike<{ data?: any; error?: any }>,
   initialPayload: Record<string, any>,
-  maxRetries = 8
-): Promise<{ data?: T; error: any }> {
+  maxRetries?: number
+): Promise<{ data?: T | null; error?: any }> {
   let currentPayload = { ...initialPayload };
-  for (let i = 0; i < maxRetries; i++) {
+  const totalKeys = Object.keys(currentPayload).length;
+  const attemptsLimit = maxRetries ?? Math.max(35, totalKeys + 5);
+
+  for (let attempt = 0; attempt < attemptsLimit; attempt++) {
+    // If payload is empty or has no keys left, perform final attempt and exit
+    if (Object.keys(currentPayload).length === 0) {
+      return await operation(currentPayload);
+    }
+
     const result = await operation(currentPayload);
     if (!result.error) {
       return result;
     }
+
     const msg = result.error.message || '';
+    const details = result.error.details || '';
+    const hint = result.error.hint || '';
     const code = result.error.code || '';
+    const fullErr = `${msg} ${details} ${hint}`;
 
     // Match PGRST204 or PostgreSQL missing column patterns
     const match =
-      msg.match(/Could not find the '([^']+)' column/i) ||
-      msg.match(/column "?([^"'\s]+)"? of relation/i) ||
-      msg.match(/column "?([^"'\s]+)"? does not exist/i) ||
-      msg.match(/Could not find the ([a-zA-Z0-9_]+) column/i);
+      fullErr.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
+      fullErr.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i) ||
+      fullErr.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
+      fullErr.match(/column "([^"]+)" does not exist/i) ||
+      fullErr.match(/column '([^']+)' does not exist/i);
 
-    if (match && match[1] && match[1] in currentPayload) {
+    if (match && match[1]) {
       const missingCol = match[1];
-      console.warn(
-        `[Supabase Schema Fallback] Remote table is missing column '${missingCol}' (${code}). Removing from payload and retrying...`
+      const matchedKey = Object.keys(currentPayload).find(
+        (k) => k.toLowerCase() === missingCol.toLowerCase()
       );
-      delete currentPayload[missingCol];
-      continue;
+
+      if (matchedKey) {
+        console.warn(
+          `[Supabase Schema Fallback] Remote table is missing column '${matchedKey}' (${code || 'PGRST204'}). Removing from payload and retrying...`
+        );
+        delete currentPayload[matchedKey];
+        continue;
+      }
     }
+
     return result;
   }
+
   return await operation(currentPayload);
 }

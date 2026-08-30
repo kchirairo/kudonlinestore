@@ -220,7 +220,7 @@ export const AuthCallbackPage: React.FC = () => {
         if (error) throw error;
       }
       setResendSuccess(true);
-      setResendCooldown(60);
+      setResendCooldown(40);
       showToast('Verification email resent! Please check your inbox.', 'success');
     } catch (err: any) {
       console.error('[Auth Callback] Failed to resend verification:', err);
@@ -240,35 +240,35 @@ export const AuthCallbackPage: React.FC = () => {
       />
 
       <div className="max-w-md mx-auto px-4 sm:px-6 py-12 pb-28">
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-md space-y-6">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-gray-100 dark:border-slate-800 shadow-md space-y-6">
           {/* Header Icon */}
           <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center font-bold shadow-xs">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] mx-auto flex items-center justify-center font-bold shadow-xs">
               <ShieldCheck className="w-7 h-7" />
             </div>
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight">
+            <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
               {isProcessing
                 ? 'Verifying Your Account'
                 : isSuccess
-                ? 'Email Verified!'
+                ? 'Authentication Successful!'
                 : 'Verification Failed'}
             </h1>
-            <p className="text-xs text-gray-500 max-w-xs mx-auto">
+            <p className="text-xs text-gray-500 dark:text-slate-400 max-w-xs mx-auto">
               {isProcessing
-                ? 'Please wait while we confirm your email and set up your session...'
+                ? 'Please wait while we confirm your credentials and set up your session...'
                 : isSuccess
-                ? 'Your email address has been verified. Welcome to KUD Store!'
-                : 'We could not complete your email verification.'}
+                ? 'Your account is verified and ready. Welcome to KUD Store!'
+                : 'We could not complete your account verification.'}
             </p>
           </div>
 
           {/* 1. Loading / Processing State */}
           {isProcessing && (
             <div className="py-8 text-center space-y-4">
-              <div className="w-12 h-12 rounded-full bg-rose-50 text-[#ff6452] mx-auto flex items-center justify-center">
+              <div className="w-12 h-12 rounded-full bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] mx-auto flex items-center justify-center">
                 <RefreshCw className="w-6 h-6 animate-spin" />
               </div>
-              <p className="text-xs text-gray-500 font-medium">
+              <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">
                 Confirming authentication token with Supabase...
               </p>
             </div>
@@ -277,13 +277,13 @@ export const AuthCallbackPage: React.FC = () => {
           {/* 2. Success State View */}
           {!isProcessing && isSuccess && (
             <div className="space-y-5">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center space-y-2">
-                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
-                <h3 className="font-bold text-emerald-900 text-base">Verification Complete</h3>
-                <p className="text-xs text-emerald-700 leading-relaxed">
+              <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-5 text-center space-y-2">
+                <CheckCircle2 className="w-10 h-10 text-emerald-600 dark:text-emerald-400 mx-auto" />
+                <h3 className="font-bold text-emerald-900 dark:text-emerald-200 text-base">Verification Complete</h3>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed">
                   {userEmail ? (
                     <>
-                      Account <strong className="font-bold">{userEmail}</strong> is now verified and active.
+                      Account <strong className="font-bold text-emerald-900 dark:text-emerald-100">{userEmail}</strong> is now verified and active.
                     </>
                   ) : (
                     'Your account is now verified and ready to use.'
@@ -304,14 +304,14 @@ export const AuthCallbackPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate('/', { replace: true })}
-                  className="w-full py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 font-bold rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer text-xs"
+                  className="w-full py-3 bg-gray-50 dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer text-xs"
                 >
                   <Home className="w-3.5 h-3.5" />
                   <span>Start Shopping</span>
                 </button>
 
-                <p className="text-[11px] text-center text-gray-400">
-                  Redirecting automatically in <span className="font-bold text-gray-700">{countdown}s</span>...
+                <p className="text-[11px] text-center text-gray-400 dark:text-slate-500">
+                  Redirecting automatically in <span className="font-bold text-gray-700 dark:text-slate-300">{countdown}s</span>...
                 </p>
               </div>
             </div>
@@ -320,35 +320,35 @@ export const AuthCallbackPage: React.FC = () => {
           {/* 3. Error / Expired Link State */}
           {!isProcessing && !isSuccess && (
             <div className="space-y-5">
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-                <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-850 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold text-sm">
+                  <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                   <span>Verification Link Expired</span>
                 </div>
-                <p className="text-xs text-amber-700 leading-relaxed">
+                <p className="text-xs text-amber-700 dark:text-amber-300/90 leading-relaxed">
                   {errorMessage ||
                     'This verification link has expired or was already used. Please request a new verification email below.'}
                 </p>
               </div>
 
               {/* Resend Verification Form */}
-              <div className="border border-gray-100 rounded-2xl p-4 bg-gray-50/50 space-y-3">
-                <h3 className="text-xs font-bold uppercase text-gray-700">Resend Verification Email</h3>
+              <div className="border border-gray-100 dark:border-slate-800 rounded-2xl p-4 bg-gray-50/50 dark:bg-slate-800/50 space-y-3">
+                <h3 className="text-xs font-bold uppercase text-gray-700 dark:text-slate-300">Resend Verification Email</h3>
                 {resendSuccess && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-xl">
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs p-3 rounded-xl">
                     A fresh verification link has been sent! Please check your inbox and spam folder.
                   </div>
                 )}
                 <form onSubmit={handleResendVerification} className="space-y-3">
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Mail className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="email"
                       required
                       placeholder="Enter your registered email"
                       value={resendEmail}
                       onChange={(e) => setResendEmail(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:border-[#ff6452] dark:focus:border-[#ff6452] outline-none"
                     />
                   </div>
 
@@ -384,10 +384,10 @@ export const AuthCallbackPage: React.FC = () => {
           )}
 
           {/* Footer */}
-          <div className="text-center border-t border-gray-100 pt-4">
+          <div className="text-center border-t border-gray-100 dark:border-slate-800 pt-4">
             <Link
               to="/"
-              className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-xs font-medium text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
             >
               ← Back to KUD Store
             </Link>

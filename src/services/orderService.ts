@@ -1,6 +1,8 @@
 import { Order, OrderItem, ShippingAddress, PaymentStatus, OrderStatus } from '../types';
 import { supabase, isSupabaseConfigured, executeWithColumnFallback } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
+import { calculateOrderFinancials } from '../utils/taxUtils';
+import { getCurrentAttribution } from '../utils/utmTracker';
 
 const LOCAL_ORDERS_KEY = 'kud_store_orders_history';
 
@@ -34,20 +36,40 @@ export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Ord
         }))
       : fallbackItems;
 
+  const rawSubtotal = Number(row.subtotal ?? row.subtotal_amount ?? 0);
+  const rawDelivery = Number(row.shipping_fee ?? row.delivery_fee ?? 0);
+  const rawDiscount = Number(row.discount ?? row.discount_amount ?? 0);
+  const rawTotal = Number(row.total ?? row.total_amount ?? 0);
+
+  // Recalculate dynamic financials to ensure data integrity & reconciliation
+  const financials = calculateOrderFinancials({
+    items: parsedItems,
+    subtotal_amount: rawSubtotal,
+    delivery_fee: rawDelivery,
+    discount_amount: rawDiscount,
+    payment_status: row.payment_status,
+  });
+
+  const finalTotal = rawTotal > 0 && Math.abs(rawTotal - financials.grandTotal) < 0.05
+    ? rawTotal
+    : financials.grandTotal;
+
   return {
-    id: row.id,
+    id: String(row.id),
     order_number: row.order_number || `KUD-${String(row.id).slice(0, 6).toUpperCase()}`,
     user_id: row.user_id || undefined,
     customer_name: row.customer_name || shippingAddress.fullName,
     customer_email: row.customer_email || shippingAddress.email,
     created_at: row.created_at || new Date().toISOString(),
-    total_amount: Number(row.total ?? row.total_amount ?? 0),
-    subtotal_amount: Number(row.subtotal ?? row.subtotal_amount ?? 0),
-    delivery_fee: Number(row.shipping_fee ?? row.delivery_fee ?? 0),
-    discount_amount: Number(row.discount ?? row.discount_amount ?? 0),
+    total_amount: finalTotal,
+    subtotal_amount: financials.subtotal,
+    delivery_fee: financials.deliveryFee,
+    discount_amount: financials.discountAmount,
+    vat_amount: financials.vatAmount,
+    amount_paid: financials.amountPaid,
     status: (row.status || 'pending') as OrderStatus,
     payment_status: (row.payment_status || 'pending') as PaymentStatus,
-    payment_method: row.payment_method || 'yoco',
+    payment_method: row.payment_method || 'Online Payment',
     shipping_address: shippingAddress,
     items: parsedItems,
   };
@@ -129,11 +151,20 @@ export const orderService = {
     paymentMethod: string,
     userId?: string
   ): Promise<Order> {
-    // 1. Calculate financial values accurately
-    const calcSubtotal = Number(subtotal) || 0;
-    const calcShippingFee = Number(deliveryFee) || 0;
-    const calcDiscount = Number(discountAmount) || 0;
-    const calcTotal = Math.max(0, calcSubtotal + calcShippingFee - calcDiscount);
+    // 1. Calculate dynamic financial values accurately using standard 15% VAT
+    const financials = calculateOrderFinancials({
+      subtotal_amount: Number(subtotal) || 0,
+      delivery_fee: Number(deliveryFee) || 0,
+      discount_amount: Number(discountAmount) || 0,
+      items,
+      payment_status: 'pending',
+    });
+
+    const calcSubtotal = financials.subtotal;
+    const calcShippingFee = financials.deliveryFee;
+    const calcDiscount = financials.discountAmount;
+    const calcVat = financials.vatAmount;
+    const calcTotal = financials.grandTotal;
 
     // 2. Generate unique order number
     const uniqueOrderNumber = `KUD-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -167,6 +198,7 @@ export const orderService = {
 
     if (!isSupabaseConfigured() || !supabase) {
       const localUuid = crypto.randomUUID();
+      const attribution = getCurrentAttribution();
       const localOrder: Order = {
         id: localUuid,
         order_number: uniqueOrderNumber,
@@ -175,13 +207,17 @@ export const orderService = {
         subtotal_amount: calcSubtotal,
         delivery_fee: calcShippingFee,
         discount_amount: calcDiscount,
+        vat_amount: calcVat,
         total_amount: calcTotal,
         status: 'pending',
         payment_status: 'pending',
         payment_method: paymentMethod,
         shipping_address: shippingAddress,
         items,
-      };
+        traffic_source: attribution.platform,
+        utm_source: attribution.utm_source || attribution.platform,
+        utm_campaign: attribution.utm_campaign,
+      } as any;
       const existingOrders = orderService.getLocalOrders();
       existingOrders.unshift(localOrder);
       safeSetItem(LOCAL_ORDERS_KEY, existingOrders);
@@ -192,6 +228,7 @@ export const orderService = {
     // Columns: user_id, order_number, status, payment_status, payment_method, payment_provider,
     // currency, subtotal, shipping_fee, discount, total, customer_name, customer_email,
     // customer_phone, delivery_address, delivery_city, delivery_province, delivery_postal_code, customer_note, admin_note
+    const attribution = getCurrentAttribution();
     const orderPayload = {
       user_id: authUserId || null,
       order_number: uniqueOrderNumber,
@@ -213,6 +250,14 @@ export const orderService = {
       delivery_postal_code: shippingAddress.postalCode || '',
       customer_note: (shippingAddress as any).customerNote || null,
       admin_note: null,
+      // Social commerce & marketing attribution
+      traffic_source: attribution.platform,
+      utm_source: attribution.utm_source || attribution.platform,
+      utm_medium: attribution.utm_medium || null,
+      utm_campaign: attribution.utm_campaign || null,
+      utm_content: attribution.utm_content || null,
+      utm_term: attribution.utm_term || null,
+      session_id: attribution.sessionId,
     };
 
     console.log('[ORDER CREATION] Inserting order into Supabase public.orders table:', {

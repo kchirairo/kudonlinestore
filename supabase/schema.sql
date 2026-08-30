@@ -52,7 +52,29 @@ CREATE INDEX IF NOT EXISTS idx_products_is_active ON public.products (is_active)
 CREATE INDEX IF NOT EXISTS idx_products_price ON public.products (price);
 CREATE INDEX IF NOT EXISTS idx_products_created_at ON public.products (created_at DESC);
 
--- 2. PRODUCT IMAGES TABLE (Optional 1-to-many relationship)
+-- 2. DEDICATED PRODUCT MEDIA TABLE (Images & Videos with Position, Alt Text, and Primary Flag)
+CREATE TABLE IF NOT EXISTS public.product_media (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id TEXT NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    media_type TEXT NOT NULL DEFAULT 'image' CHECK (media_type IN ('image', 'video')),
+    media_url TEXT NOT NULL,
+    thumbnail_url TEXT,
+    alt_text TEXT,
+    title TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    size_bytes BIGINT,
+    duration_seconds NUMERIC,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_media_product_id ON public.product_media (product_id);
+CREATE INDEX IF NOT EXISTS idx_product_media_position ON public.product_media (product_id, position);
+CREATE INDEX IF NOT EXISTS idx_product_media_is_primary ON public.product_media (product_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_product_media_media_type ON public.product_media (media_type);
+
+-- Legacy product_images table support (backward compatibility)
 CREATE TABLE IF NOT EXISTS public.product_images (
     id BIGSERIAL PRIMARY KEY,
     product_id TEXT NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
@@ -118,6 +140,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
 
 -- 6. ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.product_media ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
@@ -127,6 +150,13 @@ ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Public can view active products" ON public.products;
 CREATE POLICY "Public can view active products"
     ON public.products
+    FOR SELECT
+    TO anon, authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Public can view product media" ON public.product_media;
+CREATE POLICY "Public can view product media"
+    ON public.product_media
     FOR SELECT
     TO anon, authenticated
     USING (true);
@@ -156,6 +186,14 @@ CREATE POLICY "Public read settings"
 DROP POLICY IF EXISTS "Admins can manage products" ON public.products;
 CREATE POLICY "Admins can manage products"
     ON public.products
+    FOR ALL
+    TO authenticated, service_role
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Admins can manage product media" ON public.product_media;
+CREATE POLICY "Admins can manage product media"
+    ON public.product_media
     FOR ALL
     TO authenticated, service_role
     USING (true)

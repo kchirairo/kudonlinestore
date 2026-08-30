@@ -64,8 +64,12 @@ interface ShopContextType {
   role: 'customer' | 'admin' | null;
   isAuthLoading: boolean;
   authError: string | null;
+  isAccountDisabled: boolean;
+  accountStatus: 'active' | 'on_hold' | 'disabled';
+  disabledReason: string | null;
   signOut: () => Promise<void>;
   refetchProfile: () => Promise<void>;
+  updateUserProfile: (details: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>;
   updateAdminAvatar: (file: File) => Promise<{ success: boolean; url?: string; error?: string }>;
   removeAdminAvatar: () => Promise<{ success: boolean; error?: string }>;
 
@@ -189,15 +193,21 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           setRole('admin');
         } else if (isDemoUser) {
+          const demoCached = safeGetItem<any>('kud_store_user_profile_demo-customer-id', null);
           const demoCustomerUser = {
             id: 'demo-customer-id',
             email: 'customer@kudstore.co.za',
-            fullName: 'Sipho Dlamini (Demo)',
-            phone: '+27 83 987 6543',
+            fullName: demoCached?.fullName || 'Sipho Dlamini (Demo)',
+            phone: demoCached?.phone || '+27 83 987 6543',
+            addressLine: demoCached?.addressLine || '42 Nelson Mandela Ave, Rosebank',
+            address: demoCached?.addressLine || '42 Nelson Mandela Ave, Rosebank',
+            city: demoCached?.city || 'Johannesburg',
+            province: demoCached?.province || 'Gauteng',
+            postalCode: demoCached?.postalCode || '2196',
             role: 'customer' as const,
           };
           setUser(demoCustomerUser);
-          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
+          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: demoCustomerUser.fullName, ...demoCustomerUser });
           setRole('customer');
         } else {
           setUser(null);
@@ -240,12 +250,35 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('Profile role:', fetchedRole);
 
+      const localCacheKey = `kud_store_user_profile_${authUser.id}`;
+      const localCache = safeGetItem<any>(localCacheKey, null);
+
       let fullName =
         profileData?.full_name ||
         profileData?.fullName ||
         authUser.user_metadata?.full_name ||
+        localCache?.fullName ||
         authUser.email?.split('@')[0];
-      let phone = profileData?.phone || authUser.phone || '';
+      let phone =
+        profileData?.phone ||
+        authUser.user_metadata?.phone ||
+        localCache?.phone ||
+        authUser.phone ||
+        '';
+      let addressLine =
+        profileData?.address_line ||
+        profileData?.addressLine ||
+        profileData?.address ||
+        localCache?.addressLine ||
+        localCache?.address ||
+        '';
+      let city = profileData?.city || localCache?.city || '';
+      let province = profileData?.province || localCache?.province || 'Gauteng';
+      let postalCode =
+        profileData?.postal_code ||
+        profileData?.postalCode ||
+        localCache?.postalCode ||
+        '';
 
       const avatarUrl =
         profileData?.avatar_url ||
@@ -255,16 +288,61 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.getItem('kud_store_admin_avatar') ||
         undefined;
 
+      const rawAccountStatus =
+        profileData?.account_status ||
+        profileData?.accountStatus ||
+        profileData?.status ||
+        (profileData?.is_disabled || profileData?.isDisabled ? 'disabled' : 'active');
+      const isAccountHeld = rawAccountStatus === 'on_hold';
+      const isAccountSuspended =
+        rawAccountStatus === 'disabled' ||
+        profileData?.is_disabled === true ||
+        profileData?.isDisabled === true;
+      const computedAccountStatus: 'active' | 'on_hold' | 'disabled' = isAccountHeld
+        ? 'on_hold'
+        : isAccountSuspended
+        ? 'disabled'
+        : 'active';
+
       const fullProfile = profileData
-        ? { ...profileData, avatar_url: avatarUrl, avatarUrl }
+        ? {
+            ...profileData,
+            full_name: fullName,
+            fullName,
+            phone,
+            address_line: addressLine,
+            addressLine,
+            address: addressLine,
+            city,
+            province,
+            postal_code: postalCode,
+            postalCode,
+            avatar_url: avatarUrl,
+            avatarUrl,
+            account_status: computedAccountStatus,
+            accountStatus: computedAccountStatus,
+            is_disabled: computedAccountStatus !== 'active',
+            isDisabled: computedAccountStatus !== 'active',
+          }
         : {
             id: authUser.id,
             email: authUser.email || '',
             full_name: fullName,
             role: fetchedRole,
             phone,
+            address_line: addressLine,
+            addressLine,
+            address: addressLine,
+            city,
+            province,
+            postal_code: postalCode,
+            postalCode,
             avatar_url: avatarUrl,
             avatarUrl,
+            accountStatus: computedAccountStatus,
+            account_status: computedAccountStatus,
+            isDisabled: computedAccountStatus !== 'active',
+            is_disabled: computedAccountStatus !== 'active',
           };
 
       setProfile(fullProfile);
@@ -275,7 +353,16 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName,
         phone,
         avatarUrl,
+        addressLine,
+        address: addressLine,
+        city,
+        province,
+        postalCode,
         role: fetchedRole,
+        accountStatus: computedAccountStatus,
+        isDisabled: computedAccountStatus !== 'active',
+        disabledReason: profileData?.disabled_reason || profileData?.disabledReason,
+        disabledAt: profileData?.disabled_at || profileData?.disabledAt,
       });
 
       // 3. Fetch user's saved favourites
@@ -287,6 +374,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!favError && favs) {
         const remoteFavIds = favs.map((f: any) => f.product_id);
         setFavourites(remoteFavIds);
+      } else {
+        setFavourites([]);
       }
     } catch (err: any) {
       console.warn('Error syncing profile and favourites with Supabase:', err);
@@ -317,6 +406,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(null);
           setProfile(null);
           setRole(null);
+          setCart([]);
+          setFavourites([]);
+          safeSetItem(CART_STORAGE_KEY, []);
+          safeSetItem(FAVOURITES_STORAGE_KEY, []);
           setIsAuthLoading(false);
         }
       });
@@ -327,12 +420,65 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [syncUserProfileAndFavourites]);
 
+  // Listen to Customer Account Status Changes across the app
+  useEffect(() => {
+    const handleStatusChangeEvent = (e: any) => {
+      if (user?.id && (!e.detail?.customerId || e.detail?.customerId === user.id)) {
+        syncUserProfileAndFavourites();
+      }
+    };
+    window.addEventListener('kud_customer_status_changed', handleStatusChangeEvent);
+    return () => {
+      window.removeEventListener('kud_customer_status_changed', handleStatusChangeEvent);
+    };
+  }, [user?.id, syncUserProfileAndFavourites]);
+
+  // Account Restriction Flags
+  const isAccountDisabled = useMemo<boolean>(() => {
+    if (!user) return false;
+    return Boolean(
+      user.isDisabled === true ||
+      user.accountStatus === 'disabled' ||
+      user.accountStatus === 'on_hold' ||
+      profile?.accountStatus === 'disabled' ||
+      profile?.accountStatus === 'on_hold' ||
+      profile?.is_disabled === true
+    );
+  }, [user, profile]);
+
+  const accountStatus = useMemo<'active' | 'on_hold' | 'disabled'>(() => {
+    if (!user) return 'active';
+    if (user.accountStatus === 'on_hold' || profile?.accountStatus === 'on_hold') return 'on_hold';
+    if (
+      user.accountStatus === 'disabled' ||
+      user.isDisabled === true ||
+      profile?.accountStatus === 'disabled' ||
+      profile?.is_disabled === true
+    ) {
+      return 'disabled';
+    }
+    return 'active';
+  }, [user, profile]);
+
+  const disabledReason = useMemo<string | null>(() => {
+    return user?.disabledReason || profile?.disabledReason || profile?.disabled_reason || null;
+  }, [user, profile]);
+
   // Cart Functions
   const addToCart = useCallback((product: Product, quantity = 1, selectedSizeOrVariant?: string) => {
     if (!user) {
       showToast('Please sign in to add products to your cart', 'info');
       const returnPath = window.location.pathname + window.location.search;
       window.location.href = `/account?returnUrl=${encodeURIComponent(returnPath || '/')}`;
+      return;
+    }
+
+    if (isAccountDisabled) {
+      const msg =
+        accountStatus === 'on_hold'
+          ? 'Your account is currently on hold. Adding products to cart is restricted.'
+          : 'Your account has been disabled. Adding products to cart is restricted.';
+      showToast(msg, 'error');
       return;
     }
 
@@ -350,7 +496,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     showToast(`Added "${product.name}" to cart`);
-  }, [user, showToast]);
+  }, [user, isAccountDisabled, accountStatus, showToast]);
 
   const removeFromCart = useCallback((productId: string, variant?: string) => {
     setCart((prev) =>
@@ -548,6 +694,96 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.avatarUrl, user?.id, profile?.avatar_url, showToast]);
 
+  const updateUserProfile = useCallback(
+    async (details: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> => {
+      try {
+        if (!user) {
+          return { success: false, error: 'No active user session found.' };
+        }
+
+        const updatedFullName = details.fullName !== undefined ? details.fullName : user.fullName;
+        const updatedPhone = details.phone !== undefined ? details.phone : user.phone;
+        const updatedAddressLine = details.addressLine !== undefined ? details.addressLine : user.addressLine;
+        const updatedCity = details.city !== undefined ? details.city : user.city;
+        const updatedProvince = details.province !== undefined ? details.province : user.province;
+        const updatedPostalCode = details.postalCode !== undefined ? details.postalCode : user.postalCode;
+
+        const updatedUser: UserProfile = {
+          ...user,
+          ...details,
+          fullName: updatedFullName,
+          phone: updatedPhone,
+          addressLine: updatedAddressLine,
+          address: updatedAddressLine,
+          city: updatedCity,
+          province: updatedProvince,
+          postalCode: updatedPostalCode,
+        };
+
+        setUser(updatedUser);
+        setProfile((prev: any) => ({
+          ...(prev || {}),
+          ...details,
+          full_name: updatedFullName,
+          fullName: updatedFullName,
+          phone: updatedPhone,
+          address_line: updatedAddressLine,
+          addressLine: updatedAddressLine,
+          address: updatedAddressLine,
+          city: updatedCity,
+          province: updatedProvince,
+          postal_code: updatedPostalCode,
+          postalCode: updatedPostalCode,
+        }));
+
+        // Persist locally for instant availability across page loads
+        safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
+        safeSetItem('kud_store_user_profile', updatedUser);
+
+        // Update in Supabase profiles & auth metadata if real user
+        if (isSupabaseConfigured() && supabase && user.id && !user.id.startsWith('demo-')) {
+          try {
+            await supabase.from('profiles').upsert(
+              {
+                id: user.id,
+                email: user.email,
+                full_name: updatedFullName,
+                phone: updatedPhone,
+                address_line: updatedAddressLine,
+                city: updatedCity,
+                province: updatedProvince,
+                postal_code: updatedPostalCode,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            );
+          } catch (e: any) {
+            console.warn('[ShopContext] Error updating profiles table:', e?.message);
+          }
+
+          try {
+            await supabase.auth.updateUser({
+              data: {
+                full_name: updatedFullName,
+                phone: updatedPhone,
+              },
+            });
+          } catch (e: any) {
+            console.warn('[ShopContext] Error updating auth user metadata:', e?.message);
+          }
+        }
+
+        showToast('Personal details updated successfully!', 'success');
+        return { success: true };
+      } catch (err: any) {
+        console.error('[ShopContext] Failed to update profile:', err);
+        showToast(err?.message || 'Failed to update personal details', 'error');
+        return { success: false, error: err?.message || 'Failed to update profile' };
+      }
+    },
+    [user, showToast]
+  );
+
   const signOut = useCallback(async () => {
     if (isSupabaseConfigured() && supabase) {
       await supabase.auth.signOut();
@@ -557,6 +793,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setProfile(null);
     setRole(null);
+    setCart([]);
+    setFavourites([]);
+    safeSetItem(CART_STORAGE_KEY, []);
+    safeSetItem(FAVOURITES_STORAGE_KEY, []);
     showToast('Signed out successfully', 'info');
   }, [showToast]);
 
@@ -599,8 +839,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       role,
       isAuthLoading,
       authError,
+      isAccountDisabled,
+      accountStatus,
+      disabledReason,
       signOut,
       refetchProfile: syncUserProfileAndFavourites,
+      updateUserProfile,
       updateAdminAvatar,
       removeAdminAvatar,
 
@@ -638,8 +882,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       role,
       isAuthLoading,
       authError,
+      isAccountDisabled,
+      accountStatus,
+      disabledReason,
       signOut,
       syncUserProfileAndFavourites,
+      updateUserProfile,
       updateAdminAvatar,
       removeAdminAvatar,
       toasts,

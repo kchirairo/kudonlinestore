@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle, RefreshCw, AlertTriangle, Ban, PauseCircle } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG, PAYMENT_METHODS } from '../constants/config';
 import { orderService } from '../services/orderService';
@@ -8,11 +8,24 @@ import { adminService } from '../services/adminService';
 import { ShippingAddress, PaymentGatewayConfig } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SEOHead } from '../components/SEOHead';
+import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
+import { marketingService } from '../services/marketingService';
 
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { cart, cartSubtotal, deliveryFee, clearCart, user, isAuthLoading, showToast } = useShop();
+  const {
+    cart,
+    cartSubtotal,
+    deliveryFee,
+    clearCart,
+    user,
+    isAuthLoading,
+    isAccountDisabled,
+    accountStatus,
+    disabledReason,
+    showToast,
+  } = useShop();
 
   const [paymentConfig, setPaymentConfig] = useState<PaymentGatewayConfig | null>(null);
   const [isLoadingConfig, setIsLoadingConfig] = useState<boolean>(true);
@@ -119,6 +132,16 @@ export const CheckoutPage: React.FC = () => {
     };
   }, [searchParams]);
 
+  // Track Initiate Checkout for Marketing Analytics & Meta/TikTok Pixel
+  const hasTrackedCheckout = React.useRef(false);
+  useEffect(() => {
+    if (cart && cart.length > 0 && !hasTrackedCheckout.current) {
+      hasTrackedCheckout.current = true;
+      const total = cartSubtotal + deliveryFee;
+      marketingService.trackInitiateCheckout(cart, total, user);
+    }
+  }, [cart, cartSubtotal, deliveryFee, user]);
+
   // Calculate active payment methods visible to customer strictly based on Admin configuration
   const availablePaymentMethods = PAYMENT_METHODS.filter((method) => {
     if (!paymentConfig) return true; // Default fallback while loading
@@ -188,6 +211,16 @@ export const CheckoutPage: React.FC = () => {
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setPaymentError(null);
+
+    if (isAccountDisabled) {
+      const msg =
+        accountStatus === 'on_hold'
+          ? 'Your account is currently on hold. Orders and transactions are suspended.'
+          : 'Your account has been disabled. You cannot place orders or complete transactions.';
+      setPaymentError(msg);
+      showToast(msg, 'error');
+      return;
+    }
 
     if (
       !shippingAddress.fullName ||
@@ -735,38 +768,40 @@ export const CheckoutPage: React.FC = () => {
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-4 bg-[#ff6452] hover:bg-[#ff523d] disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg shadow-[#ff6452]/20 transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 text-sm"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <AccountStatusCheckoutGuard showAlertBanner={true}>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-4 bg-[#ff6452] hover:bg-[#ff523d] disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg shadow-[#ff6452]/20 transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 text-sm"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>
+                      {paymentMethod === 'yoco'
+                        ? 'Connecting to Yoco Hosted Checkout...'
+                        : paymentMethod === 'card'
+                        ? 'Authorizing Card Payment...'
+                        : paymentMethod === 'cod'
+                        ? 'Placing COD Order...'
+                        : 'Processing Order...'}
+                    </span>
+                  </>
+                ) : (
                   <span>
                     {paymentMethod === 'yoco'
-                      ? 'Connecting to Yoco Hosted Checkout...'
+                      ? 'Pay Now with Yoco'
                       : paymentMethod === 'card'
-                      ? 'Authorizing Card Payment...'
+                      ? 'Pay with Card'
                       : paymentMethod === 'cod'
-                      ? 'Placing COD Order...'
-                      : 'Processing Order...'}
+                      ? 'Place Order (Cash on Delivery)'
+                      : paymentMethod === 'ozow'
+                      ? 'Pay via Instant EFT'
+                      : 'Confirm & Complete Order'}
                   </span>
-                </>
-              ) : (
-                <span>
-                  {paymentMethod === 'yoco'
-                    ? 'Pay Now with Yoco'
-                    : paymentMethod === 'card'
-                    ? 'Pay with Card'
-                    : paymentMethod === 'cod'
-                    ? 'Place Order (Cash on Delivery)'
-                    : paymentMethod === 'ozow'
-                    ? 'Pay via Instant EFT'
-                    : 'Confirm & Complete Order'}
-                </span>
-              )}
-            </button>
+                )}
+              </button>
+            </AccountStatusCheckoutGuard>
           </div>
         </div>
       </form>

@@ -6,19 +6,24 @@ import { useShop } from '../context/ShopContext';
 import { Order } from '../types';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { STORE_CONFIG } from '../constants/config';
+import { CustomerOrderHelpCard } from '../components/CustomerOrderHelpCard';
 import { SEOHead } from '../components/SEOHead';
 import { generateOrderInvoicePDF } from '../utils/invoiceGenerator';
+import { calculateOrderFinancials, formatCurrency, VAT_RATE } from '../utils/taxUtils';
+import { adminService } from '../services/adminService';
+import { marketingService } from '../services/marketingService';
 
 export const OrderDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { showToast, clearCart } = useShop();
+  const { showToast, clearCart, user } = useShop();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isPaymentJustSuccess, setIsPaymentJustSuccess] = useState<boolean>(false);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState<boolean>(false);
+  const [allowCustomerDownload, setAllowCustomerDownload] = useState<boolean>(true);
   const paymentHandledRef = useRef<boolean>(false);
 
   const handleDownloadInvoice = async () => {
@@ -69,7 +74,20 @@ export const OrderDetailsPage: React.FC = () => {
       if (isMounted) {
         setOrder(res);
         setIsLoading(false);
+
+        // Record sale in marketing analytics & pixel events ONLY after payment confirmation
+        if (res && (isPaymentSuccess || alreadyProcessed || res.payment_status === 'paid')) {
+          marketingService.trackPurchase(res, user);
+        }
       }
+    });
+
+    adminService.getInvoiceSettings().then((settings) => {
+      if (isMounted) {
+        setAllowCustomerDownload(settings.allowCustomerDownload !== false);
+      }
+    }).catch(() => {
+      // Default to true on error
     });
 
     return () => {
@@ -295,107 +313,92 @@ export const OrderDetailsPage: React.FC = () => {
             <p className="text-gray-500 dark:text-slate-400">Phone: {order.shipping_address.phone}</p>
           </div>
 
-          <div className="space-y-2 bg-gray-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-gray-100 dark:border-slate-800">
-            <div className="flex items-center gap-1.5 font-bold text-gray-900 dark:text-white text-sm">
-              <CreditCard className="w-4 h-4 text-[#ff6452]" />
-              <span>Payment Breakdown</span>
-            </div>
-            <div className="space-y-1 text-gray-600 dark:text-slate-300">
-              <div className="flex justify-between">
-                <span>Subtotal</span>
-                <span>{STORE_CONFIG.STORE_CURRENCY}{order.subtotal_amount}</span>
+          {(() => {
+            const fin = calculateOrderFinancials(order);
+            return (
+              <div className="space-y-2.5 bg-gray-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-gray-100 dark:border-slate-800">
+                <div className="flex items-center gap-1.5 font-bold text-gray-900 dark:text-white text-sm">
+                  <CreditCard className="w-4 h-4 text-[#ff6452]" />
+                  <span>Payment & Financial Breakdown</span>
+                </div>
+                <div className="space-y-1.5 text-gray-600 dark:text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(fin.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Courier Delivery</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {fin.deliveryFee === 0 ? 'FREE' : formatCurrency(fin.deliveryFee)}
+                    </span>
+                  </div>
+                  {fin.discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-semibold">
+                      <span>Discount</span>
+                      <span>-{formatCurrency(fin.discountAmount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>VAT ({Math.round(VAT_RATE * 100)}%)</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(fin.vatAmount)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1">
+                    <span>Payment Status</span>
+                    <span
+                      className={`font-bold px-2.5 py-0.5 rounded-full text-[11px] ${
+                        fin.isPaid
+                          ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300'
+                          : fin.isFailed
+                          ? 'bg-red-100 dark:bg-red-950/50 text-red-800 dark:text-red-300'
+                          : fin.isRefunded
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-300'
+                          : 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
+                      }`}
+                    >
+                      {fin.statusLabel}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center font-bold text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-slate-700">
+                    <span className="text-xs">
+                      {fin.isPaid ? 'TOTAL PAID' : 'TOTAL DUE'} ({order.payment_method || 'Online Payment'})
+                    </span>
+                    <span className="text-base text-[#ff6452] font-black">{formatCurrency(fin.grandTotal)}</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>Delivery</span>
-                <span>{STORE_CONFIG.STORE_CURRENCY}{order.delivery_fee}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Payment Status</span>
-                <span
-                  className={`font-bold px-2 py-0.5 rounded-full text-[11px] ${
-                    order.payment_status === 'Paid'
-                      ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300'
-                      : order.payment_status === 'Failed'
-                      ? 'bg-red-100 dark:bg-red-950/50 text-red-800 dark:text-red-300'
-                      : 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
-                  }`}
-                >
-                  {order.payment_status}
-                </span>
-              </div>
-              <div className="flex justify-between font-bold text-gray-900 dark:text-white pt-1 border-t border-gray-200 dark:border-slate-700">
-                <span>
-                  {order.payment_status === 'Paid'
-                    ? `Total Paid (${order.payment_method})`
-                    : `Total Amount (${order.payment_method})`}
-                </span>
-                <span>{STORE_CONFIG.STORE_CURRENCY}{order.total_amount}</span>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
 
         {/* Support Help Banner */}
-        <div className="bg-[#eff6ff] dark:bg-slate-900/90 rounded-3xl p-5 border border-blue-100 dark:border-blue-900/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="font-bold text-gray-900 dark:text-white text-sm">Need help with an order?</h3>
-            <p className="text-xs text-gray-600 dark:text-slate-300 mt-0.5">
-              Contact KUD Store support at{' '}
-              <a
-                href={`mailto:${STORE_CONFIG.CONTACT_EMAIL}?subject=Help%20with%20Order%20${order.id}`}
-                className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                {STORE_CONFIG.CONTACT_EMAIL}
-              </a>{' '}
-              or WhatsApp{' '}
-              <a
-                href={`https://wa.me/${STORE_CONFIG.WHATSAPP_SUPPORT.replace(/[^0-9]/g, '')}?text=Hi%20KUD%20Store%2C%20I%20need%20help%20with%20Order%20%23${order.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
-              >
-                {STORE_CONFIG.WHATSAPP_SUPPORT}
-              </a>
-            </p>
-          </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <a
-              href={`mailto:${STORE_CONFIG.CONTACT_EMAIL}?subject=Help%20with%20Order%20${order.id}`}
-              className="flex-1 sm:flex-none px-3.5 py-2 bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-bold rounded-xl border border-blue-200 dark:border-slate-700 transition-colors text-center inline-flex items-center justify-center gap-1.5 shadow-2xs"
-            >
-              <span>Email</span>
-            </a>
-            <a
-              href={`https://wa.me/${STORE_CONFIG.WHATSAPP_SUPPORT.replace(/[^0-9]/g, '')}?text=Hi%20KUD%20Store%2C%20I%20need%20help%20with%20Order%20%23${order.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 sm:flex-none px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors text-center inline-flex items-center justify-center gap-1.5 shadow-2xs"
-            >
-              <span>WhatsApp</span>
-            </a>
-          </div>
-        </div>
+        <CustomerOrderHelpCard orderId={order.id} orderNumber={order.order_number || order.id} />
 
         {/* Action buttons at bottom */}
         <div className="pt-6 border-t border-gray-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={handleDownloadInvoice}
-            disabled={isGeneratingInvoice}
-            className="w-full sm:w-auto px-6 py-3 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white font-bold rounded-2xl text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-          >
-            {isGeneratingInvoice ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin text-[#ff6452]" />
-                <span>Generating Invoice PDF...</span>
-              </>
-            ) : (
-              <>
-                <FileDown className="w-4 h-4 text-[#ff6452]" />
-                <span>Download Invoice (PDF)</span>
-              </>
-            )}
-          </button>
+          {allowCustomerDownload ? (
+            <button
+              type="button"
+              onClick={handleDownloadInvoice}
+              disabled={isGeneratingInvoice}
+              className="w-full sm:w-auto px-6 py-3 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white font-bold rounded-2xl text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isGeneratingInvoice ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#ff6452]" />
+                  <span>Generating Invoice PDF...</span>
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-4 h-4 text-[#ff6452]" />
+                  <span>Download Invoice (PDF)</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <div className="text-xs text-gray-400 dark:text-slate-500 italic">
+              Official tax invoices & receipts are dispatched directly to your registered email.
+            </div>
+          )}
 
           <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
             <button

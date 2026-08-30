@@ -31,6 +31,8 @@ import {
   Clock,
   HelpCircle,
   CheckCircle,
+  Gift,
+  MessageSquare,
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import { useAuth } from '../../context/AuthContext';
@@ -41,18 +43,46 @@ import { StoreBrandingSettings } from '../../components/admin/StoreBrandingSetti
 import { PromoBannerSettings } from '../../components/admin/PromoBannerSettings';
 import { CouponsManagementSettings } from '../../components/admin/CouponsManagementSettings';
 import { PaymentGatewaysSettings } from '../../components/admin/PaymentGatewaysSettings';
+import { ReferralsManagementSettings } from '../../components/admin/ReferralsManagementSettings';
+import { InvoiceSettingsConfigCard } from '../../components/admin/InvoiceSettingsConfigCard';
 
-type SettingsTab = 'general' | 'coupons' | 'branding' | 'banner' | 'payments';
+/**
+ * Authentic Google "G" Brand Icon for Admin UI
+ */
+const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+      fill="#4285F4"
+    />
+    <path
+      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      fill="#34A853"
+    />
+    <path
+      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+      fill="#FBBC05"
+    />
+    <path
+      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+      fill="#EA4335"
+    />
+  </svg>
+);
+
+type SettingsTab = 'general' | 'invoices' | 'coupons' | 'referrals' | 'branding' | 'banner' | 'payments';
 
 export const AdminSettingsPage: React.FC = () => {
   const { showToast, reloadGeneralSettings, updateGeneralSettings } = useShop();
-  const { isAdmin } = useAuth();
+  const { isAdmin, setIsGoogleAuthEnabled } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTabParam = searchParams.get('tab') as SettingsTab | null;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     if (
+      activeTabParam === 'invoices' ||
       activeTabParam === 'payments' ||
+      activeTabParam === 'referrals' ||
       activeTabParam === 'branding' ||
       activeTabParam === 'banner' ||
       activeTabParam === 'coupons'
@@ -64,7 +94,7 @@ export const AdminSettingsPage: React.FC = () => {
 
   useEffect(() => {
     const tab = searchParams.get('tab') as SettingsTab | null;
-    if (tab && ['general', 'coupons', 'branding', 'banner', 'payments'].includes(tab)) {
+    if (tab && ['general', 'invoices', 'coupons', 'referrals', 'branding', 'banner', 'payments'].includes(tab)) {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -85,14 +115,67 @@ export const AdminSettingsPage: React.FC = () => {
   );
   const [contactEmail, setContactEmail] = useState<string>(STORE_CONFIG.CONTACT_EMAIL);
   const [contactPhone, setContactPhone] = useState<string>('+27 (0)11 892 4000');
+  const [whatsappSupport, setWhatsappSupport] = useState<string>(STORE_CONFIG.WHATSAPP_SUPPORT);
+  const [supportHeading, setSupportHeading] = useState<string>('Need help with an order?');
+  const [supportSubtext, setSupportSubtext] = useState<string>('Contact KUD Store support team via email or WhatsApp');
   const [storeDescription, setStoreDescription] = useState<string>(
     'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.'
   );
+  const [enableGoogleAuth, setEnableGoogleAuth] = useState<boolean>(true);
+  const [isTogglingGoogleAuth, setIsTogglingGoogleAuth] = useState<boolean>(false);
+  const [googleAuthFeedback, setGoogleAuthFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   // Validation State
   const [isLoadingSettings, setIsLoadingSettings] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isGeneralTouched, setIsGeneralTouched] = useState<boolean>(false);
+
+  // Instant toggle handler for isGoogleAuthEnabled setting
+  const handleInstantGoogleAuthToggle = async (newVal: boolean) => {
+    const prevVal = enableGoogleAuth;
+    setEnableGoogleAuth(newVal);
+    setIsTogglingGoogleAuth(true);
+    setGoogleAuthFeedback(null);
+
+    try {
+      const res = await adminService.setGoogleAuthEnabled(newVal);
+      if (res.success) {
+        setIsGoogleAuthEnabled(newVal);
+        await reloadGeneralSettings();
+        setGoogleAuthFeedback({
+          type: 'success',
+          message: newVal
+            ? 'Google OAuth sign-in is now enabled and visible on customer login & registration pages.'
+            : 'Google OAuth sign-in is now disabled and hidden from customer login & registration pages.',
+        });
+        showToast(
+          newVal
+            ? 'Google sign-in enabled for customer dashboard'
+            : 'Google sign-in disabled for customer dashboard',
+          'success'
+        );
+      } else {
+        setEnableGoogleAuth(prevVal);
+        setGoogleAuthFeedback({
+          type: 'error',
+          message: res.error || 'Failed to update Google auth setting in database. Reverted back.',
+        });
+        showToast(res.error || 'Failed to update Google authentication setting', 'error');
+      }
+    } catch (err: any) {
+      setEnableGoogleAuth(prevVal);
+      setGoogleAuthFeedback({
+        type: 'error',
+        message: err?.message || 'Network error updating Google auth setting.',
+      });
+      showToast('Error updating Google authentication setting', 'error');
+    } finally {
+      setIsTogglingGoogleAuth(false);
+    }
+  };
 
   // Load settings from Supabase on mount
   useEffect(() => {
@@ -114,7 +197,11 @@ export const AdminSettingsPage: React.FC = () => {
           setShippingNotes(genConfig.shippingNotes || 'Nationwide door-to-door courier via The Courier Guy & Aramex.');
           setContactEmail(genConfig.contactEmail || STORE_CONFIG.CONTACT_EMAIL);
           setContactPhone(genConfig.contactPhone || '+27 (0)11 892 4000');
+          setWhatsappSupport(genConfig.whatsappSupport || STORE_CONFIG.WHATSAPP_SUPPORT);
+          setSupportHeading(genConfig.supportHeading || 'Need help with an order?');
+          setSupportSubtext(genConfig.supportSubtext || 'Contact KUD Store support team via email or WhatsApp');
           setStoreDescription(genConfig.storeDescription || '');
+          setEnableGoogleAuth(genConfig.enableGoogleAuth ?? true);
         }
       } catch (err) {
         console.warn('Error fetching settings from Supabase:', err);
@@ -188,7 +275,12 @@ export const AdminSettingsPage: React.FC = () => {
         shippingNotes: shippingNotes.trim(),
         contactEmail: contactEmail.trim(),
         contactPhone: contactPhone.trim(),
+        whatsappSupport: whatsappSupport.trim(),
+        supportHeading: supportHeading.trim(),
+        supportSubtext: supportSubtext.trim(),
         storeDescription: storeDescription.trim(),
+        enableGoogleAuth,
+        isGoogleAuthEnabled: enableGoogleAuth,
       };
 
       const res = await updateGeneralSettings(payload);
@@ -207,7 +299,13 @@ export const AdminSettingsPage: React.FC = () => {
           setShippingNotes(reloaded.shippingNotes || 'Nationwide door-to-door courier via The Courier Guy & Aramex.');
           setContactEmail(reloaded.contactEmail);
           setContactPhone(reloaded.contactPhone);
+          setWhatsappSupport(reloaded.whatsappSupport || STORE_CONFIG.WHATSAPP_SUPPORT);
+          setSupportHeading(reloaded.supportHeading || 'Need help with an order?');
+          setSupportSubtext(reloaded.supportSubtext || 'Contact KUD Store support team via email or WhatsApp');
           setStoreDescription(reloaded.storeDescription);
+          const isGoogleAuth = reloaded.isGoogleAuthEnabled ?? reloaded.enableGoogleAuth ?? true;
+          setEnableGoogleAuth(isGoogleAuth);
+          setIsGoogleAuthEnabled(isGoogleAuth);
         }
         await reloadGeneralSettings();
         showToast('Store settings & delivery logistics updated successfully.', 'success');
@@ -250,6 +348,18 @@ export const AdminSettingsPage: React.FC = () => {
           </button>
 
           <button
+            onClick={() => handleTabChange('invoices')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'invoices'
+                ? 'bg-[#ff6452] text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Invoices & Receipts</span>
+          </button>
+
+          <button
             onClick={() => handleTabChange('coupons')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'coupons'
@@ -259,6 +369,18 @@ export const AdminSettingsPage: React.FC = () => {
           >
             <Tag className="w-3.5 h-3.5" />
             <span>Coupons & Discounts</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('referrals')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'referrals'
+                ? 'bg-[#ff6452] text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+            }`}
+          >
+            <Gift className="w-3.5 h-3.5" />
+            <span>Referrals & Loyalty</span>
           </button>
 
           <button
@@ -863,6 +985,243 @@ export const AdminSettingsPage: React.FC = () => {
                   Customer service helpline for immediate telephone assistance.
                 </p>
               </div>
+
+              {/* WhatsApp Support Number */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>WhatsApp Support Number</span>
+                    <span className="text-[10px] font-extrabold text-emerald-600">*</span>
+                  </label>
+                  <span className="text-[11px] font-bold text-emerald-600">Active on Customer Dashboard</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={whatsappSupport}
+                    onChange={(e) => {
+                      setWhatsappSupport(e.target.value);
+                      setIsGeneralTouched(true);
+                    }}
+                    placeholder="+27797648590"
+                    className="w-full pl-4 pr-10 py-3 rounded-2xl text-xs font-semibold font-mono bg-emerald-50/20 border border-emerald-300 text-gray-900 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 transition-all focus:outline-none"
+                  />
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" />
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-500">
+                  Direct WhatsApp link for customer profile & order help (e.g. +27797648590).
+                </p>
+              </div>
+
+              {/* Help Card Heading */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Support Section Heading</span>
+                </label>
+                <input
+                  type="text"
+                  value={supportHeading}
+                  onChange={(e) => {
+                    setSupportHeading(e.target.value);
+                    setIsGeneralTouched(true);
+                  }}
+                  placeholder="Need help with an order?"
+                  className="w-full px-4 py-3 rounded-2xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-900 focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 transition-all focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-500">
+                  Customized title displayed on customer profile, orders, and receipt cards.
+                </p>
+              </div>
+
+              {/* Help Card Subtext / Note */}
+              <div className="sm:col-span-2 space-y-1.5">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-gray-500" />
+                  <span>Support Instructions / Subtext</span>
+                </label>
+                <input
+                  type="text"
+                  value={supportSubtext}
+                  onChange={(e) => {
+                    setSupportSubtext(e.target.value);
+                    setIsGeneralTouched(true);
+                  }}
+                  placeholder="Contact KUD Store support team via email or WhatsApp for instant order updates."
+                  className="w-full px-4 py-3 rounded-2xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-900 focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 transition-all focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-500">
+                  Detailed guidance text shown below the support title on the customer dashboard.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* CARD 4B: CUSTOMER AUTHENTICATION & GOOGLE SIGN-IN OPTIONS */}
+          <div className="bg-white p-5 sm:p-7 rounded-3xl border border-gray-200/80 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shadow-2xs">
+                  <GoogleIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    <span>Customer Authentication & Google Sign-In</span>
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Control authentication methods displayed to shoppers on the customer dashboard, login, and registration pages.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <div className="self-start sm:self-auto flex items-center gap-2">
+                {isTogglingGoogleAuth ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs">
+                    <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+                    Updating Database...
+                  </span>
+                ) : enableGoogleAuth ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Google OAuth Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/80 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    Google OAuth Hidden
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* In-Card Dynamic Feedback Banner */}
+            {googleAuthFeedback && (
+              <div
+                className={`p-3.5 rounded-2xl border text-xs font-semibold flex items-center justify-between gap-3 animate-in fade-in duration-200 ${
+                  googleAuthFeedback.type === 'success'
+                    ? 'bg-emerald-50/90 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50/90 border-rose-200 text-rose-800'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {googleAuthFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{googleAuthFeedback.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGoogleAuthFeedback(null)}
+                  className="text-xs opacity-70 hover:opacity-100 font-bold px-2 py-0.5 rounded cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Modern Toggle Switch Component */}
+            <div className="bg-gray-50/80 border border-gray-200/80 rounded-2xl p-4 sm:p-5 transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-gray-900">
+                      Enable "Continue with Google" Social Auth Button
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide bg-blue-100 text-blue-800">
+                      OAuth 2.0
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 leading-relaxed max-w-xl">
+                    When switched on, customers can instantly sign up or log in using their verified Google account with 1-click authentication. When switched off, the Google button is hidden, presenting customers with direct email & password authentication.
+                  </p>
+                </div>
+
+                {/* Interactive Modern Switch */}
+                <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
+                  <span className="text-xs font-bold text-gray-600">
+                    {enableGoogleAuth ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={enableGoogleAuth}
+                    disabled={isTogglingGoogleAuth || isLoadingSettings}
+                    onClick={() => handleInstantGoogleAuthToggle(!enableGoogleAuth)}
+                    className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#ff6452] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      enableGoogleAuth ? 'bg-[#ff6452]' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className="sr-only">Toggle Google OAuth</span>
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                        enableGoogleAuth ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    >
+                      {isTogglingGoogleAuth ? (
+                        <RefreshCw className="w-3 h-3 text-gray-500 animate-spin" />
+                      ) : enableGoogleAuth ? (
+                        <Check className="w-3.5 h-3.5 text-[#ff6452] stroke-[3]" />
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                      )}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Customer Portal Preview */}
+            <div className="border border-gray-200/70 rounded-2xl p-4 bg-white space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#ff6452]" /> Live Customer Portal View Preview
+                </span>
+                <span className="text-[11px] text-gray-500 font-medium">
+                  {enableGoogleAuth ? 'Visible to all shoppers' : 'Hidden from all shoppers'}
+                </span>
+              </div>
+
+              <div className="bg-gray-50/80 rounded-xl p-4 border border-dashed border-gray-200 max-w-sm mx-auto space-y-3 text-center">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-gray-900">Customer Account Portal</p>
+                  <p className="text-[10px] text-gray-500">Sign in to your KUD Store account</p>
+                </div>
+
+                {enableGoogleAuth ? (
+                  <div className="space-y-2.5 pt-1">
+                    <div className="w-full py-2 px-3 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 flex items-center justify-center gap-2 shadow-2xs">
+                      <GoogleIcon className="w-3.5 h-3.5" />
+                      <span>Continue with Google</span>
+                    </div>
+                    <div className="relative flex items-center justify-center">
+                      <div className="w-full border-t border-gray-200" />
+                      <span className="bg-gray-50 px-2 text-[9px] font-bold text-gray-400 uppercase">
+                        or continue with email
+                      </span>
+                    </div>
+                    <div className="h-8 bg-white border border-gray-200 rounded-xl flex items-center px-3 text-[11px] text-gray-400">
+                      customer@example.co.za
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-1">
+                    <div className="bg-amber-50/80 border border-amber-200/80 rounded-lg p-2 text-[10px] font-medium text-amber-800 text-left flex items-start gap-1.5">
+                      <EyeOff className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>Google OAuth button is hidden. Customers will only see standard email & password fields.</span>
+                    </div>
+                    <div className="h-8 bg-white border border-gray-200 rounded-xl flex items-center px-3 text-[11px] text-gray-400">
+                      customer@example.co.za
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -904,9 +1263,19 @@ export const AdminSettingsPage: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
+      {/* TAB 1B: TAX INVOICES & RECEIPT AUTOMATION */}
+      {/* ========================================================================= */}
+      {activeTab === 'invoices' && <InvoiceSettingsConfigCard />}
+
+      {/* ========================================================================= */}
       {/* TAB 2: COUPONS & DISCOUNTS MANAGEMENT */}
       {/* ========================================================================= */}
       {activeTab === 'coupons' && <CouponsManagementSettings />}
+
+      {/* ========================================================================= */}
+      {/* TAB 2B: REFERRALS & LOYALTY PROGRAM SETTINGS */}
+      {/* ========================================================================= */}
+      {activeTab === 'referrals' && <ReferralsManagementSettings />}
 
       {/* ========================================================================= */}
       {/* TAB 3: STORE LOGO & BRANDING */}

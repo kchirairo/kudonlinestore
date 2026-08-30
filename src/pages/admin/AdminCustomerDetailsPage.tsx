@@ -9,11 +9,16 @@ import {
   ShoppingBag,
   DollarSign,
   Eye,
+  AlertTriangle,
+  EyeOff,
+  ShieldCheck,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Customer, Order } from '../../types';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
+import { AdminCustomerReferralCard } from '../../components/admin/AdminCustomerReferralCard';
+import { AdminCustomerAccountControlCard } from '../../components/admin/AdminCustomerAccountControlCard';
 import { STORE_CONFIG } from '../../constants/config';
 
 export const AdminCustomerDetailsPage: React.FC = () => {
@@ -85,11 +90,37 @@ export const AdminCustomerDetailsPage: React.FC = () => {
               {customer.fullName ? customer.fullName[0] : 'C'}
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-black text-gray-900">{customer.fullName}</h1>
                 <span className="px-2.5 py-0.5 bg-gray-100 text-gray-700 text-[10px] font-extrabold uppercase rounded-full">
                   {customer.role}
                 </span>
+
+                {/* Account Status Badge */}
+                {customer.accountStatus === 'disabled' || (customer.isDisabled && customer.accountStatus !== 'on_hold') ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-700 border border-red-200">
+                    <AlertTriangle className="w-3 h-3 text-red-600" />
+                    Account Disabled
+                  </span>
+                ) : customer.accountStatus === 'on_hold' ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+                    <AlertTriangle className="w-3 h-3 text-amber-600" />
+                    Account On Hold
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    Active Account
+                  </span>
+                )}
+
+                {/* Referral Program Flags */}
+                {customer.isReferralBanned ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-50 text-red-700 border border-red-200">
+                    <AlertTriangle className="w-3 h-3 text-red-600" />
+                    Banned from Referrals
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs text-gray-400 mt-0.5">
                 Registered on {new Date(customer.createdAt).toLocaleDateString()}
@@ -127,6 +158,18 @@ export const AdminCustomerDetailsPage: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {/* Customer Account Status & Permissions Control Card */}
+        <AdminCustomerAccountControlCard
+          customer={customer}
+          onCustomerUpdated={(updated) => setCustomer(updated)}
+        />
+
+        {/* Customer Referral Controls */}
+        <AdminCustomerReferralCard
+          customer={customer}
+          onCustomerUpdated={(updated) => setCustomer(updated)}
+        />
 
         {/* Customer Order History */}
         <div className="space-y-4 pt-2">

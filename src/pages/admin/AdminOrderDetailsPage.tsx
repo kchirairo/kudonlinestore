@@ -22,6 +22,7 @@ import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
 import { generateOrderInvoicePDF } from '../../utils/invoiceGenerator';
+import { calculateOrderFinancials, formatCurrency, VAT_RATE } from '../../utils/taxUtils';
 
 export const AdminOrderDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -238,15 +239,19 @@ export const AdminOrderDetailsPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="text-left sm:text-right">
-            <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
-              Grand Total
-            </span>
-            <span className="text-2xl font-black text-gray-900">
-              {STORE_CONFIG.STORE_CURRENCY}
-              {order.total_amount.toLocaleString()}
-            </span>
-          </div>
+          {(() => {
+            const fin = calculateOrderFinancials(order);
+            return (
+              <div className="text-left sm:text-right">
+                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
+                  Grand Total (Incl. 15% VAT)
+                </span>
+                <span className="text-2xl font-black text-gray-900">
+                  {formatCurrency(fin.grandTotal)}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Customer & Shipping Information Grid */}
@@ -329,53 +334,60 @@ export const AdminOrderDetailsPage: React.FC = () => {
         </div>
 
         {/* Payment & Order Financial Breakdown */}
-        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 space-y-3 max-w-md ml-auto text-xs">
-          <div className="flex items-center gap-2 font-black text-gray-900 text-sm border-b border-gray-200 pb-2">
-            <CreditCard className="w-4 h-4 text-[#ff6452]" />
-            <span>Order Financial Breakdown</span>
-          </div>
-
-          <div className="space-y-2 text-gray-600">
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span className="font-bold text-gray-900">
-                {STORE_CONFIG.STORE_CURRENCY}
-                {order.subtotal_amount.toLocaleString()}
-              </span>
-            </div>
-
-            <div className="flex justify-between">
-              <span>Delivery Fee</span>
-              <span className="font-bold text-gray-900">
-                {STORE_CONFIG.STORE_CURRENCY}
-                {order.delivery_fee.toLocaleString()}
-              </span>
-            </div>
-
-            {order.discount_amount > 0 && (
-              <div className="flex justify-between text-emerald-600 font-bold">
-                <span>Discount Applied</span>
-                <span>
-                  -{STORE_CONFIG.STORE_CURRENCY}
-                  {order.discount_amount.toLocaleString()}
-                </span>
+        {(() => {
+          const fin = calculateOrderFinancials(order);
+          return (
+            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 space-y-3 max-w-md ml-auto text-xs">
+              <div className="flex items-center gap-2 font-black text-gray-900 text-sm border-b border-gray-200 pb-2">
+                <CreditCard className="w-4 h-4 text-[#ff6452]" />
+                <span>Order Financial Breakdown</span>
               </div>
-            )}
 
-            <div className="flex justify-between text-gray-600 pt-1 border-t border-gray-200">
-              <span>Payment Method</span>
-              <span className="font-bold text-gray-900">{order.payment_method}</span>
-            </div>
+              <div className="space-y-2 text-gray-600">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <span className="font-bold text-gray-900">{formatCurrency(fin.subtotal)}</span>
+                </div>
 
-            <div className="flex justify-between font-black text-gray-900 text-base pt-2 border-t border-gray-200">
-              <span>Total Paid</span>
-              <span className="text-[#ff6452]">
-                {STORE_CONFIG.STORE_CURRENCY}
-                {order.total_amount.toLocaleString()}
-              </span>
+                <div className="flex justify-between">
+                  <span>Courier Delivery</span>
+                  <span className="font-bold text-gray-900">
+                    {fin.deliveryFee === 0 ? 'FREE' : formatCurrency(fin.deliveryFee)}
+                  </span>
+                </div>
+
+                {fin.discountAmount > 0 && (
+                  <div className="flex justify-between text-emerald-600 font-bold">
+                    <span>Discount Applied</span>
+                    <span>-{formatCurrency(fin.discountAmount)}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between">
+                  <span>VAT ({Math.round(VAT_RATE * 100)}%)</span>
+                  <span className="font-bold text-gray-900">{formatCurrency(fin.vatAmount)}</span>
+                </div>
+
+                <div className="flex justify-between text-gray-600 pt-1 border-t border-gray-200">
+                  <span>Payment Method</span>
+                  <span className="font-bold text-gray-900">{order.payment_method || 'Online Payment'}</span>
+                </div>
+
+                <div className="flex justify-between text-gray-600">
+                  <span>Payment Status</span>
+                  <span className={`font-bold ${fin.isPaid ? 'text-emerald-600' : fin.isFailed ? 'text-rose-600' : 'text-amber-600'}`}>
+                    {fin.statusLabel}
+                  </span>
+                </div>
+
+                <div className="flex justify-between font-black text-gray-900 text-base pt-2 border-t border-gray-200">
+                  <span>{fin.isPaid ? 'TOTAL PAID' : 'TOTAL DUE'}</span>
+                  <span className="text-[#ff6452]">{formatCurrency(fin.grandTotal)}</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
       </div>
     </div>
   );

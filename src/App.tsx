@@ -33,10 +33,18 @@ import { AdminCategoriesPage } from './pages/admin/AdminCategoriesPage';
 import { AdminCustomersPage } from './pages/admin/AdminCustomersPage';
 import { AdminCustomerDetailsPage } from './pages/admin/AdminCustomerDetailsPage';
 import { AdminSettingsPage } from './pages/admin/AdminSettingsPage';
+import { AdminInvoicesPage } from './pages/admin/AdminInvoicesPage';
+import { AdminMarketingAnalyticsPage } from './pages/admin/AdminMarketingAnalyticsPage';
+import { AdminBannersPage } from './pages/admin/AdminBannersPage';
+import { marketingService } from './services/marketingService';
 
 function AppContent() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
+
+  React.useEffect(() => {
+    marketingService.initializePixels();
+  }, []);
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-100 font-sans antialiased selection:bg-[#ff6452] selection:text-white flex flex-col transition-colors duration-200">
@@ -58,6 +66,8 @@ function AppContent() {
           <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/login" element={<AccountPage />} />
+          <Route path="/signup" element={<AccountPage />} />
+          <Route path="/register" element={<AccountPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="/verify-email" element={<AuthCallbackPage />} />
           <Route path="/verify" element={<AuthCallbackPage />} />
@@ -78,6 +88,10 @@ function AppContent() {
             <Route index element={<AdminDashboardPage />} />
             <Route path="orders" element={<AdminOrdersPage />} />
             <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
+            <Route path="invoices" element={<AdminInvoicesPage />} />
+            <Route path="marketing" element={<AdminMarketingAnalyticsPage />} />
+            <Route path="analytics" element={<AdminMarketingAnalyticsPage />} />
+            <Route path="banners" element={<AdminBannersPage />} />
             <Route path="products" element={<AdminProductsPage />} />
             <Route path="products/new" element={<AdminAddProductPage />} />
             <Route path="products/:id/edit" element={<AdminEditProductPage />} />

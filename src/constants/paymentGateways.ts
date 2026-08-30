@@ -45,9 +45,9 @@ export const DEFAULT_PAYMENT_GATEWAYS: PaymentGatewaysMap = {
     id: 'cod',
     name: 'Cash on Delivery (COD)',
     description: 'Pay with cash upon delivery by courier',
-    enabled: true,
+    enabled: false,
     mode: 'test',
-    configured: true,
+    configured: false,
   },
   paypal: {
     id: 'paypal',

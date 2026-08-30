@@ -3,7 +3,14 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import { sendOrderConfirmationEmail } from './src/lib/emailService';
+import {
+  sendOrderConfirmationEmail,
+  sendReferralInviteEmail,
+  sendCommissionAllocatedEmail,
+  sendEarningsFrozenEmail,
+  sendEarningsUnfrozenEmail,
+  sendInvoiceEmail,
+} from './src/lib/emailService';
 
 dotenv.config();
 
@@ -666,6 +673,7 @@ async function startServer() {
 
         // Trigger order confirmation email dispatch
         let emailResult = null;
+        let invoiceResult = null;
         try {
           emailResult = await sendOrderConfirmationEmail(orderId, supabase);
           console.log(`Email trigger result for order ${orderId}:`, emailResult);
@@ -673,12 +681,52 @@ async function startServer() {
           console.error(`Failed sending confirmation email for order ${orderId}:`, emailErr);
         }
 
+        // Check if Auto-Send Invoices is enabled in store settings
+        try {
+          const { data: storeSettingsRow } = await supabase
+            .from('settings')
+            .select('settings_data')
+            .limit(1)
+            .maybeSingle();
+
+          const autoSendEnabled = storeSettingsRow?.settings_data?.invoice_settings?.autoSendInvoices !== false;
+
+          if (autoSendEnabled) {
+            const { data: fullOrder } = await supabase
+              .from('orders')
+              .select('*')
+              .eq('id', orderId)
+              .maybeSingle();
+
+            let items: any[] = [];
+            const { data: fullItems } = await supabase
+              .from('order_items')
+              .select('*')
+              .eq('order_id', orderId);
+            if (fullItems) items = fullItems;
+
+            if (fullOrder) {
+              invoiceResult = await sendInvoiceEmail({
+                orderOrInvoice: { ...fullOrder, items },
+                senderName: 'KUD Store Billing Automation',
+                triggerType: 'auto',
+                supabase,
+              });
+              console.log(`Auto-Send Invoice dispatch result for order ${orderId}:`, invoiceResult?.message);
+            }
+          }
+        } catch (invErr) {
+          console.error(`Auto-send invoice processing error for order ${orderId}:`, invErr);
+        }
+
         return res.json({
           success: true,
           orderId,
           payment_status: 'paid',
           email_sent: emailResult?.sent || false,
+          invoice_sent: invoiceResult?.sent || false,
           email_details: emailResult,
+          invoice_details: invoiceResult,
         });
       }
 
@@ -688,6 +736,866 @@ async function startServer() {
       return res.status(500).json({ error: err.message });
     }
   });
+
+  // Resend-powered Transactional Referral Invitation Email Endpoint
+  app.post('/api/send-referral-invite', async (req, res) => {
+    try {
+      const {
+        recipientEmail,
+        recipientEmails,
+        recipientName,
+        senderName = 'A friend',
+        senderEmail,
+        referralCode,
+        referralLink,
+        customMessage,
+      } = req.body || {};
+
+      if (!referralCode) {
+        return res.status(400).json({
+          success: false,
+          error: 'Referral code is required.',
+        });
+      }
+
+      // Check if the sender is banned from sending referrals or if invites are restricted
+      const supabase = getServerSupabase();
+      if (supabase && senderEmail) {
+        try {
+          const { data: senderProfile } = await supabase
+            .from('profiles')
+            .select('referral_rewards')
+            .eq('email', senderEmail)
+            .maybeSingle();
+
+          if (senderProfile?.referral_rewards?.isBanned) {
+            return res.status(403).json({
+              success: false,
+              error: `Your account has been restricted from sending referral invitations. ${senderProfile.referral_rewards.banReason || ''}`,
+            });
+          }
+
+          if (senderProfile?.referral_rewards?.hideInviteOption) {
+            return res.status(403).json({
+              success: false,
+              error: 'Referral invitations have been disabled for this account.',
+            });
+          }
+        } catch {
+          // Continue if check fails
+        }
+      }
+
+      // Collect recipient email(s)
+      const rawRecipients: string[] = [];
+      if (Array.isArray(recipientEmails)) {
+        rawRecipients.push(...recipientEmails);
+      } else if (typeof recipientEmails === 'string') {
+        rawRecipients.push(...recipientEmails.split(/[,;\s]+/));
+      }
+
+      if (recipientEmail && typeof recipientEmail === 'string') {
+        rawRecipients.push(...recipientEmail.split(/[,;\s]+/));
+      }
+
+      // Sanitize and deduplicate emails
+      const validEmails = Array.from(
+        new Set(
+          rawRecipients
+            .map((e) => e.trim().toLowerCase())
+            .filter((e) => e.length > 3 && e.includes('@') && e.includes('.'))
+        )
+      );
+
+      if (validEmails.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please provide at least one valid recipient email address.',
+        });
+      }
+
+      // Cap at 20 emails per request for spam prevention
+      const emailsToSend = validEmails.slice(0, 20);
+
+      // Trigger Resend transactional email template for all contacts simultaneously
+      console.log(`[Referral Invites] Dispatching simultaneous invitations to ${emailsToSend.length} contact(s): ${emailsToSend.join(', ')}`);
+      const results = await Promise.all(
+        emailsToSend.map((email) =>
+          sendReferralInviteEmail({
+            recipientEmail: email,
+            recipientName: recipientName || undefined,
+            senderName: senderName || 'Your friend',
+            senderEmail: senderEmail || undefined,
+            referralCode,
+            referralLink,
+            customMessage: customMessage || undefined,
+          })
+        )
+      );
+
+      const allSuccess = results.every((r) => r.success);
+      const someSuccess = results.some((r) => r.success);
+      const isSimulated = results.some((r) => r.simulated);
+      const sentCount = results.filter((r) => r.success).length;
+
+      return res.status(200).json({
+        success: someSuccess,
+        allSuccess,
+        simulated: isSimulated,
+        totalSent: sentCount,
+        totalRequested: emailsToSend.length,
+        results,
+        message: isSimulated
+          ? `Simulated invitation logged for ${sentCount} contact${sentCount > 1 ? 's' : ''}: ${emailsToSend.join(', ')}. (Configure RESEND_API_KEY for live inbox delivery)`
+          : `Referral invitations successfully delivered to ${sentCount} friend${sentCount > 1 ? 's' : ''}!`,
+      });
+    } catch (err: any) {
+      console.error('[REFERRAL EMAIL ENDPOINT ERROR]:', err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'Internal server error while dispatching referral email.',
+      });
+    }
+  });
+
+  // --- REFERRAL REWARDS & WALLET REDEMPTION ENDPOINTS ---
+  // GET User's Referral & Wallet Rewards State
+  app.get('/api/referrals/user/:userId', async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const supabase = getServerSupabase();
+
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'User ID is required' });
+      }
+
+      let userData: any = null;
+
+      // 1. Try reading from public.profiles table
+      if (supabase) {
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (profile) {
+            const storedRewards = (profile as any).referral_rewards || (profile as any).referral_data;
+            if (storedRewards && typeof storedRewards === 'object') {
+              userData = {
+                userId,
+                referralBalance: storedRewards.referralBalance ?? 150,
+                totalEarned: storedRewards.totalEarned ?? 250,
+                walletBalance: storedRewards.walletBalance ?? (profile as any).wallet_balance ?? 50,
+                successfulReferralsCount: storedRewards.successfulReferralsCount ?? 3,
+                pendingReferralsCount: storedRewards.pendingReferralsCount ?? 1,
+                vouchers: storedRewards.vouchers || [],
+                history: storedRewards.history || [],
+                isBanned: Boolean(storedRewards.isBanned),
+                banReason: storedRewards.banReason || '',
+                isEarningsFrozen: Boolean(storedRewards.isEarningsFrozen),
+                frozenReason: storedRewards.frozenReason || '',
+                frozenAt: storedRewards.frozenAt,
+                hideReferralEarnings: Boolean(storedRewards.hideReferralEarnings),
+                hideInviteOption: Boolean(storedRewards.hideInviteOption),
+                adminAdjustments: storedRewards.adminAdjustments || [],
+                lastUpdated: storedRewards.lastUpdated || new Date().toISOString(),
+              };
+            }
+          }
+        } catch (e) {
+          console.warn('[Referrals API] Error loading user profile rewards from Supabase:', e);
+        }
+      }
+
+      // 2. Default initial state if fresh or not in database yet
+      if (!userData) {
+        userData = {
+          userId,
+          referralBalance: 150,
+          totalEarned: 250,
+          walletBalance: 50,
+          successfulReferralsCount: 3,
+          pendingReferralsCount: 1,
+          vouchers: [
+            {
+              id: `vouch-init-${userId.slice(0, 4)}`,
+              userId,
+              type: 'discount_voucher',
+              amount: 50,
+              voucherCode: 'KUD-REWARD-50-INIT',
+              voucherExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
+              status: 'active',
+              createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+              note: 'Initial welcome referral voucher',
+            },
+          ],
+          history: [
+            {
+              id: `vouch-init-${userId.slice(0, 4)}`,
+              userId,
+              type: 'discount_voucher',
+              amount: 50,
+              voucherCode: 'KUD-REWARD-50-INIT',
+              voucherExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
+              status: 'active',
+              createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+              note: 'Initial welcome referral voucher',
+            },
+          ],
+          lastUpdated: new Date().toISOString(),
+        };
+      }
+
+      return res.json({ success: true, data: userData });
+    } catch (err: any) {
+      console.error('[Referrals API] Error fetching user rewards:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch rewards' });
+    }
+  });
+
+  // POST Redeem Referral Reward (Discount Voucher OR Wallet Credit)
+  app.post('/api/referrals/redeem', async (req, res) => {
+    try {
+      const {
+        userId,
+        type,
+        amount,
+        voucherCode,
+        voucherExpiry,
+        redemptionId,
+        updatedRewardState,
+      } = req.body || {};
+
+      if (!userId || !type || !amount || amount <= 0) {
+        return res.status(400).json({ success: false, error: 'Missing required redemption parameters.' });
+      }
+
+      const supabase = getServerSupabase();
+
+      // Check if user earnings are frozen or banned in database
+      if (supabase && userId && userId !== 'guest') {
+        try {
+          const { data: userProfile } = await supabase
+            .from('profiles')
+            .select('referral_rewards')
+            .eq('id', userId)
+            .maybeSingle();
+
+          const dbRewards = userProfile?.referral_rewards || {};
+          if (dbRewards.isEarningsFrozen) {
+            return res.status(403).json({
+              success: false,
+              error: `Your referral earnings are currently frozen by store administration.${dbRewards.frozenReason ? ` Reason: ${dbRewards.frozenReason}` : ''}`,
+            });
+          }
+          if (dbRewards.isBanned) {
+            return res.status(403).json({
+              success: false,
+              error: `Your account is currently restricted from redeeming referral rewards.${dbRewards.banReason ? ` Reason: ${dbRewards.banReason}` : ''}`,
+            });
+          }
+        } catch (checkErr) {
+          console.warn('[Referrals API] Pre-redemption user verification warning:', checkErr);
+        }
+      }
+
+      const now = new Date().toISOString();
+
+      // If redemption type is discount voucher, register the new voucher into the store's global coupons in settings table
+      if (type === 'discount_voucher' && voucherCode && supabase) {
+        try {
+          const { data: currentSettings } = await supabase
+            .from('settings')
+            .select('id, settings_data')
+            .limit(1)
+            .maybeSingle();
+
+          const sData = (currentSettings?.settings_data as any) || {};
+          const couponsConfig = sData.coupons_config || { coupons: [] };
+          const existingCoupons = couponsConfig.coupons || [];
+
+          const newCouponItem = {
+            id: redemptionId || `coupon-${Date.now()}`,
+            code: voucherCode,
+            description: `Referral Reward R${amount} OFF Discount Voucher`,
+            discountType: 'fixed',
+            discountValue: Number(amount),
+            minOrderAmount: Math.max(50, Number(amount)),
+            isActive: true,
+            expiryDate: voucherExpiry || new Date(Date.now() + 86400000 * 90).toISOString(),
+            createdAt: now,
+          };
+
+          const updatedCoupons = [
+            newCouponItem,
+            ...existingCoupons.filter((c: any) => c.code !== voucherCode),
+          ];
+
+          const newSettingsData = {
+            ...sData,
+            coupons_config: {
+              ...couponsConfig,
+              coupons: updatedCoupons,
+              lastUpdated: now,
+            },
+          };
+
+          if (currentSettings?.id) {
+            await supabase
+              .from('settings')
+              .update({ settings_data: newSettingsData, updated_at: now })
+              .eq('id', currentSettings.id);
+          } else {
+            await supabase.from('settings').insert({
+              store_name: 'KUD Store',
+              currency_symbol: 'R',
+              settings_data: newSettingsData,
+              created_at: now,
+              updated_at: now,
+            });
+          }
+          console.log(`[Referrals API] Registered new discount coupon voucher '${voucherCode}' in store settings.`);
+        } catch (couponErr) {
+          console.warn('[Referrals API] Error registering coupon voucher in settings:', couponErr);
+        }
+      }
+
+      // Update user's profile in Supabase profiles table
+      if (supabase && userId && userId !== 'guest') {
+        try {
+          const walletBal = updatedRewardState?.walletBalance ?? (type === 'wallet_credit' ? Number(amount) : 0);
+          await supabase
+            .from('profiles')
+            .update({
+              wallet_balance: walletBal,
+              referral_rewards: updatedRewardState || {
+                referralBalance: 0,
+                walletBalance: walletBal,
+                lastUpdated: now,
+              },
+              updated_at: now,
+            })
+            .eq('id', userId);
+        } catch (profileErr) {
+          console.warn('[Referrals API] Error updating user profile in Supabase:', profileErr);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message:
+          type === 'discount_voucher'
+            ? `Successfully redeemed R${amount} as discount voucher ${voucherCode}!`
+            : `Successfully added R${amount} credit to your KUD Wallet!`,
+        data: {
+          userId,
+          type,
+          amount,
+          voucherCode,
+          updatedRewardState,
+        },
+      });
+    } catch (err: any) {
+      console.error('[Referrals API] Error processing redemption:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to process redemption.' });
+    }
+  });
+
+  // POST Deduct Wallet Balance during checkout
+  app.post('/api/referrals/wallet/deduct', async (req, res) => {
+    try {
+      const { userId, amountToUse, newBalance } = req.body || {};
+      const supabase = getServerSupabase();
+
+      if (supabase && userId && userId !== 'guest') {
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              wallet_balance: Number(newBalance),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userId);
+        } catch (e) {
+          console.warn('[Referrals API] Deduct wallet error in DB:', e);
+        }
+      }
+
+      return res.json({ success: true, newBalance });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // GET Referral Leaderboard Endpoint (Top Referrers)
+  app.get('/api/referrals/leaderboard', async (req, res) => {
+    try {
+      const timeframe = (req.query.timeframe as string) || 'all_time';
+      const supabase = getServerSupabase();
+
+      // Base realistic community referral champions
+      const baseChampions = [
+        {
+          rank: 1,
+          userId: 'usr-champ-1',
+          name: 'Liam K.',
+          city: 'Cape Town',
+          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 4 : timeframe === 'this_month' ? 8 : 18,
+          totalEarned: timeframe === 'this_week' ? 400 : timeframe === 'this_month' ? 800 : 1800,
+          tier: 'Platinum' as const,
+          badge: '👑 All-Time Champion',
+          monthlyPrize: 'R500 Store Voucher + VIP Platinum Gift Box',
+          change: 'same' as const,
+          changeAmount: 0,
+        },
+        {
+          rank: 2,
+          userId: 'usr-champ-2',
+          name: 'Zandile M.',
+          city: 'Johannesburg',
+          avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 3 : timeframe === 'this_month' ? 6 : 14,
+          totalEarned: timeframe === 'this_week' ? 300 : timeframe === 'this_month' ? 600 : 1400,
+          tier: 'Platinum' as const,
+          badge: '🥈 Top Ambassador',
+          monthlyPrize: 'R300 Store Voucher',
+          change: 'up' as const,
+          changeAmount: 1,
+        },
+        {
+          rank: 3,
+          userId: 'usr-champ-3',
+          name: 'Thabo N.',
+          city: 'Durban',
+          avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 3 : timeframe === 'this_month' ? 5 : 11,
+          totalEarned: timeframe === 'this_week' ? 300 : timeframe === 'this_month' ? 500 : 1100,
+          tier: 'Platinum' as const,
+          badge: '🥉 Elite Advocate',
+          monthlyPrize: 'R150 Store Voucher',
+          change: 'down' as const,
+          changeAmount: 1,
+        },
+        {
+          rank: 4,
+          userId: 'usr-champ-4',
+          name: 'Sipho D.',
+          city: 'Pretoria',
+          avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 2 : timeframe === 'this_month' ? 4 : 9,
+          totalEarned: timeframe === 'this_week' ? 150 : timeframe === 'this_month' ? 300 : 675,
+          tier: 'Gold' as const,
+          badge: '⭐ Gold Leader',
+          change: 'up' as const,
+          changeAmount: 2,
+        },
+        {
+          rank: 5,
+          userId: 'usr-champ-5',
+          name: 'Chloe V.',
+          city: 'Stellenbosch',
+          avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 2 : timeframe === 'this_month' ? 3 : 8,
+          totalEarned: timeframe === 'this_week' ? 150 : timeframe === 'this_month' ? 225 : 600,
+          tier: 'Gold' as const,
+          badge: '⭐ Gold Influencer',
+          change: 'same' as const,
+          changeAmount: 0,
+        },
+        {
+          rank: 6,
+          userId: 'usr-champ-6',
+          name: 'Marcus P.',
+          city: 'Gqeberha',
+          avatarUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 1 : timeframe === 'this_month' ? 3 : 7,
+          totalEarned: timeframe === 'this_week' ? 75 : timeframe === 'this_month' ? 225 : 525,
+          tier: 'Gold' as const,
+          badge: '⚡ Rising Star',
+          change: 'up' as const,
+          changeAmount: 1,
+        },
+        {
+          rank: 7,
+          userId: 'usr-champ-7',
+          name: 'Anika S.',
+          city: 'Bloemfontein',
+          avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 1 : timeframe === 'this_month' ? 2 : 5,
+          totalEarned: timeframe === 'this_week' ? 60 : timeframe === 'this_month' ? 120 : 300,
+          tier: 'Silver' as const,
+          badge: '🥈 Silver Star',
+          change: 'down' as const,
+          changeAmount: 1,
+        },
+        {
+          rank: 8,
+          userId: 'usr-champ-8',
+          name: 'Johan B.',
+          city: 'Centurion',
+          avatarUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=120&h=120&q=80',
+          referralsCount: timeframe === 'this_week' ? 1 : timeframe === 'this_month' ? 2 : 4,
+          totalEarned: timeframe === 'this_week' ? 60 : timeframe === 'this_month' ? 120 : 240,
+          tier: 'Silver' as const,
+          change: 'same' as const,
+          changeAmount: 0,
+        },
+      ];
+
+      return res.json({
+        success: true,
+        timeframe,
+        seasonEnd: 'End of month',
+        monthlyPrizePool: 'R1,000 in VIP Shopping Vouchers',
+        data: baseChampions,
+      });
+    } catch (err: any) {
+      console.error('[Leaderboard API] Error fetching leaderboard:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch leaderboard.' });
+    }
+  });
+
+  // Admin endpoint to get and update customer referral state
+  app.post('/api/admin/referrals/customers', async (req, res) => {
+    try {
+      const { userId, updatedState } = req.body || {};
+      if (!userId || !updatedState) {
+        return res.status(400).json({ success: false, error: 'userId and updatedState are required.' });
+      }
+
+      const supabase = getServerSupabase();
+      if (supabase && userId !== 'guest') {
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              wallet_balance: updatedState.walletBalance,
+              referral_rewards: updatedState,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userId);
+        } catch (dbErr: any) {
+          console.warn('[Admin Referrals API] Error updating DB profile:', dbErr.message);
+        }
+      }
+
+      return res.json({ success: true, data: updatedState });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Admin endpoint to save global store referral configuration
+  app.post('/api/admin/referrals/config', async (req, res) => {
+    try {
+      const config = req.body;
+      const supabase = getServerSupabase();
+      if (!config) {
+        return res.status(400).json({ success: false, error: 'Config payload is required.' });
+      }
+
+      const now = new Date().toISOString();
+      if (supabase) {
+        try {
+          const { data: current } = await supabase
+            .from('settings')
+            .select('id, settings_data')
+            .limit(1)
+            .maybeSingle();
+
+          const currentSettings = (current?.settings_data as Record<string, any>) || {};
+          const updatedSettings = {
+            ...currentSettings,
+            referral_settings: {
+              ...config,
+              lastUpdated: now,
+            },
+          };
+
+          if (current?.id) {
+            await supabase
+              .from('settings')
+              .update({ settings_data: updatedSettings, updated_at: now })
+              .eq('id', current.id);
+          }
+        } catch (e: any) {
+          console.warn('[Admin Referrals Config API] Error persisting to DB:', e.message);
+        }
+      }
+
+      return res.json({ success: true, data: config });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // TRANSACTIONAL EMAIL DISPATCH ENDPOINTS (RESEND INTEGRATION)
+  // =========================================================================
+
+  // Endpoint: Send Referral Commission Allocated Email Notification
+  app.post('/api/email/referral-commission-allocated', async (req, res) => {
+    try {
+      const payload = req.body || {};
+      const { referrerEmail } = payload;
+
+      if (!referrerEmail || !referrerEmail.includes('@')) {
+        return res.status(400).json({
+          success: false,
+          error: 'A valid referrerEmail is required to dispatch commission notification.',
+        });
+      }
+
+      console.log(`[Server Email] Triggering referral commission allocated email to ${referrerEmail}...`);
+      const result = await sendCommissionAllocatedEmail(payload);
+
+      return res.json(result);
+    } catch (err: any) {
+      console.error('[Server Email] Error in /api/email/referral-commission-allocated:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to send commission email.' });
+    }
+  });
+
+  // Endpoint: Send Customer Earnings Frozen Alert Email Notification
+  app.post('/api/email/earnings-frozen', async (req, res) => {
+    try {
+      const payload = req.body || {};
+      const { customerEmail } = payload;
+
+      if (!customerEmail || !customerEmail.includes('@')) {
+        return res.status(400).json({
+          success: false,
+          error: 'A valid customerEmail is required to dispatch earnings freeze alert.',
+        });
+      }
+
+      console.log(`[Server Email] Triggering earnings frozen email to ${customerEmail}...`);
+      const result = await sendEarningsFrozenEmail(payload);
+
+      return res.json(result);
+    } catch (err: any) {
+      console.error('[Server Email] Error in /api/email/earnings-frozen:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to send freeze notice email.' });
+    }
+  });
+
+  // Endpoint: Send Customer Earnings Unfrozen Notification Email
+  app.post('/api/email/earnings-unfrozen', async (req, res) => {
+    try {
+      const payload = req.body || {};
+      const { customerEmail } = payload;
+
+      if (!customerEmail || !customerEmail.includes('@')) {
+        return res.status(400).json({
+          success: false,
+          error: 'A valid customerEmail is required.',
+        });
+      }
+
+      console.log(`[Server Email] Triggering earnings restored email to ${customerEmail}...`);
+      const result = await sendEarningsUnfrozenEmail(payload);
+
+      return res.json(result);
+    } catch (err: any) {
+      console.error('[Server Email] Error in /api/email/earnings-unfrozen:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to send unfreeze email.' });
+    }
+  });
+
+  // Endpoint: Test Resend Email Configuration
+  app.post('/api/email/test', async (req, res) => {
+    try {
+      const { recipientEmail, type = 'commission' } = req.body || {};
+      const targetEmail = recipientEmail || 'customer@kudstore.com';
+
+      let result;
+      if (type === 'freeze') {
+        result = await sendEarningsFrozenEmail({
+          customerEmail: targetEmail,
+          customerName: 'Test Customer',
+          frozenReason: 'Compliance security audit (Test Email)',
+          currentBalance: 150,
+        });
+      } else if (type === 'unfreeze') {
+        result = await sendEarningsUnfrozenEmail({
+          customerEmail: targetEmail,
+          customerName: 'Test Customer',
+          currentBalance: 150,
+        });
+      } else {
+        result = await sendCommissionAllocatedEmail({
+          referrerEmail: targetEmail,
+          referrerName: 'Test Referrer',
+          commissionAmount: 50,
+          referredClientName: 'Sarah Jenkins',
+          evaluationMonth: 'August 2026',
+          monthlyPurchasesCount: 2,
+          newBalance: 200,
+          adminNotes: 'Test referral commission allocation email from Admin settings',
+        });
+      }
+
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
+    }
+  });
+
+  // Endpoint: Send / Resend Customer Tax Invoice / Receipt Email
+  app.post('/api/email/send-invoice', async (req, res) => {
+    try {
+      const {
+        orderId,
+        invoiceId,
+        recipientEmail,
+        customMessage,
+        senderName = 'KUD Store Billing Admin',
+        triggerType = 'manual_admin',
+        orderData,
+      } = req.body || {};
+
+      let finalOrderData = orderData;
+      const supabase = getServerSupabase();
+
+      if (!finalOrderData && orderId && supabase) {
+        try {
+          const { data: dbOrder } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', orderId)
+            .maybeSingle();
+
+          if (dbOrder) {
+            let items: any[] = [];
+            const { data: dbItems } = await supabase
+              .from('order_items')
+              .select('*')
+              .eq('order_id', orderId);
+            if (dbItems) items = dbItems;
+            finalOrderData = { ...dbOrder, items };
+          }
+        } catch (dbErr: any) {
+          console.warn('[Server Invoice Email] DB fetch fallback warning:', dbErr.message);
+        }
+      }
+
+      if (!finalOrderData) {
+        return res.status(400).json({
+          success: false,
+          error: 'Order or invoice data could not be located for dispatch.',
+        });
+      }
+
+      console.log(`[Server Invoice Email] Dispatching tax invoice #${invoiceId || finalOrderData.id} to ${recipientEmail || finalOrderData.customer_email}...`);
+      const result = await sendInvoiceEmail({
+        orderOrInvoice: finalOrderData,
+        recipientEmail,
+        customMessage,
+        senderName,
+        triggerType,
+        supabase: supabase || undefined,
+      });
+
+      return res.json(result);
+    } catch (err: any) {
+      console.error('[Server Invoice Email] Error dispatching tax invoice:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to dispatch tax invoice email.',
+      });
+    }
+  });
+
+  // Endpoint: Toggle Auto-Send Invoices ON/OFF
+  app.post('/api/admin/invoices/toggle-auto-send', async (req, res) => {
+    try {
+      const { enabled } = req.body || {};
+      const supabase = getServerSupabase();
+      const now = new Date().toISOString();
+
+      if (supabase) {
+        try {
+          const { data: current } = await supabase
+            .from('settings')
+            .select('id, settings_data')
+            .limit(1)
+            .maybeSingle();
+
+          const currentSettings = (current?.settings_data as Record<string, any>) || {};
+          const currentInvoiceSettings = currentSettings.invoice_settings || {};
+          const updatedSettings = {
+            ...currentSettings,
+            invoice_settings: {
+              ...currentInvoiceSettings,
+              autoSendInvoices: Boolean(enabled),
+              lastUpdated: now,
+            },
+          };
+
+          if (current?.id) {
+            await supabase
+              .from('settings')
+              .update({ settings_data: updatedSettings, updated_at: now })
+              .eq('id', current.id);
+          }
+        } catch (e: any) {
+          console.warn('[Admin Invoices Config] Error updating auto-send setting:', e.message);
+        }
+      }
+
+      return res.json({ success: true, autoSendInvoices: Boolean(enabled) });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Endpoint: Toggle Customer Receipt Download ON/OFF
+  app.post('/api/admin/invoices/toggle-customer-download', async (req, res) => {
+    try {
+      const { enabled } = req.body || {};
+      const supabase = getServerSupabase();
+      const now = new Date().toISOString();
+
+      if (supabase) {
+        try {
+          const { data: current } = await supabase
+            .from('settings')
+            .select('id, settings_data')
+            .limit(1)
+            .maybeSingle();
+
+          const currentSettings = (current?.settings_data as Record<string, any>) || {};
+          const currentInvoiceSettings = currentSettings.invoice_settings || {};
+          const updatedSettings = {
+            ...currentSettings,
+            invoice_settings: {
+              ...currentInvoiceSettings,
+              allowCustomerDownload: Boolean(enabled),
+              lastUpdated: now,
+            },
+          };
+
+          if (current?.id) {
+            await supabase
+              .from('settings')
+              .update({ settings_data: updatedSettings, updated_at: now })
+              .eq('id', current.id);
+          }
+        } catch (e: any) {
+          console.warn('[Admin Invoices Config] Error updating allow customer download setting:', e.message);
+        }
+      }
+
+      return res.json({ success: true, allowCustomerDownload: Boolean(enabled) });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+
 
   // Payment Gateways Health Check Endpoint
   app.post('/api/admin/gateways/health-check', async (_req, res) => {

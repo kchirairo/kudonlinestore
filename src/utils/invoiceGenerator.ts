@@ -1,12 +1,25 @@
 import { jsPDF } from 'jspdf';
-import { Order } from '../types';
-import { STORE_CONFIG } from '../constants/config';
+import { Order, Invoice, InvoiceSettingsConfig } from '../types';
+import { STORE_CONFIG, DEFAULT_INVOICE_SETTINGS } from '../constants/config';
+import { calculateOrderFinancials, validateInvoiceReconciliation, formatMoney, VAT_RATE } from './taxUtils';
 
 /**
- * Generate a clean, printable vector PDF invoice for an order.
- * Formats according to South African standard tax invoice layout.
+ * Generate a clean, printable vector PDF invoice for an order or invoice record.
+ * Formats according to South African standard tax invoice layout with exact 15% VAT and reconciled totals.
  */
-export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
+export const generateOrderInvoicePDF = async (
+  order: Order | Invoice | any,
+  settings?: InvoiceSettingsConfig
+): Promise<jsPDF> => {
+  // 1. Calculate dynamic financials and validate reconciliation
+  const financials = calculateOrderFinancials(order);
+  const validation = validateInvoiceReconciliation(financials);
+
+  if (!validation.isValid) {
+    console.error('[Invoice Generator Error]', validation.error);
+    throw new Error(validation.error || 'Failed to generate invoice: Financial calculations did not reconcile.');
+  }
+
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -25,6 +38,18 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   const lightGrayBg = [249, 250, 251]; // #f9fafb
   const borderGray = [229, 231, 235]; // #e5e7eb
   const successGreen = [16, 185, 129]; // #10b981
+  const warningAmber = [217, 119, 6]; // #d97706
+  const dangerRed = [220, 38, 38]; // #dc2626
+  const neutralGray = [100, 116, 139]; // #64748b
+
+  const companyName = settings?.companyName || STORE_CONFIG.STORE_NAME;
+  const companyTagline = STORE_CONFIG.STORE_TAGLINE;
+  const companyAddress = settings?.companyAddress || '124 Main Street, Sandton, Johannesburg, 2196';
+  const companyEmail = settings?.companyEmail || STORE_CONFIG.CONTACT_EMAIL;
+  const companyPhone = settings?.companyPhone || STORE_CONFIG.CONTACT_PHONE;
+  const companyWhatsapp = settings?.whatsappSupport || settings?.companyWhatsapp || STORE_CONFIG.WHATSAPP_SUPPORT;
+  const vatNumber = settings?.vatNumber || DEFAULT_INVOICE_SETTINGS.vatNumber || 'ZA4920192837';
+  const invoiceTaxTitle = settings?.taxInvoiceTitle || 'TAX INVOICE / OFFICIAL RECEIPT';
 
   // 1. Header Section
   // Store Logo Badge
@@ -39,33 +64,55 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
-  doc.text(STORE_CONFIG.STORE_NAME, margin + 16, y + 6);
+  doc.text(companyName, margin + 16, y + 6);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-  doc.text(STORE_CONFIG.STORE_TAGLINE, margin + 16, y + 10.5);
+  doc.text(companyTagline, margin + 16, y + 10.5);
 
-  // Right side: INVOICE title & status
+  // Right side: TAX INVOICE title & status pill
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
+  doc.setFontSize(16);
   doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
   doc.text('TAX INVOICE', pageWidth - margin, y + 6, { align: 'right' });
 
-  // Payment Status Pill
-  const isPaid = (order.payment_status || '').toLowerCase() === 'paid';
-  const statusLabel = isPaid ? 'PAID' : (order.payment_status || 'PENDING').toUpperCase();
-  const statusColor = isPaid ? successGreen : [234, 88, 12];
+  // Payment Status Pill (Dynamically styled according to confirmed payment status)
+  let statusColor = warningAmber;
+  let statusBg = [254, 243, 199]; // light amber
+  if (financials.isPaid) {
+    statusColor = successGreen;
+    statusBg = [236, 253, 245]; // light emerald
+  } else if (financials.isFailed) {
+    statusColor = dangerRed;
+    statusBg = [254, 226, 226]; // light red
+  } else if (financials.isRefunded) {
+    statusColor = neutralGray;
+    statusBg = [241, 245, 249]; // light slate
+  }
 
-  doc.setFillColor(isPaid ? 236 : 254, isPaid ? 253 : 243, isPaid ? 245 : 199);
-  doc.setDrawColor(statusColor[0], statusColor[1], statusColor[2]);
-  doc.roundedRect(pageWidth - margin - 24, y + 8.5, 24, 5.5, 1.5, 1.5, 'FD');
-  doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  doc.text(statusLabel, pageWidth - margin - 12, y + 12.2, { align: 'center' });
+  const pillTextWidth = doc.getTextWidth(financials.statusLabel);
+  const pillWidth = Math.max(28, pillTextWidth + 8);
+  const pillX = pageWidth - margin - pillWidth;
+  const pillY = y + 8.5;
 
-  y += 20;
+  doc.setFillColor(statusBg[0], statusBg[1], statusBg[2]);
+  doc.setDrawColor(statusColor[0], statusColor[1], statusColor[2]);
+  doc.roundedRect(pillX, pillY, pillWidth, 5.5, 1.5, 1.5, 'FD');
+  doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
+  doc.text(financials.statusLabel, pillX + pillWidth / 2, pillY + 3.8, { align: 'center' });
+
+  y += 18;
+
+  // Merchant VAT and Address Subtitle
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(grayText[0], grayText[1], grayText[2]);
+  doc.text(`${companyAddress}  •  SARS VAT Reg #: ${vatNumber}`, margin, y);
+
+  y += 4;
 
   // Subtle Header Divider
   doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
@@ -87,7 +134,7 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-  doc.text(order.shipping_address?.fullName || 'Valued Customer', col1X, y + 5);
+  doc.text(order.shipping_address?.fullName || order.customer_name || 'Valued Customer', col1X, y + 5);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
@@ -100,8 +147,12 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
     col1X,
     y + 14
   );
-  if (order.shipping_address?.phone) {
-    doc.text(`Phone: ${order.shipping_address.phone}`, col1X, y + 18.5);
+  if (order.shipping_address?.phone || order.shipping_address?.email || order.customer_email) {
+    const contactLine = [
+      order.shipping_address?.phone ? `Phone: ${order.shipping_address.phone}` : '',
+      (order.shipping_address?.email || order.customer_email) ? `Email: ${order.shipping_address?.email || order.customer_email}` : '',
+    ].filter(Boolean).join(' | ');
+    doc.text(contactLine, col1X, y + 18.5);
   }
 
   // Right Column: Invoice & Order Metadata
@@ -110,19 +161,20 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
   doc.text('INVOICE DETAILS:', col2X, y);
 
-  const formattedDate = new Date(order.created_at).toLocaleDateString('en-ZA', {
+  const formattedDate = new Date(order.created_at || Date.now()).toLocaleDateString('en-ZA', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
 
-  const invoiceNumber = `INV-${order.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`;
+  const invoiceNumber = order.invoice_number || `INV-${order.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`;
 
   const metaRows = [
     { label: 'Invoice No:', value: invoiceNumber },
-    { label: 'Order ID:', value: `#${order.id}` },
+    { label: 'Order ID:', value: `#${order.order_number || order.id}` },
     { label: 'Date Issued:', value: formattedDate },
-    { label: 'Payment Method:', value: order.payment_method || 'Online Payment' },
+    { label: 'Payment Method:', value: order.payment_method || 'Online Gateway' },
+    { label: 'Payment Status:', value: financials.statusLabel },
   ];
 
   let metaY = y + 5;
@@ -138,7 +190,7 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
     metaY += 4.5;
   });
 
-  y += 26;
+  y += 28;
 
   // 3. Itemized Products Table
   const tableHeaderY = y;
@@ -167,7 +219,20 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   y = tableHeaderY + 11;
 
   // Render Table Items
-  order.items.forEach((item, index) => {
+  const items = Array.isArray(order.items) && order.items.length > 0
+    ? order.items
+    : [
+        {
+          id: 'item-1',
+          product_id: 'prod',
+          product_name: 'Store Order Items',
+          quantity: 1,
+          unit_price: financials.subtotal,
+          total_price: financials.subtotal,
+        },
+      ];
+
+  items.forEach((item, index) => {
     // Alternate row zebra tint
     if (index % 2 === 1) {
       doc.setFillColor(252, 252, 253);
@@ -181,7 +246,7 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
 
     const productName = item.product_name || 'Product';
     const truncatedName =
-      productName.length > 50 ? productName.substring(0, 48) + '...' : productName;
+      productName.length > 48 ? productName.substring(0, 46) + '...' : productName;
     doc.text(truncatedName, colItemX, y + 1.5);
 
     // Variant / Brand note
@@ -196,21 +261,23 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
     }
 
     // Quantity
+    const qty = Number(item.quantity) || 1;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.text(String(item.quantity || 1), colQtyX, y + 2.5, { align: 'center' });
+    doc.text(String(qty), colQtyX, y + 2.5, { align: 'center' });
 
-    // Unit Price
-    const unitPrice = item.unit_price || (item.total_price / (item.quantity || 1));
+    // Unit Price (Numeric calculation rounded to 2 decimals)
+    const unitPrice = Number(item.unit_price) || (Number(item.total_price) / qty) || 0;
     doc.setFont('helvetica', 'normal');
-    doc.text(`${STORE_CONFIG.STORE_CURRENCY} ${unitPrice.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, colPriceX, y + 2.5, {
+    doc.text(`${STORE_CONFIG.STORE_CURRENCY}${formatMoney(unitPrice)}`, colPriceX, y + 2.5, {
       align: 'right',
     });
 
-    // Total Line Price
+    // Total Line Price (Numeric calculation rounded to 2 decimals)
+    const lineTotal = Number(item.total_price) || (unitPrice * qty);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${STORE_CONFIG.STORE_CURRENCY} ${(item.total_price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, colTotalX, y + 2.5, {
+    doc.text(`${STORE_CONFIG.STORE_CURRENCY}${formatMoney(lineTotal)}`, colTotalX, y + 2.5, {
       align: 'right',
     });
 
@@ -223,43 +290,71 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
 
   y += 4;
 
-  // 4. Totals Summary Box
-  const summaryBoxWidth = 80;
+  // 4. Totals Summary Box (Corrected VAT calculation & Dynamic Totals Display)
+  const summaryBoxWidth = 86;
   const summaryX = pageWidth - margin - summaryBoxWidth;
 
-  const subtotal = order.subtotal_amount || 0;
-  const deliveryFee = order.delivery_fee || 0;
-  const grandTotal = order.total_amount || (subtotal + deliveryFee);
-  const vatAmount = (grandTotal * 15) / 115; // 15% SA standard VAT component
-
-  const summaryLines = [
-    { label: 'Subtotal:', value: `${STORE_CONFIG.STORE_CURRENCY} ${subtotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, bold: false },
-    { label: 'Courier Delivery:', value: deliveryFee === 0 ? 'FREE' : `${STORE_CONFIG.STORE_CURRENCY} ${deliveryFee.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, bold: false },
-    { label: 'Includes 15% VAT:', value: `${STORE_CONFIG.STORE_CURRENCY} ${vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, bold: false, italic: true },
+  const summaryLines: Array<{ label: string; value: string; bold?: boolean; color?: number[] }> = [
+    {
+      label: 'Subtotal (Net):',
+      value: `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.subtotal)}`,
+      bold: false,
+    },
+    {
+      label: 'Courier Delivery:',
+      value: financials.deliveryFee === 0 ? 'FREE' : `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.deliveryFee)}`,
+      bold: false,
+    },
   ];
 
+  if (financials.discountAmount > 0) {
+    summaryLines.push({
+      label: 'Discount Applied:',
+      value: `-${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.discountAmount)}`,
+      bold: false,
+      color: [16, 185, 129], // green
+    });
+  }
+
+  summaryLines.push({
+    label: `VAT (${Math.round(VAT_RATE * 100)}%):`,
+    value: `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.vatAmount)}`,
+    bold: false,
+  });
+
+  summaryLines.push({
+    label: 'TOTAL:',
+    value: `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.grandTotal)}`,
+    bold: true,
+  });
+
   summaryLines.forEach((line) => {
-    doc.setFont('helvetica', line.italic ? 'italic' : line.bold ? 'bold' : 'normal');
+    doc.setFont('helvetica', line.bold ? 'bold' : 'normal');
     doc.setFontSize(8.5);
     doc.setTextColor(grayText[0], grayText[1], grayText[2]);
     doc.text(line.label, summaryX, y);
 
-    doc.setFont('helvetica', line.bold ? 'bold' : 'normal');
-    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
+    doc.setFont('helvetica', 'bold');
+    if (line.color) {
+      doc.setTextColor(line.color[0], line.color[1], line.color[2]);
+    } else {
+      doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
+    }
     doc.text(line.value, pageWidth - margin - 4, y, { align: 'right' });
     y += 5;
   });
 
-  // Grand Total Highlighted Box
-  y += 1;
-  doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  // Grand Total Highlighted Box: TOTAL PAID vs TOTAL DUE
+  y += 1.5;
+  const highlightBg = financials.isPaid ? primaryColor : (financials.isFailed ? dangerRed : [234, 88, 12]);
+  doc.setFillColor(highlightBg[0], highlightBg[1], highlightBg[2]);
   doc.roundedRect(summaryX - 2, y, summaryBoxWidth + 2, 8.5, 1.5, 1.5, 'F');
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
-  doc.text('TOTAL PAID:', summaryX + 2, y + 5.8);
-  doc.text(`${STORE_CONFIG.STORE_CURRENCY} ${grandTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, pageWidth - margin - 4, y + 5.8, {
+  doc.text(financials.totalLabel, summaryX + 2, y + 5.8);
+  doc.text(`${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.grandTotal)}`, pageWidth - margin - 4, y + 5.8, {
     align: 'right',
   });
 
@@ -274,18 +369,19 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-  doc.text('CUSTOMER SUPPORT & QUERIES', margin, y);
+  doc.text('CUSTOMER SUPPORT & COMPLIANCE', margin, y);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(grayText[0], grayText[1], grayText[2]);
   doc.text(
-    `Email: ${STORE_CONFIG.CONTACT_EMAIL}   |   Phone: ${STORE_CONFIG.CONTACT_PHONE}   |   WhatsApp: ${STORE_CONFIG.WHATSAPP_SUPPORT}`,
+    `Email: ${companyEmail}   |   Phone: ${companyPhone}   |   WhatsApp: ${companyWhatsapp}`,
     margin,
     y + 4
   );
   doc.text(
-    'Thank you for shopping with KUD Store. Please keep this invoice for your guarantee and order tracking.',
+    settings?.invoiceFooterNote ||
+      'Official Tax Invoice compliant with SARS 15% VAT regulations. Please retain for warranty and tracking.',
     margin,
     y + 7.5
   );
@@ -294,13 +390,16 @@ export const generateOrderInvoicePDF = async (order: Order): Promise<void> => {
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   doc.text(
-    `Generated on ${new Date().toLocaleString('en-ZA')} • www.kudstore.co.za`,
+    `Generated on ${new Date().toLocaleString('en-ZA')} • Tax Invoice (SARS 15% VAT) • ${companyName}`,
     pageWidth / 2,
     doc.internal.pageSize.getHeight() - 10,
     { align: 'center' }
   );
 
   // Save the document with clean filename
-  const sanitizedId = order.id.replace(/[^a-zA-Z0-9-_]/g, '_');
-  doc.save(`KUD_Store_Invoice_Order_${sanitizedId}.pdf`);
+  const sanitizedId = (invoiceNumber || order.id).replace(/[^a-zA-Z0-9-_]/g, '_');
+  doc.save(`KUD_Invoice_${sanitizedId}.pdf`);
+
+  return doc;
 };
+

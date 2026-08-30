@@ -1,33 +1,106 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag } from 'lucide-react';
+import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag, CheckCircle2, AlertTriangle, Ban, PauseCircle } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 import { EmptyState } from '../components/EmptyState';
 import { SEOHead } from '../components/SEOHead';
+import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
+import { referralService } from '../services/referralService';
+import { adminService } from '../services/adminService';
 
 export const CartPage: React.FC = () => {
   const navigate = useNavigate();
-  const { cart, updateQuantity, removeFromCart, cartSubtotal, deliveryFee, showToast, user } = useShop();
+  const {
+    cart,
+    updateQuantity,
+    removeFromCart,
+    cartSubtotal,
+    deliveryFee,
+    showToast,
+    user,
+    isAccountDisabled,
+    accountStatus,
+    disabledReason,
+  } = useShop();
 
   const [couponCode, setCouponCode] = useState<string>('');
   const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [appliedCoupon, setAppliedCoupon] = useState<string>('');
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState<boolean>(false);
 
-  const handleApplyCoupon = (e: React.FormEvent) => {
+  const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = couponCode.trim().toUpperCase();
-    if (code === 'KUD50') {
-      setDiscountAmount(50);
-      setAppliedCoupon('KUD50');
-      showToast('R50 discount applied!');
-    } else if (code === 'WELCOME10') {
-      const disc = Math.round(cartSubtotal * 0.1);
-      setDiscountAmount(disc);
-      setAppliedCoupon('WELCOME10');
-      showToast(`10% discount (-R${disc}) applied!`);
-    } else {
-      showToast('Invalid promo code. Try "KUD50" or "WELCOME10"', 'error');
+    if (!code) return;
+
+    setIsValidatingCoupon(true);
+
+    try {
+      // 1. Built-in promo codes
+      if (code === 'KUD50') {
+        setDiscountAmount(50);
+        setAppliedCoupon('KUD50');
+        showToast('R50 discount applied!');
+        return;
+      } else if (code === 'WELCOME10') {
+        const disc = Math.round(cartSubtotal * 0.1);
+        setDiscountAmount(disc);
+        setAppliedCoupon('WELCOME10');
+        showToast(`10% discount (-R${disc}) applied!`);
+        return;
+      }
+
+      // 2. Referral Reward Discount Vouchers (format: KUD-REWARD-<amount>-<suffix>)
+      if (code.startsWith('KUD-REWARD-')) {
+        const parts = code.split('-');
+        const parsedAmount = Number(parts[2]);
+        if (!isNaN(parsedAmount) && parsedAmount > 0) {
+          const actualDiscount = Math.min(parsedAmount, cartSubtotal);
+          setDiscountAmount(actualDiscount);
+          setAppliedCoupon(code);
+          showToast(`Referral Reward voucher applied! -${STORE_CONFIG.STORE_CURRENCY}${actualDiscount} OFF`, 'success');
+          return;
+        }
+      }
+
+      // 3. User's redeemed vouchers check
+      if (user?.id) {
+        const userRewards = await referralService.getUserRewards(user.id);
+        const matchingVoucher = userRewards.vouchers.find(
+          (v) => v.voucherCode?.toUpperCase() === code && v.status === 'active'
+        );
+        if (matchingVoucher) {
+          const actualDiscount = Math.min(matchingVoucher.amount, cartSubtotal);
+          setDiscountAmount(actualDiscount);
+          setAppliedCoupon(code);
+          showToast(`Referral voucher applied! -${STORE_CONFIG.STORE_CURRENCY}${actualDiscount} OFF`, 'success');
+          return;
+        }
+      }
+
+      // 4. Global store coupons check
+      const coupons = await adminService.getCoupons();
+      const match = coupons.find((c) => c.code.toUpperCase() === code && c.isActive);
+      if (match) {
+        let disc = 0;
+        if (match.discountType === 'percentage') {
+          disc = Math.round((cartSubtotal * match.discountValue) / 100);
+        } else {
+          disc = match.discountValue;
+        }
+        disc = Math.min(disc, cartSubtotal);
+        setDiscountAmount(disc);
+        setAppliedCoupon(code);
+        showToast(`Coupon "${code}" applied (-${STORE_CONFIG.STORE_CURRENCY}${disc})!`, 'success');
+        return;
+      }
+
+      showToast('Invalid promo code. Try "KUD50", "WELCOME10", or your redeemed referral voucher.', 'error');
+    } catch {
+      showToast('Could not validate coupon. Please try again.', 'error');
+    } finally {
+      setIsValidatingCoupon(false);
     }
   };
 
@@ -223,8 +296,9 @@ export const CartPage: React.FC = () => {
               </div>
             </div>
 
-            <button
-              onClick={() => {
+            <AccountStatusCheckoutGuard
+              checkoutLabel="Proceed to Checkout"
+              onCheckout={() => {
                 if (!user) {
                   showToast('Please sign in to proceed to checkout', 'info');
                   navigate('/account', { state: { returnUrl: '/checkout' } });
@@ -232,11 +306,7 @@ export const CartPage: React.FC = () => {
                 }
                 navigate('/checkout');
               }}
-              className="w-full py-4 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#ff6452]/20 transition-all active:scale-[0.98] mt-2 cursor-pointer"
-            >
-              <span>Proceed to Checkout</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            />
 
             <div className="flex items-center justify-center gap-2 text-xs text-gray-400 dark:text-slate-400 pt-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />

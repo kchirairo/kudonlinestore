@@ -28,6 +28,7 @@ import {
   FileDown,
   ChevronDown,
   UploadCloud,
+  Copy,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Product, ProductCategory } from '../../types';
@@ -85,6 +86,10 @@ export const AdminProductsPage: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+
+  // Duplication state
+  const [duplicatingProductId, setDuplicatingProductId] = useState<string | null>(null);
+  const [duplicateSuccessProduct, setDuplicateSuccessProduct] = useState<Product | null>(null);
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -317,6 +322,25 @@ export const AdminProductsPage: React.FC = () => {
       showToast('Error during bulk deletion.', 'error');
     } finally {
       setIsBulkDeleting(false);
+    }
+  };
+
+  // Single Item Duplicate
+  const handleDuplicateProduct = async (product: Product) => {
+    setDuplicatingProductId(product.id);
+    try {
+      const result = await adminService.duplicateProduct(product.id);
+      if (result.success && result.data) {
+        showToast(`Product duplicated as "${result.data.name}"`, 'success');
+        setDuplicateSuccessProduct(result.data);
+        fetchProducts();
+      } else {
+        showToast(result.error || 'Failed to duplicate product.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'An error occurred while duplicating the product.', 'error');
+    } finally {
+      setDuplicatingProductId(null);
     }
   };
 
@@ -1079,11 +1103,25 @@ export const AdminProductsPage: React.FC = () => {
                       </td>
 
                       {/* Actions */}
-                      <td className="py-4 px-4 text-right space-x-1">
+                      <td className="py-4 px-4 text-right space-x-1 whitespace-nowrap">
+                        <button
+                          onClick={() => handleDuplicateProduct(product)}
+                          disabled={duplicatingProductId === product.id}
+                          className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                          title="Duplicate Product (Clone specifications & images without transactional data)"
+                          aria-label={`Duplicate product ${product.name}`}
+                        >
+                          {duplicatingProductId === product.id ? (
+                            <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </button>
                         <button
                           onClick={() => navigate(`/admin/products/${product.id}/edit`)}
-                          className="p-2 text-gray-400 hover:text-[#ff6452] hover:bg-rose-50 rounded-xl transition-colors"
+                          className="p-2 text-gray-400 hover:text-[#ff6452] hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                           title="Edit Product"
+                          aria-label={`Edit product ${product.name}`}
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -1092,8 +1130,9 @@ export const AdminProductsPage: React.FC = () => {
                             setDeletingProductId(product.id);
                             setDeletingProductName(product.name);
                           }}
-                          className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                          className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                           title="Delete Product"
+                          aria-label={`Delete product ${product.name}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1173,10 +1212,23 @@ export const AdminProductsPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 flex-wrap">
+                    <button
+                      onClick={() => handleDuplicateProduct(product)}
+                      disabled={duplicatingProductId === product.id}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors disabled:opacity-50 cursor-pointer"
+                      title="Duplicate Product"
+                    >
+                      {duplicatingProductId === product.id ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>Duplicate</span>
+                    </button>
                     <button
                       onClick={() => navigate(`/admin/products/${product.id}/edit`)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition-colors"
+                      className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                       <span>Edit</span>
@@ -1339,6 +1391,63 @@ export const AdminProductsPage: React.FC = () => {
         onConfirm={handleConfirmBulkDelete}
         onClose={() => setShowBulkDeleteModal(false)}
       />
+
+      {/* Duplicate Success Action Modal */}
+      {duplicateSuccessProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-gray-100 dark:border-slate-800 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                <Copy className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-gray-900 dark:text-white">Product Duplicated!</h3>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Ready for editing and customization</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 dark:bg-slate-800/80 rounded-2xl p-4 space-y-2.5 border border-gray-100 dark:border-slate-700 text-xs">
+              <div className="flex justify-between items-start gap-2">
+                <span className="text-gray-500 dark:text-slate-400 font-medium">New Name:</span>
+                <span className="font-bold text-gray-900 dark:text-white text-right">{duplicateSuccessProduct.name}</span>
+              </div>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-gray-500 dark:text-slate-400 font-medium">New SKU:</span>
+                <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md">
+                  {duplicateSuccessProduct.sku}
+                </span>
+              </div>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-gray-500 dark:text-slate-400 font-medium">Images Cloned:</span>
+                <span className="font-semibold text-gray-800 dark:text-slate-200">
+                  {duplicateSuccessProduct.images?.length || 0} photos
+                </span>
+              </div>
+              <div className="pt-2 border-t border-gray-200/80 dark:border-slate-700 text-[11px] text-gray-500 dark:text-slate-400 leading-relaxed">
+                ✨ <strong>Isolated Record:</strong> All specifications and photos have been cloned into a new unique ID. No order history, sales stats, or customer data were duplicated.
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDuplicateSuccessProduct(null)}
+                className="flex-1 px-4 py-3 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-2xl text-xs font-bold transition-all cursor-pointer"
+              >
+                View in List
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/admin/products/${duplicateSuccessProduct.id}/edit`)}
+                className="flex-1 px-4 py-3 bg-[#ff6452] hover:bg-[#e05342] text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-rose-200 dark:shadow-none cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                <span>Edit New Product</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

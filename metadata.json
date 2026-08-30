@@ -1,6 +1,6 @@
 {
   "name": "KUD online store",
-  "description": "KUD Store - South Africa's trusted online shopping destination with Google SEO optimization, Schema.org product data, fast courier delivery, and secure Yoco checkout.",
+  "description": "KUD Store - South Africa's trusted online shopping destination with Instagram, Facebook, and TikTok social-commerce tracking, Meta & TikTok Pixel attribution, and secure Yoco checkout.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

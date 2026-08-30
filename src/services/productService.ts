@@ -1,21 +1,91 @@
-import { Product, FilterOptions } from '../types';
+import { Product, FilterOptions, ProductMediaItem, ProductVideoItem } from '../types';
 import { supabase, isSupabaseConfigured, supabaseUrl } from '../lib/supabase';
 
 /**
  * Helper function to map database row fields to TypeScript Product model.
- * Handles both snake_case and camelCase field variations.
+ * Handles both snake_case and camelCase field variations, and seamlessly integrates
+ * the dedicated public.product_media table.
  */
 export function mapSupabaseProduct(p: any): Product {
   let images: string[] = [];
+  let mediaItems: ProductMediaItem[] = [];
+  let videos: ProductVideoItem[] = [];
+  const altTextsMap: Record<string, string> = {};
+
+  // Safe parse helper for JSON columns
+  const parseJsonSafe = (val: any, fallback: any = null) => {
+    if (val === null || val === undefined) return fallback;
+    if (typeof val === 'object') return val;
+    if (typeof val === 'string') {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return fallback;
+      }
+    }
+    return fallback;
+  };
+
+  // 0. High Priority: Dedicated product_media relation
+  if (p.product_media && Array.isArray(p.product_media) && p.product_media.length > 0) {
+    // Sort media by is_primary (primary first), then by position ASC, then created_at
+    const sortedMedia = [...p.product_media].sort((a: any, b: any) => {
+      if (a.is_primary && !b.is_primary) return -1;
+      if (!a.is_primary && b.is_primary) return 1;
+      return (a.position ?? 0) - (b.position ?? 0);
+    });
+
+    mediaItems = sortedMedia.map((m: any) => ({
+      id: String(m.id),
+      productId: String(m.product_id || p.id),
+      mediaType: (m.media_type === 'video' ? 'video' : 'image') as 'image' | 'video',
+      url: (m.media_url || m.url || '').trim(),
+      thumbnailUrl: m.thumbnail_url || undefined,
+      altText: m.alt_text || undefined,
+      title: m.title || undefined,
+      position: Number(m.position) || 0,
+      isPrimary: Boolean(m.is_primary),
+      sizeBytes: m.size_bytes ? Number(m.size_bytes) : undefined,
+      durationSeconds: m.duration_seconds ? Number(m.duration_seconds) : undefined,
+      createdAt: m.created_at || undefined,
+      updatedAt: m.updated_at || undefined,
+    })).filter((m) => m.url && m.url.length > 0);
+
+    // Extract image URLs
+    const imageMedia = mediaItems.filter((m) => m.mediaType === 'image');
+    if (imageMedia.length > 0) {
+      images = imageMedia.map((m) => m.url);
+      imageMedia.forEach((m, idx) => {
+        if (m.altText) {
+          altTextsMap[`img_${idx}`] = m.altText;
+          altTextsMap[m.id] = m.altText;
+        }
+      });
+    }
+
+    // Extract video items
+    const videoMedia = mediaItems.filter((m) => m.mediaType === 'video');
+    if (videoMedia.length > 0) {
+      videos = videoMedia.map((m) => ({
+        id: m.id,
+        url: m.url,
+        thumbnailUrl: m.thumbnailUrl,
+        title: m.title,
+        durationSeconds: m.durationSeconds,
+        sizeBytes: m.sizeBytes,
+        isPrimary: m.isPrimary,
+      }));
+    }
+  }
 
   // 1. Array of strings or objects in 'images'
-  if (Array.isArray(p.images) && p.images.length > 0) {
+  if (images.length === 0 && Array.isArray(p.images) && p.images.length > 0) {
     images = p.images
       .map((img: any) => (typeof img === 'string' ? img.trim() : (img?.image_url || img?.url || '')))
       .filter((img: string) => img && img.length > 0);
   }
   // 2. 'images' stored as JSON string or comma-separated string
-  else if (typeof p.images === 'string' && p.images.trim()) {
+  else if (images.length === 0 && typeof p.images === 'string' && p.images.trim()) {
     try {
       const parsed = JSON.parse(p.images);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -34,7 +104,7 @@ export function mapSupabaseProduct(p: any): Product {
     }
   }
 
-  // 3. Related product_images table relation
+  // 3. Related legacy product_images table relation
   if (images.length === 0 && p.product_images && Array.isArray(p.product_images) && p.product_images.length > 0) {
     images = p.product_images
       .slice()
@@ -46,9 +116,26 @@ export function mapSupabaseProduct(p: any): Product {
       .filter((url: string) => url && url.length > 0);
   }
 
-  // 4. Single image column 'image_url' (Standard Supabase schema)
+  // 4. Single or multi-image column 'image_url' (Standard Supabase schema)
   if (images.length === 0 && typeof p.image_url === 'string' && p.image_url.trim()) {
-    images = [p.image_url.trim()];
+    const raw = p.image_url.trim();
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          images = parsed
+            .map((img: any) => (typeof img === 'string' ? img.trim() : (img?.image_url || img?.url || '')))
+            .filter((img: string) => img && img.length > 0);
+        }
+      } catch {
+        // fallback
+      }
+    } else if (raw.includes(',')) {
+      images = raw.split(',').map((s: string) => s.trim()).filter((s: string) => s.startsWith('http') || s.startsWith('data:'));
+    }
+    if (images.length === 0) {
+      images = [raw];
+    }
   }
 
   // 5. Single image column 'image'
@@ -89,6 +176,19 @@ export function mapSupabaseProduct(p: any): Product {
     images = ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
   }
 
+  // Synthesize mediaItems if not already populated from product_media
+  if (mediaItems.length === 0) {
+    mediaItems = images.map((url, idx) => ({
+      id: `media-img-${p.id || 'temp'}-${idx}`,
+      productId: String(p.id || ''),
+      mediaType: 'image',
+      url,
+      position: idx,
+      isPrimary: idx === 0,
+      altText: `${p.name || 'Product'} photo ${idx + 1}`,
+    }));
+  }
+
   // Determine active status: active unless explicitly set to false/inactive/draft/archived
   const isActive =
     p.isActive !== false &&
@@ -119,6 +219,24 @@ export function mapSupabaseProduct(p: any): Product {
       ? 20
       : 0;
 
+  const parsedVariants = parseJsonSafe(p.variants, []);
+  const parsedVideos = videos.length > 0 ? videos : parseJsonSafe(p.videos, []);
+  const parsedCategoryAttrs = parseJsonSafe(p.category_attributes || p.categoryAttributes, {});
+  const parsedDimensions = parseJsonSafe(p.dimensions, undefined);
+  const parsedTags = Array.isArray(p.tags)
+    ? p.tags
+    : typeof p.tags === 'string'
+    ? p.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+    : [];
+  const parsedKeywords = Array.isArray(p.focus_keywords || p.focusKeywords)
+    ? p.focus_keywords || p.focusKeywords
+    : typeof (p.focus_keywords || p.focusKeywords) === 'string'
+    ? (p.focus_keywords || p.focusKeywords).split(',').map((k: string) => k.trim()).filter(Boolean)
+    : [];
+  const parsedAltTexts = Object.keys(altTextsMap).length > 0
+    ? altTextsMap
+    : parseJsonSafe(p.image_alt_texts || p.imageAltTexts, {});
+
   return {
     id: String(p.id),
     name: p.name || p.title || 'Product',
@@ -134,19 +252,46 @@ export function mapSupabaseProduct(p: any): Product {
         : p.slash_price !== undefined
         ? Number(p.slash_price)
         : undefined,
+    costPrice: p.cost_price !== undefined ? Number(p.cost_price) : undefined,
+    profitMargin: p.profit_margin !== undefined ? Number(p.profit_margin) : undefined,
     category: p.category || p.category_name || (typeof p.categories === 'string' ? p.categories : 'Beauty'),
+    subCategory: p.sub_category || p.subCategory || undefined,
+    productType: p.product_type || p.productType || undefined,
+    shortDescription: p.short_description || p.shortDescription || undefined,
+    tags: parsedTags,
     sizeOrVariant: p.sizeOrVariant || p.size_or_variant || p.variant || p.size || '',
     condition: p.condition || 'Brand New',
     description: p.description || p.desc || p.details || '',
     images,
+    videos: Array.isArray(parsedVideos) ? parsedVideos : [],
+    mediaItems,
+    variants: Array.isArray(parsedVariants) ? parsedVariants : [],
+    categoryAttributes: typeof parsedCategoryAttrs === 'object' ? parsedCategoryAttrs : {},
     inStock,
     stock: stockNumber,
+    lowStockThreshold: p.low_stock_threshold !== undefined ? Number(p.low_stock_threshold) : 5,
+    trackInventory: p.track_inventory !== false,
+    allowBackorders: Boolean(p.allow_backorders),
     sku: p.sku || p.product_sku || (p.id ? `SKU-${String(p.id).substring(0, 8).toUpperCase()}` : ''),
+    weight: p.weight !== undefined && p.weight !== null ? Number(p.weight) : undefined,
+    dimensions: parsedDimensions,
+    shippingClass: p.shipping_class || p.shippingClass || 'Standard Courier',
+    isFreeShipping: Boolean(p.is_free_shipping || p.isFreeShipping),
+    requiresShipping: p.requires_shipping !== false,
+    seoTitle: p.seo_title || p.seoTitle || undefined,
+    metaDescription: p.meta_description || p.metaDescription || undefined,
+    slug: p.slug || undefined,
+    focusKeywords: parsedKeywords,
+    imageAltTexts: parsedAltTexts,
+    productStatus: p.product_status || (p.is_active === false ? 'draft' : 'active'),
+    scheduledAt: p.scheduled_at || undefined,
     isFeatured: Boolean(p.isFeatured ?? p.is_featured ?? p.featured),
+    isNewAdded: Boolean(p.isNewAdded ?? p.is_new_added),
     isActive,
     rating: p.rating !== undefined ? Number(p.rating) : 5.0,
     reviewCount: p.review_count !== undefined ? Number(p.review_count) : p.reviewCount !== undefined ? Number(p.reviewCount) : 0,
     createdAt: p.createdAt || p.created_at || p.inserted_at || new Date().toISOString(),
+    updatedAt: p.updated_at || p.updatedAt || undefined,
   };
 }
 
@@ -164,8 +309,8 @@ export const productService = {
   },
 
   /**
-   * Fetches fresh products directly from Supabase public.products table.
-   * Supabase public.products is the ONLY source of truth.
+   * Fetches fresh products directly from Supabase public.products table,
+   * joining public.product_media where available.
    */
   async getAllRawProducts(forceRefresh = false): Promise<Product[]> {
     if (!isSupabaseConfigured() || !supabase) {
@@ -186,27 +331,34 @@ export const productService = {
 
     inflightProductsPromise = (async () => {
       try {
-        // 1. Log Supabase project URL (Key is omitted for security)
         console.log(`[Supabase Storefront] Project URL: ${supabaseUrl}`);
 
-        const { data, error } = await supabase
+        // Try primary query with product_media join
+        let { data, error } = await supabase
           .from('products')
-          .select('*')
+          .select('*, product_media(*)')
           .order('created_at', { ascending: false });
 
-        // 4. Log any Supabase error
+        // If join fails due to relationship cache, fallback gracefully to select *
         if (error) {
-          console.warn('[Supabase Storefront] Supabase notification for public.products:', {
+          console.warn('[Supabase Storefront] Fallback query for public.products:', error.message);
+          const fallbackRes = await supabase
+            .from('products')
+            .select('*')
+            .order('created_at', { ascending: false });
+          data = fallbackRes.data;
+          error = fallbackRes.error;
+        }
+
+        if (error) {
+          console.warn('[Supabase Storefront] Supabase query notice:', {
             message: error.message,
             code: error.code,
-            details: error.details,
-            hint: error.hint,
           });
           return lastProductsCache?.data || [];
         }
 
         const count = data ? data.length : 0;
-        // 2. Log number of products returned
         console.log(`[Supabase Storefront] Number of products returned: ${count}`);
 
         if (!data || data.length === 0) {
@@ -301,7 +453,7 @@ export const productService = {
   },
 
   /**
-   * Lookup single product by ID directly from Supabase public.products
+   * Lookup single product by ID directly from Supabase public.products and public.product_media
    */
   async getProductById(id: string): Promise<Product | null> {
     if (!id) return null;
@@ -311,15 +463,20 @@ export const productService = {
       return null;
     }
 
-    const { data, error } = await supabase
+    // Try query with product_media join
+    let { data, error } = await supabase
       .from('products')
-      .select('*')
+      .select('*, product_media(*)')
       .eq('id', id)
       .maybeSingle();
 
     if (error) {
-      console.warn(`[Supabase Storefront] Notice fetching product by ID "${id}":`, error.message);
-      return null;
+      const fallbackRes = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      data = fallbackRes.data;
     }
 
     if (!data) return null;
@@ -347,3 +504,4 @@ export const productService = {
     );
   },
 };
+

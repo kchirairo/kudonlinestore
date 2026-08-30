@@ -3,7 +3,7 @@
  * Beginners can easily customize store settings, contact details, delivery fees, and colors here!
  */
 
-import { StoreBrandingConfig, PromoBannerConfig, GeneralStoreSettings, Coupon } from '../types';
+import { StoreBrandingConfig, PromoBannerConfig, GeneralStoreSettings, Coupon, StoreReferralGlobalConfig, InvoiceSettingsConfig } from '../types';
 
 export const STORE_CONFIG = {
   // Store Basic Information
@@ -54,6 +54,8 @@ export const STORE_CONFIG = {
   ] as const,
 };
 
+export const SA_PROVINCES = STORE_CONFIG.SOUTH_AFRICAN_PROVINCES;
+
 export const DEFAULT_STORE_BRANDING: StoreBrandingConfig = {
   storeName: 'KUD online store',
   tagline: 'The shopping partner you can trust.',
@@ -77,8 +79,13 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralStoreSettings = {
   shippingNotes: 'Nationwide door-to-door courier via The Courier Guy & Aramex.',
   contactEmail: 'qchirass@gmail.com',
   contactPhone: '+27 (0)11 892 4000',
+  whatsappSupport: '+27797648590',
+  supportHeading: 'Need help with an order?',
+  supportSubtext: 'Contact KUD Store support for order tracking, updates, cancellations, or returns.',
   storeDescription:
     'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.',
+  enableGoogleAuth: true,
+  isGoogleAuthEnabled: true,
 };
 
 export const DEFAULT_COUPONS: Coupon[] = [
@@ -127,7 +134,7 @@ export const DEFAULT_COUPONS: Coupon[] = [
 
 export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   enabled: true,
-  layout: 'split',
+  layout: 'square-showcase',
   headline: 'Exclusive Weekly Deals & Massive Savings 🎁',
   subtext: 'Get up to 40% off on top electronics, beauty & home essentials with nationwide SA delivery.',
   badgeText: 'HOT DEAL 🔥',
@@ -136,7 +143,7 @@ export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   ctaLink: '/search',
   showCta: true,
   mediaType: 'image',
-  mediaUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1200&q=80',
+  mediaUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1080&h=1080&q=85',
   mediaAltText: 'Special promotional sale advertising banner',
   videoAutoplay: true,
   videoMuted: true,
@@ -151,6 +158,145 @@ export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   bannerHeight: 340,
   textAlignment: 'left',
   titleFontSize: 'xl',
+  aspectRatio: '1:1',
+  carouselAutoplay: true,
+  carouselInterval: 5,
+  pauseOnHover: true,
+  showNavigationArrows: true,
+  showIndicators: true,
+  banners: [
+    {
+      id: 'banner-1',
+      title: 'Massive Summer Flash Sale ⚡',
+      subtitle: 'Up to 50% OFF Top Tech & Audio',
+      description: 'Grab best-selling noise-canceling headphones, smart accessories & wearables with fast doorstep delivery across South Africa.',
+      mediaType: 'image',
+      mediaUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaPosterUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaAltText: 'Premium Wireless Headphones Special Promo 1080x1080',
+      aspectRatio: '1:1',
+      showBadge: true,
+      badgeType: 'FLASH SALE',
+      badgeCustomText: 'FLASH SALE ⚡',
+      badgeColor: '#ff6452',
+      showDiscount: true,
+      discountPercentage: 50,
+      promotionalPrice: 899,
+      originalPrice: 1799,
+      showCountdown: true,
+      countdownEndDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      showCta: true,
+      ctaText: 'Shop Now',
+      ctaStyle: 'solid-accent',
+      linkType: 'category',
+      targetCategory: 'Technology',
+      ctaLink: '/categories/technology',
+      textPosition: 'beside-split',
+      overlayDimming: 45,
+      overlayStyle: 'gradient',
+      backgroundColor: '#eff6ff',
+      textColor: 'dark',
+      videoAutoplay: true,
+      videoMuted: true,
+      videoLoop: true,
+      videoPlaysInline: true,
+      isDraft: false,
+      isEnabled: true,
+      isFeatured: true,
+      displayOrder: 1,
+      impressionsCount: 1420,
+      clicksCount: 285,
+      conversionsCount: 42,
+      revenueGenerated: 37758,
+      createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 'banner-2',
+      title: 'Luxury Skin & Beauty Essentials ✨',
+      subtitle: 'Radiant Glow for Every Skin Tone',
+      description: 'Pamper yourself with dermatologically tested serums, moisturizers & organic botanical formulas curated for South African beauty enthusiasts.',
+      mediaType: 'image',
+      mediaUrl: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaPosterUrl: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaAltText: 'Beauty Care and Cosmetics Promotional Campaign 1080x1080',
+      aspectRatio: '1:1',
+      showBadge: true,
+      badgeType: 'LIMITED OFFER',
+      badgeCustomText: 'LIMITED OFFER ⏳',
+      badgeColor: '#f59e0b',
+      showDiscount: true,
+      discountPercentage: 25,
+      promotionalPrice: 299,
+      originalPrice: 399,
+      showCountdown: true,
+      countdownEndDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      showCta: true,
+      ctaText: 'Explore Collection',
+      ctaStyle: 'solid-dark',
+      linkType: 'category',
+      targetCategory: 'Beauty',
+      ctaLink: '/categories/beauty',
+      textPosition: 'beside-split',
+      overlayDimming: 40,
+      overlayStyle: 'gradient',
+      backgroundColor: '#fdf2f8',
+      textColor: 'dark',
+      videoAutoplay: true,
+      videoMuted: true,
+      videoLoop: true,
+      videoPlaysInline: true,
+      isDraft: false,
+      isEnabled: true,
+      isFeatured: false,
+      displayOrder: 2,
+      impressionsCount: 980,
+      clicksCount: 168,
+      conversionsCount: 27,
+      revenueGenerated: 8073,
+      createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 'banner-3',
+      title: 'Modern Living & Home Deco 🏡',
+      subtitle: 'Transform Your Living Space in Style',
+      description: 'Elegant kitchenware, cozy ambient lighting, and minimalist organization gear to elevate your sanctuary.',
+      mediaType: 'image',
+      mediaUrl: 'https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaPosterUrl: 'https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaAltText: 'Home and Interior Decoration Promotion 1080x1080',
+      aspectRatio: '1:1',
+      showBadge: true,
+      badgeType: 'NEW',
+      badgeCustomText: 'NEW ARRIVALS ✨',
+      badgeColor: '#3b82f6',
+      showDiscount: false,
+      showCountdown: false,
+      showCta: true,
+      ctaText: 'View Products',
+      ctaStyle: 'solid-accent',
+      linkType: 'category',
+      targetCategory: 'Home',
+      ctaLink: '/categories/home',
+      textPosition: 'beside-split',
+      overlayDimming: 35,
+      overlayStyle: 'gradient',
+      backgroundColor: '#f0fdf4',
+      textColor: 'dark',
+      videoAutoplay: true,
+      videoMuted: true,
+      videoLoop: true,
+      videoPlaysInline: true,
+      isDraft: false,
+      isEnabled: true,
+      isFeatured: false,
+      displayOrder: 3,
+      impressionsCount: 650,
+      clicksCount: 94,
+      conversionsCount: 15,
+      revenueGenerated: 4485,
+      createdAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+  ],
   slides: [
     {
       id: 'slide-1',
@@ -181,6 +327,22 @@ export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
   ],
 };
 
+export const DEFAULT_REFERRAL_SETTINGS: StoreReferralGlobalConfig = {
+  isProgramEnabled: true,
+  hideReferralEarningsGlobally: false,
+  hideInviteOptionGlobally: false,
+  hideReferralWalletGlobally: false,
+  rewardPerReferral: 50,
+  invitedFriendDiscount: 50,
+  minVoucherRedemptionAmount: 50,
+  voucherExpiryDays: 90,
+  allowLeaderboardDisplay: true,
+  minMonthlyPurchasesRequired: 2, // Referred client must make purchase at least twice in a month
+  requireAdminAllocation: true, // Commission must be allocated to the customer by the admin
+  commissionAmountPerQualifiedReferral: 50,
+  lastUpdated: new Date().toISOString(),
+};
+
 // Payment Gateways Supported (South African & Global integrations)
 export const PAYMENT_METHODS = [
   { id: 'yoco', name: 'Yoco Secure Payment', desc: 'Pay with Credit/Debit Card or Instant EFT via Yoco' },
@@ -191,3 +353,25 @@ export const PAYMENT_METHODS = [
   { id: 'paypal', name: 'PayPal Checkout', desc: 'Global payment with PayPal balance & cards' },
   { id: 'peach_payments', name: 'Peach Payments', desc: 'Enterprise card & digital wallet processing' },
 ];
+
+export const DEFAULT_INVOICE_SETTINGS: InvoiceSettingsConfig = {
+  autoSendInvoices: true,
+  sendCustomerCopy: true,
+  senderName: 'KUD Store Billing',
+  allowCustomerDownload: true,
+  invoicePrefix: 'INV-2026-',
+  vatNumber: 'ZA4920192837',
+  companyName: 'KUD online store (Pty) Ltd',
+  companyAddress: '124 Main Street, Sandton, Johannesburg, 2196, South Africa',
+  companyEmail: 'qchirass@gmail.com',
+  companyPhone: '+27 (0)11 892 4000',
+  companyWhatsapp: '+27797648590',
+  whatsappSupport: '+27797648590',
+  taxInvoiceTitle: 'TAX INVOICE / OFFICIAL RECEIPT',
+  invoiceFooterNote: 'Thank you for choosing KUD Store. Official Tax Invoice compliant with SARS 15% VAT regulations.',
+  invoiceSupportNote: 'For order inquiries, billing, or returns, contact support via email or WhatsApp.',
+  sendCopyEmail: 'qchirass@gmail.com',
+  lastUpdated: new Date().toISOString(),
+};
+
+

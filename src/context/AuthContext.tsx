@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Navigate, Outlet } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { adminService } from '../services/adminService';
 
 export interface AuthContextType {
   user: any | null;
@@ -10,6 +11,9 @@ export interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   authError: string | null;
+  isGoogleAuthEnabled: boolean;
+  setIsGoogleAuthEnabled: (enabled: boolean) => void;
+  refreshGoogleAuthSetting: () => Promise<boolean>;
   signOut: () => Promise<void>;
   refetchProfile: () => Promise<void>;
 }
@@ -21,6 +25,9 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAdmin: false,
   authError: null,
+  isGoogleAuthEnabled: true,
+  setIsGoogleAuthEnabled: () => {},
+  refreshGoogleAuthSetting: async () => true,
   signOut: async () => {},
   refetchProfile: async () => {},
 });
@@ -31,7 +38,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<'customer' | 'admin' | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  
+  // Google Auth Visibility Setting from Supabase settings table
+  const [isGoogleAuthEnabled, setIsGoogleAuthEnabled] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('kud_store_settings_google_auth');
+      if (stored !== null) return stored === 'true';
+      const genStored = localStorage.getItem('kud_store_settings_general_settings');
+      if (genStored) {
+        const parsed = JSON.parse(genStored);
+        if (parsed.isGoogleAuthEnabled !== undefined) return Boolean(parsed.isGoogleAuthEnabled);
+        if (parsed.enableGoogleAuth !== undefined) return Boolean(parsed.enableGoogleAuth);
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  });
+
   const isFetchingRef = useRef<boolean>(false);
+
+  // Fetch isGoogleAuthEnabled from Supabase settings table upon app initialization
+  const refreshGoogleAuthSetting = useCallback(async (): Promise<boolean> => {
+    try {
+      const enabled = await adminService.getGoogleAuthEnabled();
+      setIsGoogleAuthEnabled(enabled);
+      localStorage.setItem('kud_store_settings_google_auth', String(enabled));
+      return enabled;
+    } catch (err) {
+      console.warn('[AuthProvider] Error loading isGoogleAuthEnabled setting:', err);
+      return true;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshGoogleAuthSetting();
+  }, [refreshGoogleAuthSetting]);
 
   const fetchUserAndProfile = useCallback(async () => {
     if (!isSupabaseConfigured() || !supabase) {
@@ -121,8 +163,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const defaultName =
             authUser.user_metadata?.full_name ||
+            authUser.user_metadata?.name ||
             authUser.email?.split('@')[0] ||
             'User';
+          const defaultAvatar =
+            authUser.user_metadata?.avatar_url ||
+            authUser.user_metadata?.picture ||
+            null;
 
           const { data: createdProfile } = await supabase
             .from('profiles')
@@ -132,6 +179,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 full_name: defaultName,
                 role: fetchedRole || 'customer',
                 phone: authUser.phone || '',
+                avatar_url: defaultAvatar,
                 created_at: new Date().toISOString(),
               },
               { onConflict: 'id' }
@@ -219,10 +267,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading,
       isAdmin,
       authError,
+      isGoogleAuthEnabled,
+      setIsGoogleAuthEnabled,
+      refreshGoogleAuthSetting,
       signOut: handleSignOut,
       refetchProfile: fetchUserAndProfile,
     }),
-    [user, profile, role, loading, isAdmin, authError, handleSignOut, fetchUserAndProfile]
+    [
+      user,
+      profile,
+      role,
+      loading,
+      isAdmin,
+      authError,
+      isGoogleAuthEnabled,
+      setIsGoogleAuthEnabled,
+      refreshGoogleAuthSetting,
+      handleSignOut,
+      fetchUserAndProfile,
+    ]
   );
 
   return (

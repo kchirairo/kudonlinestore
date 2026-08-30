@@ -11,6 +11,9 @@ import {
   LogOut,
   X,
   ShieldCheck,
+  FileText,
+  TrendingUp,
+  Megaphone,
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
@@ -48,6 +51,9 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       icon: ShoppingBag,
       badge: pendingOrdersCount > 0 ? pendingOrdersCount : undefined,
     },
+    { label: 'Invoices & Receipts', path: '/admin/invoices', icon: FileText },
+    { label: 'Marketing Analytics', path: '/admin/marketing', icon: TrendingUp },
+    { label: 'Promotional Banners', path: '/admin/banners', icon: Megaphone },
     { label: 'Products', path: '/admin/products', icon: Package },
     { label: 'Categories', path: '/admin/categories', icon: Tags },
     { label: 'Customers', path: '/admin/customers', icon: Users },
