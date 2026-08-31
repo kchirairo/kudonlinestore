@@ -6,7 +6,7 @@ import {
   ShoppingBag,
   ArrowLeft,
   CheckCircle2,
-  ShieldCheck,
+  Package,
   Truck,
   RotateCcw,
   Share2,
@@ -396,10 +396,10 @@ export const ProductDetailsPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-gray-50 dark:bg-slate-800 border border-gray-100/80 dark:border-slate-700 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-[#ff6452] shrink-0" />
+                  <Package className="w-4 h-4 text-[#ff6452] shrink-0" />
                   <div>
-                    <p className="font-bold text-gray-900 dark:text-white">Buyer Protection</p>
-                    <p className="text-gray-500 dark:text-slate-400">Secure Yoco checkout</p>
+                    <p className="font-bold text-gray-900 dark:text-white">Authentic Items</p>
+                    <p className="text-gray-500 dark:text-slate-400">100% Quality inspected</p>
                   </div>
                 </div>
               </div>

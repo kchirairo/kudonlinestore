@@ -334,7 +334,7 @@ export const orderService = {
 
         const { data: ordersData, error: ordersError } = await query;
 
-        if (!ordersError && ordersData && ordersData.length > 0) {
+        if (!ordersError && ordersData) {
           return ordersData.map((o: any) => mapSupabaseOrder(o));
         }
       } catch (err) {
@@ -342,11 +342,15 @@ export const orderService = {
       }
     }
 
-    return orderService.getLocalOrders();
+    return orderService.getLocalOrders(userId);
   },
 
-  getLocalOrders(): Order[] {
-    return safeGetItem<Order[]>(LOCAL_ORDERS_KEY, []);
+  getLocalOrders(userId?: string): Order[] {
+    const orders = safeGetItem<Order[]>(LOCAL_ORDERS_KEY, []);
+    if (userId && userId !== 'guest') {
+      return orders.filter((o) => o.user_id === userId || (o as any).userId === userId);
+    }
+    return orders;
   },
 
   /**

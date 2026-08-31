@@ -273,17 +273,12 @@ export const AccountPage: React.FC = () => {
         throw new Error('Supabase authentication is not configured.');
       }
 
-      const redirectUrl = getAuthRedirectUrl('/auth/callback');
-      console.log('[Google Auth] Initiating signInWithOAuth with redirectTo:', redirectUrl);
+      console.log('[Google Auth] Initiating signInWithOAuth for Google');
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: redirectUrl,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
+          redirectTo: 'https://kudstore.netlify.app',
         },
       });
 

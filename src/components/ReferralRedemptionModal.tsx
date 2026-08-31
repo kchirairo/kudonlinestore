@@ -90,8 +90,8 @@ export const ReferralRedemptionModal: React.FC<ReferralRedemptionModalProps> = (
 
   if (!isOpen) return null;
 
-  const currentBalance = rewardsState?.referralBalance ?? 150;
-  const currentWallet = rewardsState?.walletBalance ?? 50;
+  const currentBalance = rewardsState?.referralBalance ?? 0;
+  const currentWallet = rewardsState?.walletBalance ?? 0;
   const isEarningsFrozen = Boolean(rewardsState?.isEarningsFrozen);
 
   // Active redemption amount (either preset or custom)

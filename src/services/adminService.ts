@@ -73,9 +73,19 @@ const LOCAL_REFERRAL_COMMISSIONS_KEY = 'kud_store_referral_commissions';
 const DEFAULT_PAYMENT_CONFIG: PaymentGatewayConfig = {
   activeProvider: 'yoco',
   yoco: {
-    enabled: false,
+    enabled: true,
     mode: 'test',
     publicKey: import.meta.env.VITE_YOCO_PUBLIC_KEY || '',
+    configured: true,
+  },
+  card: {
+    enabled: false,
+    mode: 'test',
+    configured: false,
+  },
+  cod: {
+    enabled: false,
+    instructions: 'Please prepare exact cash for the courier.',
     configured: false,
   },
   paypal: {

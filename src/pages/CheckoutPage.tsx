@@ -144,7 +144,9 @@ export const CheckoutPage: React.FC = () => {
 
   // Calculate active payment methods visible to customer strictly based on Admin configuration
   const availablePaymentMethods = PAYMENT_METHODS.filter((method) => {
-    if (!paymentConfig) return true; // Default fallback while loading
+    if (!paymentConfig) {
+      return method.id === 'yoco';
+    }
     if (method.id === 'yoco') return paymentConfig.yoco?.enabled ?? true;
     if (method.id === 'card') return paymentConfig.card?.enabled ?? false;
     if (method.id === 'cod') return paymentConfig.cod?.enabled ?? false;
