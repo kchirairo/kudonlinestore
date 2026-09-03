@@ -524,6 +524,20 @@ export type BannerStatusType = 'draft' | 'scheduled' | 'active' | 'expired' | 'd
 export type BannerLinkType = 'custom_url' | 'product' | 'category' | 'search';
 export type BannerAspectRatio = '1:1' | '16:9' | '4:3' | 'auto';
 
+export interface BannerVideoMetadata {
+  duration?: number; // duration in seconds
+  durationSeconds?: number; // duration in seconds
+  width?: number; // resolution width in px
+  height?: number; // resolution height in px
+  resolution?: string; // e.g. '1920×1080'
+  fps?: number; // frames per second
+  fileSize?: number; // file size in bytes
+  sizeBytes?: number; // file size in bytes
+  format?: string; // e.g. 'video/mp4', 'video/webm'
+  bitrateMbps?: number; // calculated bitrate in Mbps
+  aspectRatio?: string; // ratio string
+}
+
 export interface PromotionalBannerItem {
   id: string;
   title: string;
@@ -567,11 +581,18 @@ export interface PromotionalBannerItem {
   backgroundColor?: string;
   textColor?: 'dark' | 'light' | 'auto';
   
-  // Video Playback Controls
+  // Video Playback Controls & Dual-Stream Support (Desktop & Mobile)
+  desktopVideoUrl?: string;
+  mobileVideoUrl?: string;
   videoAutoplay?: boolean;
   videoMuted?: boolean;
   videoLoop?: boolean;
   videoPlaysInline?: boolean;
+  showVideoControls?: boolean;
+  videoControls?: boolean;
+  mobileVideoFocalPosition?: 'left' | 'center' | 'right';
+  desktopVideoMeta?: BannerVideoMetadata;
+  mobileVideoMeta?: BannerVideoMetadata;
   
   // Publishing, Scheduling & Order
   isDraft?: boolean;

@@ -46,6 +46,10 @@ import {
   X,
   RefreshCw,
   BarChart3,
+  Film,
+  FileVideo,
+  CheckCircle2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import {
@@ -65,9 +69,13 @@ import {
   BADGE_PRESETS,
   BANNER_ASPECT_RATIOS,
   BANNER_ASPECT_RATIOS_MAP,
+  VIDEO_REQUIREMENTS,
+  validateBannerVideoFile,
   validateBannerMediaFile,
   extractVideoPosterFrame,
   optimizeBannerImage,
+  formatBytes,
+  formatVideoDuration,
   calculateCtr,
   calculateTimeRemaining,
 } from '../../utils/bannerMediaHelper';
@@ -110,7 +118,7 @@ export const PromoBannerSettings: React.FC = () => {
     return {
       ...DEFAULT_PROMO_BANNER,
       ...base,
-      banners: base.banners && base.banners.length > 0 ? base.banners : DEFAULT_PROMO_BANNER.banners || [],
+      banners: Array.isArray(base.banners) ? base.banners : [],
     };
   });
 
@@ -118,6 +126,7 @@ export const PromoBannerSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'banners' | 'carousel' | 'analytics'>('banners');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'scheduled' | 'draft' | 'expired' | 'disabled'>('all');
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingFresh, setIsLoadingFresh] = useState(false);
   const [productsCatalog, setProductsCatalog] = useState<Product[]>([]);
   const [showSqlSchema, setShowSqlSchema] = useState(false);
 
@@ -126,6 +135,8 @@ export const PromoBannerSettings: React.FC = () => {
   const [editingBanner, setEditingBanner] = useState<PromotionalBannerItem | null>(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<'desktop-video' | 'mobile-video' | 'image' | 'poster' | null>(null);
+  const [uploadingFileName, setUploadingFileName] = useState<string>('');
   const [autoOptimize, setAutoOptimize] = useState(true);
 
   // Live Device Preview Modal State
@@ -144,24 +155,46 @@ export const PromoBannerSettings: React.FC = () => {
       .catch((err) => console.warn('Could not load products for CTA picker:', err));
   }, []);
 
+  // Fetch live banner settings directly from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingFresh(true);
+    adminService
+      .getPromoBanner()
+      .then((liveConfig) => {
+        if (isMounted && liveConfig) {
+          setFormData(liveConfig);
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not fetch live promo banner from Supabase:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingFresh(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Update local formData when context changes
   useEffect(() => {
     if (promoBanner) {
       setFormData((prev) => ({
         ...prev,
         ...promoBanner,
-        banners:
-          promoBanner.banners && promoBanner.banners.length > 0
-            ? promoBanner.banners
-            : prev.banners.length > 0
-            ? prev.banners
-            : DEFAULT_PROMO_BANNER.banners || [],
+        banners: Array.isArray(promoBanner.banners)
+          ? promoBanner.banners
+          : Array.isArray(prev.banners)
+          ? prev.banners
+          : [],
       }));
     }
   }, [promoBanner]);
 
   // Analytics Metrics computation
-  const bannersList = formData.banners || [];
+  const bannersList = Array.isArray(formData.banners) ? formData.banners : [];
   const activeBannersCount = bannersList.filter((b) => getBannerStatus(b) === 'active').length;
   const totalImpressions = bannersList.reduce((sum, b) => sum + (b.impressionsCount || 0), 0);
   const totalClicks = bannersList.reduce((sum, b) => sum + (b.clicksCount || 0), 0);
@@ -172,26 +205,38 @@ export const PromoBannerSettings: React.FC = () => {
     (a, b) => (b.clicksCount || 0) - (a.clicksCount || 0)
   )[0];
 
-  // Save changes to Supabase & Context
-  const handleSaveAll = async () => {
+  // Helper to persist to Supabase, update context, and re-fetch to confirm live database state
+  const persistBannerConfig = async (
+    configToSave: PromoBannerConfig,
+    successMessage: string = 'Promotional Banner configuration saved successfully!'
+  ) => {
     try {
       setIsSaving(true);
-      const res = await adminService.savePromoBanner(formData);
+      const res = await adminService.savePromoBanner(configToSave);
       if (res.success) {
-        updatePromoBanner(formData);
-        showToast('Promotional Banner configuration published successfully!', 'success');
+        // Sync context
+        await updatePromoBanner(configToSave);
+        // Re-fetch from Supabase to guarantee UI shows the true remote database state
+        const freshConfig = await adminService.getPromoBanner();
+        setFormData(freshConfig);
+        showToast(successMessage, 'success');
       } else {
-        showToast(`Failed to save: ${res.error || 'Unknown error'}`, 'error');
+        showToast(`Failed to save to database: ${res.error || 'Unknown error'}`, 'error');
       }
     } catch (err: any) {
-      showToast(err.message || 'Error saving promotional banner settings', 'error');
+      showToast(err.message || 'Error updating promotional banner settings', 'error');
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Reorder banners (Move Up / Down)
-  const handleMoveBanner = (index: number, direction: 'up' | 'down') => {
+  // Save changes to Supabase & Context
+  const handleSaveAll = async () => {
+    await persistBannerConfig(formData, 'Promotional Banner configuration published to Supabase!');
+  };
+
+  // Reorder banners (Move Up / Down) and persist
+  const handleMoveBanner = async (index: number, direction: 'up' | 'down') => {
     const list = [...bannersList];
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= list.length) return;
@@ -202,29 +247,42 @@ export const PromoBannerSettings: React.FC = () => {
 
     // update displayOrder
     const updated = list.map((b, i) => ({ ...b, displayOrder: i + 1 }));
-    setFormData((prev) => ({ ...prev, banners: updated }));
+    const newConfig = { ...formData, banners: updated };
+    setFormData(newConfig);
+    await persistBannerConfig(newConfig, 'Banner display order updated.');
   };
 
-  // Toggle Featured
-  const handleToggleFeatured = (bannerId: string) => {
+  // Toggle Featured and persist
+  const handleToggleFeatured = async (bannerId: string) => {
     const updated = bannersList.map((b) => ({
       ...b,
       isFeatured: b.id === bannerId ? !b.isFeatured : false, // only 1 primary featured
     }));
-    setFormData((prev) => ({ ...prev, banners: updated }));
-    showToast('Featured banner preference updated', 'info');
+    const newConfig = { ...formData, banners: updated };
+    setFormData(newConfig);
+    await persistBannerConfig(newConfig, 'Featured banner preference updated.');
   };
 
-  // Toggle Enabled/Disabled
-  const handleToggleEnabled = (bannerId: string) => {
-    const updated = bannersList.map((b) =>
-      b.id === bannerId ? { ...b, isEnabled: b.isEnabled === false ? true : false } : b
+  // Toggle Enabled/Disabled and persist
+  const handleToggleEnabled = async (bannerId: string) => {
+    let willBeEnabled = true;
+    const updated = bannersList.map((b) => {
+      if (b.id === bannerId) {
+        willBeEnabled = b.isEnabled === false;
+        return { ...b, isEnabled: willBeEnabled };
+      }
+      return b;
+    });
+    const newConfig = { ...formData, banners: updated };
+    setFormData(newConfig);
+    await persistBannerConfig(
+      newConfig,
+      willBeEnabled ? 'Banner enabled and published.' : 'Banner disabled and hidden.'
     );
-    setFormData((prev) => ({ ...prev, banners: updated }));
   };
 
-  // Duplicate Banner
-  const handleDuplicateBanner = (banner: PromotionalBannerItem) => {
+  // Duplicate Banner and persist
+  const handleDuplicateBanner = async (banner: PromotionalBannerItem) => {
     const clone: PromotionalBannerItem = {
       ...banner,
       id: `banner-${Date.now()}`,
@@ -238,8 +296,9 @@ export const PromoBannerSettings: React.FC = () => {
       updatedAt: new Date().toISOString(),
     };
     const updated = [...bannersList, clone];
-    setFormData((prev) => ({ ...prev, banners: updated }));
-    showToast(`Duplicated banner "${banner.title}"`, 'success');
+    const newConfig = { ...formData, banners: updated };
+    setFormData(newConfig);
+    await persistBannerConfig(newConfig, `Duplicated banner "${banner.title}".`);
   };
 
   // Open Editor for new banner
@@ -247,20 +306,18 @@ export const PromoBannerSettings: React.FC = () => {
     const defaultRatio: BannerAspectRatio = formData.aspectRatio || '1:1';
     const newBanner: PromotionalBannerItem = {
       id: `banner-${Date.now()}`,
-      title: 'New Promotional Campaign 🔥',
-      subtitle: 'Special limited time offer on selected collections',
-      description: 'Nationwide delivery with seamless checkout.',
+      title: 'Special Promotion 🔥',
+      subtitle: 'Exclusive discounts on top products',
+      description: 'Nationwide delivery with fast checkout.',
       mediaType: 'image',
-      mediaUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1080&h=1080&q=85',
+      mediaUrl: '',
       aspectRatio: defaultRatio,
       showBadge: true,
       badgeType: 'HOT DEAL',
       badgeCustomText: 'HOT DEAL 🔥',
       badgeColor: '#ff6452',
-      showDiscount: true,
-      discountPercentage: 20,
-      promotionalPrice: 249,
-      originalPrice: 349,
+      showDiscount: false,
+      discountPercentage: 0,
       showCountdown: false,
       showCta: true,
       ctaText: 'Shop Now',
@@ -273,6 +330,8 @@ export const PromoBannerSettings: React.FC = () => {
       overlayStyle: 'gradient',
       backgroundColor: '#eff6ff',
       textColor: 'dark',
+      videoControls: true,
+      mobileVideoFocalPosition: 'center',
       videoAutoplay: true,
       videoMuted: true,
       videoLoop: true,
@@ -295,13 +354,15 @@ export const PromoBannerSettings: React.FC = () => {
   const handleEditBanner = (banner: PromotionalBannerItem) => {
     setEditingBanner({
       aspectRatio: '1:1',
+      videoControls: banner.videoControls !== false,
+      mobileVideoFocalPosition: banner.mobileVideoFocalPosition || 'center',
       ...banner,
     });
     setIsEditorOpen(true);
   };
 
-  // Save Banner from Editor Modal
-  const handleSaveBannerInModal = () => {
+  // Save Banner from Editor Modal and persist immediately to Supabase
+  const handleSaveBannerInModal = async () => {
     if (!editingBanner) return;
 
     if (!editingBanner.title.trim()) {
@@ -323,23 +384,28 @@ export const PromoBannerSettings: React.FC = () => {
     // Ensure display orders
     updatedList = updatedList.map((b, idx) => ({ ...b, displayOrder: idx + 1 }));
 
-    setFormData((prev) => ({ ...prev, banners: updatedList }));
+    const newConfig = { ...formData, banners: updatedList };
+    setFormData(newConfig);
     setIsEditorOpen(false);
     setEditingBanner(null);
-    showToast('Banner saved to configuration (click "Save Changes" to publish).', 'success');
+    await persistBannerConfig(
+      newConfig,
+      exists ? 'Banner updated and saved to Supabase!' : 'New banner created and saved to Supabase!'
+    );
   };
 
-  // Confirm Delete
-  const handleConfirmDelete = () => {
+  // Confirm Delete and persist to Supabase
+  const handleConfirmDelete = async () => {
     if (!bannerToDelete) return;
     const updated = bannersList.filter((b) => b.id !== bannerToDelete.id);
-    setFormData((prev) => ({ ...prev, banners: updated }));
+    const newConfig = { ...formData, banners: updated };
+    setFormData(newConfig);
     setBannerToDelete(null);
-    showToast('Banner removed from list.', 'info');
+    await persistBannerConfig(newConfig, 'Banner deleted and updated in Supabase.');
   };
 
-  // Reset Analytics Counters
-  const handleResetAnalytics = () => {
+  // Reset Analytics Counters and persist
+  const handleResetAnalytics = async () => {
     if (window.confirm('Reset all impression and click analytics for all banners?')) {
       const updated = bannersList.map((b) => ({
         ...b,
@@ -348,74 +414,253 @@ export const PromoBannerSettings: React.FC = () => {
         conversionsCount: 0,
         revenueGenerated: 0,
       }));
-      setFormData((prev) => ({ ...prev, banners: updated }));
-      showToast('Analytics counters reset.', 'info');
+      const newConfig = { ...formData, banners: updated };
+      setFormData(newConfig);
+      await persistBannerConfig(newConfig, 'Banner analytics reset.');
     }
   };
 
-  // Upload Media within Modal
-  const handleModalMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload Desktop Video (1920×1080 16:9, max 25MB, max 30s)
+  const handleDesktopVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editingBanner) return;
+    e.target.value = '';
+
+    setIsUploadingMedia(true);
+    setUploadTarget('desktop-video');
+    setUploadProgress(15);
+    setUploadingFileName(`${file.name} (${formatBytes(file.size)})`);
+
+    try {
+      const outcome = await validateBannerVideoFile(file, 'desktop');
+      if (!outcome.isValid) {
+        showToast(outcome.error || 'Invalid desktop video file.', 'error');
+        return;
+      }
+
+      setUploadProgress(40);
+      const url = await adminService.uploadMedia(file, 'banner');
+      setUploadProgress(75);
+
+      let posterUrl = editingBanner.mediaPosterUrl;
+      if (!posterUrl) {
+        try {
+          const autoPoster = await extractVideoPosterFrame(file);
+          if (autoPoster) posterUrl = autoPoster;
+        } catch {
+          // Poster extraction is optional
+        }
+      }
+
+      setUploadProgress(95);
+
+      setEditingBanner((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          desktopVideoUrl: url,
+          desktopVideoMetadata: outcome.metadata,
+          mediaType: 'video',
+          mediaUrl: url,
+          mediaPosterUrl: posterUrl,
+        };
+      });
+
+      setUploadProgress(100);
+      showToast(
+        `Desktop Video (${outcome.metadata?.resolution || '1920×1080'}, ${formatBytes(file.size)}) uploaded successfully!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Desktop video upload failed.', 'error');
+    } finally {
+      setIsUploadingMedia(false);
+      setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadingFileName('');
+    }
+  };
+
+  // Upload Mobile Video (1080×1350 4:5, max 25MB, max 30s)
+  const handleMobileVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingBanner) return;
+    e.target.value = '';
+
+    setIsUploadingMedia(true);
+    setUploadTarget('mobile-video');
+    setUploadProgress(15);
+    setUploadingFileName(`${file.name} (${formatBytes(file.size)})`);
+
+    try {
+      const outcome = await validateBannerVideoFile(file, 'mobile');
+      if (!outcome.isValid) {
+        showToast(outcome.error || 'Invalid mobile video file.', 'error');
+        return;
+      }
+
+      setUploadProgress(40);
+      const url = await adminService.uploadMedia(file, 'banner');
+      setUploadProgress(85);
+
+      setEditingBanner((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          mobileVideoUrl: url,
+          mobileVideoMetadata: outcome.metadata,
+          mediaType: 'video',
+        };
+      });
+
+      setUploadProgress(100);
+      showToast(
+        `Mobile Video (${outcome.metadata?.resolution || '1080×1350'}, ${formatBytes(file.size)}) uploaded successfully!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Mobile video upload failed.', 'error');
+    } finally {
+      setIsUploadingMedia(false);
+      setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadingFileName('');
+    }
+  };
+
+  // Upload Promotional Image / Fallback Still
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingBanner) return;
+    e.target.value = '';
 
     const validation = validateBannerMediaFile(file);
-    if (!validation.isValid) {
-      showToast(validation.error || 'Invalid file.', 'error');
+    if (!validation.isValid || validation.mediaType !== 'image') {
+      showToast(validation.error || 'Please select a valid image (JPG, PNG, WebP).', 'error');
       return;
     }
 
     try {
       setIsUploadingMedia(true);
+      setUploadTarget('image');
       setUploadProgress(20);
+      setUploadingFileName(`${file.name} (${formatBytes(file.size)})`);
 
       let fileToUpload = file;
       const targetRatio = editingBanner.aspectRatio || '1:1';
 
-      // If image and auto-optimize is checked, optimize to target aspect ratio WebP
-      if (validation.mediaType === 'image' && autoOptimize) {
-        setUploadProgress(40);
+      if (autoOptimize) {
+        setUploadProgress(45);
         fileToUpload = await optimizeBannerImage(file, targetRatio, 0.88);
       }
 
-      setUploadProgress(65);
+      setUploadProgress(70);
       const url = await adminService.uploadMedia(fileToUpload, 'banner');
-      setUploadProgress(85);
+      setUploadProgress(95);
 
-      let posterUrl = editingBanner.mediaPosterUrl;
-      // If video, extract a poster frame
-      if (validation.mediaType === 'video') {
-        try {
-          const posterDataUrl = await extractVideoPosterFrame(file);
-          if (posterDataUrl) {
-            posterUrl = posterDataUrl;
-          }
-        } catch {
-          console.warn('Video poster extraction skipped');
-        }
-      }
-
-      setEditingBanner((prev) =>
-        prev
-          ? {
-              ...prev,
-              mediaUrl: url,
-              mediaType: validation.mediaType === 'video' ? 'video' : 'image',
-              mediaPosterUrl: posterUrl,
-            }
-          : null
-      );
+      setEditingBanner((prev) => {
+        if (!prev) return null;
+        const hasVideos = !!(prev.desktopVideoUrl || prev.mobileVideoUrl);
+        return {
+          ...prev,
+          mediaUrl: url,
+          mediaType: hasVideos ? 'video' : 'image',
+          mediaPosterUrl: prev.mediaPosterUrl || url,
+        };
+      });
 
       setUploadProgress(100);
-      showToast(
-        `${targetRatio} ${validation.mediaType === 'video' ? 'Video' : 'Image'} uploaded successfully!`,
-        'success'
-      );
+      showToast(`${targetRatio} Promotional image uploaded successfully!`, 'success');
     } catch (err: any) {
-      showToast(err.message || 'Media upload failed.', 'error');
+      showToast(err.message || 'Image upload failed.', 'error');
     } finally {
       setIsUploadingMedia(false);
       setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadingFileName('');
     }
+  };
+
+  // Upload Poster Frame / Video Thumbnail
+  const handlePosterUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingBanner) return;
+    e.target.value = '';
+
+    const validation = validateBannerMediaFile(file);
+    if (!validation.isValid || validation.mediaType !== 'image') {
+      showToast('Please select a valid image (JPG, PNG, WebP) for thumbnail.', 'error');
+      return;
+    }
+
+    try {
+      setIsUploadingMedia(true);
+      setUploadTarget('poster');
+      setUploadProgress(25);
+      setUploadingFileName(`${file.name} (${formatBytes(file.size)})`);
+
+      let fileToUpload = file;
+      if (autoOptimize) {
+        fileToUpload = await optimizeBannerImage(file, editingBanner.aspectRatio || '1:1', 0.85);
+      }
+
+      setUploadProgress(70);
+      const url = await adminService.uploadMedia(fileToUpload, 'banner');
+      setUploadProgress(100);
+
+      setEditingBanner((prev) => (prev ? { ...prev, mediaPosterUrl: url } : null));
+      showToast('Custom poster thumbnail uploaded!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Poster upload failed.', 'error');
+    } finally {
+      setIsUploadingMedia(false);
+      setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadingFileName('');
+    }
+  };
+
+  const handleRemoveDesktopVideo = () => {
+    if (!editingBanner) return;
+    const hasMobileVideo = !!editingBanner.mobileVideoUrl;
+    setEditingBanner({
+      ...editingBanner,
+      desktopVideoUrl: undefined,
+      desktopVideoMetadata: undefined,
+      mediaUrl: editingBanner.mediaUrl === editingBanner.desktopVideoUrl ? '' : editingBanner.mediaUrl,
+      mediaType: hasMobileVideo ? 'video' : 'image',
+    });
+    showToast('Desktop video removed.', 'info');
+  };
+
+  const handleRemoveMobileVideo = () => {
+    if (!editingBanner) return;
+    const hasDesktopVideo = !!editingBanner.desktopVideoUrl;
+    setEditingBanner({
+      ...editingBanner,
+      mobileVideoUrl: undefined,
+      mobileVideoMetadata: undefined,
+      mediaType: hasDesktopVideo ? 'video' : 'image',
+    });
+    showToast('Mobile video removed (storefront will crop desktop video).', 'info');
+  };
+
+  const handleRemovePoster = () => {
+    if (!editingBanner) return;
+    setEditingBanner({
+      ...editingBanner,
+      mediaPosterUrl: undefined,
+    });
+    showToast('Custom poster thumbnail removed.', 'info');
+  };
+
+  const handleRemoveImage = () => {
+    if (!editingBanner) return;
+    setEditingBanner({
+      ...editingBanner,
+      mediaUrl: editingBanner.desktopVideoUrl || '',
+    });
+    showToast('Promotional image removed.', 'info');
   };
 
   // Filtered banners
@@ -796,6 +1041,16 @@ CREATE POLICY "Admin upsert settings" ON public.settings FOR ALL USING (true);`}
                           {banner.showDiscount && banner.discountPercentage && (
                             <span className="text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-md">
                               {banner.discountPercentage}% OFF
+                            </span>
+                          )}
+                          {banner.desktopVideoUrl && (
+                            <span className="text-[10px] font-bold bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Monitor className="w-3 h-3" /> 16:9 Video
+                            </span>
+                          )}
+                          {banner.mobileVideoUrl && (
+                            <span className="text-[10px] font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Smartphone className="w-3 h-3" /> 4:5 Mobile
                             </span>
                           )}
                         </div>
@@ -1303,142 +1558,527 @@ CREATE POLICY "Admin upsert settings" ON public.settings FOR ALL USING (true);`}
                   </div>
                 </div>
 
-                {/* 2. Media Uploader & Dynamic Aspect Ratio Preview Box */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pt-2">
-                  {/* Left: Dynamic Aspect Ratio Preview Box */}
-                  <div className="md:col-span-5 flex flex-col items-center">
-                    <div
-                      className={`relative w-full rounded-2xl overflow-hidden bg-slate-950 border-2 border-dashed border-slate-300 dark:border-slate-700 shadow-md group/box flex items-center justify-center transition-all duration-300 ${
-                        editingBanner.aspectRatio === '16:9'
-                          ? 'max-w-[310px] aspect-[16/9]'
-                          : editingBanner.aspectRatio === '4:3'
-                          ? 'max-w-[270px] aspect-[4/3]'
-                          : 'max-w-[240px] aspect-square'
-                      }`}
-                    >
-                      {isUploadingMedia ? (
-                        <div className="flex flex-col items-center justify-center p-4 text-center space-y-2">
-                          <RefreshCw className="w-8 h-8 text-[#ff6452] animate-spin" />
-                          <span className="text-xs text-slate-200 font-bold">
-                            Uploading & Optimizing ({uploadProgress || 40}%)...
-                          </span>
+                {/* Uploading Status Overlay / Banner */}
+                {isUploadingMedia && (
+                  <div className="p-4 rounded-2xl bg-[#ff6452]/10 border border-[#ff6452]/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
+                      <div className="flex items-center gap-2">
+                        <RefreshCw className="w-4 h-4 text-[#ff6452] animate-spin" />
+                        <span>
+                          {uploadTarget === 'desktop-video'
+                            ? 'Uploading & Validating Desktop Video (16:9)...'
+                            : uploadTarget === 'mobile-video'
+                            ? 'Uploading & Validating Mobile Video (4:5)...'
+                            : uploadTarget === 'poster'
+                            ? 'Uploading Poster Thumbnail...'
+                            : 'Uploading & Optimizing Media...'}
+                        </span>
+                      </div>
+                      <span className="text-[#ff6452] font-black">{uploadProgress || 20}%</span>
+                    </div>
+                    {uploadingFileName && (
+                      <p className="text-[11px] text-slate-500 truncate font-mono">
+                        {uploadingFileName}
+                      </p>
+                    )}
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-[#ff6452] h-full transition-all duration-300 rounded-full"
+                        style={{ width: `${uploadProgress || 20}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. DUAL VIDEO MANAGEMENT: DESKTOP & MOBILE UPLOADS */}
+                <div className="space-y-4 pt-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <Film className="w-4 h-4 text-[#ff6452]" />
+                        <span>Promotional Video Streams (Desktop & Mobile)</span>
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Upload dedicated desktop (16:9) and mobile (4:5) videos for high-performance responsive streaming.
+                      </p>
+                    </div>
+                    {(editingBanner.desktopVideoUrl || editingBanner.mobileVideoUrl) && (
+                      <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Video Active
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Desktop Video Field */}
+                    <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Monitor className="w-4 h-4 text-sky-500" />
+                          <label className="text-xs font-black text-slate-900 dark:text-white">
+                            Desktop Video
+                          </label>
                         </div>
-                      ) : editingBanner.mediaType === 'video' && editingBanner.mediaUrl ? (
-                        <div className="relative w-full h-full">
-                          <video
-                            src={editingBanner.mediaUrl}
-                            poster={editingBanner.mediaPosterUrl}
-                            autoPlay
-                            muted
-                            loop
-                            playsInline
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute top-2 left-2 bg-black/70 text-white text-[9px] font-bold px-2 py-0.5 rounded">
-                            MP4 / WEBM ({editingBanner.aspectRatio || '1:1'})
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                          16:9 Widescreen
+                        </span>
+                      </div>
+
+                      {/* Desktop Video Requirements Box */}
+                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
+                        <div className="font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                          <span>Requirements:</span>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Strictly validated</span>
+                        </div>
+                        <ul className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                          <li>• <strong>Resolution:</strong> 1920×1080 px (16:9)</li>
+                          <li>• <strong>Max Size:</strong> 25 MB</li>
+                          <li>• <strong>Max Duration:</strong> 30 seconds</li>
+                          <li>• <strong>Max FPS:</strong> 30 FPS</li>
+                          <li>• <strong>Formats:</strong> MP4 (H.264), WebM</li>
+                          <li>• <strong>Bitrate:</strong> 2–5 Mbps</li>
+                        </ul>
+                      </div>
+
+                      {/* Preview if uploaded */}
+                      {editingBanner.desktopVideoUrl ? (
+                        <div className="space-y-2">
+                          <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-slate-300 dark:border-slate-700">
+                            <video
+                              src={editingBanner.desktopVideoUrl}
+                              poster={editingBanner.mediaPosterUrl}
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute top-2 left-2 bg-black/70 text-white text-[9px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                              <Monitor className="w-3 h-3 text-sky-400" />
+                              <span>1920×1080 (16:9)</span>
+                            </div>
                           </div>
-                        </div>
-                      ) : editingBanner.mediaUrl ? (
-                        <div className="relative w-full h-full">
-                          <img
-                            src={editingBanner.mediaUrl}
-                            alt="Banner Preview"
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded">
-                            {editingBanner.aspectRatio || '1:1'}
+
+                          {editingBanner.desktopVideoMetadata && (
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600 dark:text-slate-400">
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {editingBanner.desktopVideoMetadata.resolution}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {formatBytes(editingBanner.desktopVideoMetadata.sizeBytes)}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {formatVideoDuration(editingBanner.desktopVideoMetadata.durationSeconds)}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {editingBanner.desktopVideoMetadata.fps} FPS
+                              </span>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <label className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition-colors cursor-pointer">
+                              <Upload className="w-3.5 h-3.5 text-[#ff6452]" />
+                              <span>Replace Desktop Video</span>
+                              <input
+                                type="file"
+                                accept="video/mp4,video/webm"
+                                onChange={handleDesktopVideoUpload}
+                                disabled={isUploadingMedia}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleRemoveDesktopVideo}
+                              className="px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                            >
+                              Remove
+                            </button>
                           </div>
                         </div>
                       ) : (
-                        <div className="p-6 text-center text-slate-400 space-y-2">
-                          <Upload className="w-8 h-8 mx-auto text-[#ff6452]" />
-                          <span className="text-xs font-bold block">
-                            {BANNER_ASPECT_RATIOS_MAP[editingBanner.aspectRatio || '1:1']?.recommendedResolution || '1080 × 1080'} (
-                            {editingBanner.aspectRatio || '1:1'})
-                          </span>
-                          <span className="text-[10px] text-slate-500 block">JPG, PNG, WebP or MP4</span>
+                        <div className="space-y-2">
+                          <label className="w-full flex flex-col items-center justify-center p-5 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#ff6452] dark:hover:border-[#ff6452] transition-colors cursor-pointer text-center bg-slate-50/50 dark:bg-slate-900/30">
+                            <FileVideo className="w-8 h-8 text-sky-500 mb-1.5" />
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                              Upload Desktop Video
+                            </span>
+                            <span className="text-[10px] text-slate-500">
+                              MP4 (H.264) or WebM, 1920×1080 16:9, max 25 MB
+                            </span>
+                            <input
+                              type="file"
+                              accept="video/mp4,video/webm"
+                              onChange={handleDesktopVideoUpload}
+                              disabled={isUploadingMedia}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Mobile Video Field (Optional) */}
+                    <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-4 h-4 text-purple-500" />
+                          <label className="text-xs font-black text-slate-900 dark:text-white">
+                            Mobile Video
+                          </label>
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+                          4:5 Portrait (Optional)
+                        </span>
+                      </div>
+
+                      {/* Mobile Video Requirements Box */}
+                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
+                        <div className="font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                          <span>Requirements:</span>
+                          <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">Dedicated 4:5 Stream</span>
+                        </div>
+                        <ul className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                          <li>• <strong>Resolution:</strong> 1080×1350 px (4:5)</li>
+                          <li>• <strong>Max Size:</strong> 25 MB</li>
+                          <li>• <strong>Max Duration:</strong> 30 seconds</li>
+                          <li>• <strong>Max FPS:</strong> 30 FPS</li>
+                          <li>• <strong>Formats:</strong> MP4 (H.264), WebM</li>
+                          <li>• <strong>Bitrate:</strong> 2–5 Mbps</li>
+                        </ul>
+                      </div>
+
+                      {/* Preview if uploaded */}
+                      {editingBanner.mobileVideoUrl ? (
+                        <div className="space-y-2">
+                          <div className="relative max-w-[200px] mx-auto aspect-[4/5] rounded-xl overflow-hidden bg-black border border-slate-300 dark:border-slate-700">
+                            <video
+                              src={editingBanner.mobileVideoUrl}
+                              poster={editingBanner.mediaPosterUrl}
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute top-2 left-2 bg-black/70 text-white text-[9px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                              <Smartphone className="w-3 h-3 text-purple-400" />
+                              <span>1080×1350 (4:5)</span>
+                            </div>
+                          </div>
+
+                          {editingBanner.mobileVideoMetadata && (
+                            <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-slate-600 dark:text-slate-400">
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {editingBanner.mobileVideoMetadata.resolution}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {formatBytes(editingBanner.mobileVideoMetadata.sizeBytes)}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {formatVideoDuration(editingBanner.mobileVideoMetadata.durationSeconds)}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded font-mono">
+                                {editingBanner.mobileVideoMetadata.fps} FPS
+                              </span>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-center gap-2 pt-1">
+                            <label className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition-colors cursor-pointer">
+                              <Upload className="w-3.5 h-3.5 text-[#ff6452]" />
+                              <span>Replace Mobile Video</span>
+                              <input
+                                type="file"
+                                accept="video/mp4,video/webm"
+                                onChange={handleMobileVideoUpload}
+                                disabled={isUploadingMedia}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleRemoveMobileVideo}
+                              className="px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <label className="w-full flex flex-col items-center justify-center p-5 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#ff6452] dark:hover:border-[#ff6452] transition-colors cursor-pointer text-center bg-slate-50/50 dark:bg-slate-900/30">
+                            <Smartphone className="w-8 h-8 text-purple-500 mb-1.5" />
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                              Upload Mobile Video (Optional)
+                            </span>
+                            <span className="text-[10px] text-slate-500">
+                              MP4 or WebM, 1080×1350 4:5 portrait
+                            </span>
+                            <input
+                              type="file"
+                              accept="video/mp4,video/webm"
+                              onChange={handleMobileVideoUpload}
+                              disabled={isUploadingMedia}
+                              className="hidden"
+                            />
+                          </label>
+                          <p className="text-[10px] text-slate-500 text-center">
+                            💡 If no mobile video is uploaded, the desktop video is automatically cropped to 4:5 using your chosen focal alignment.
+                          </p>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Right: Upload controls & media URL */}
-                  <div className="md:col-span-7 space-y-4">
-                    <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          Upload {editingBanner.aspectRatio || '1:1'} Media File
+                  {/* Poster Thumbnail & Admin Video Settings */}
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-[#ff6452]" />
+                      <h5 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                        Video Playback & Responsive Settings
+                      </h5>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                      {/* Left: Poster / Thumbnail */}
+                      <div className="md:col-span-4 space-y-2">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                          Poster / Video Thumbnail
                         </label>
-                        <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={autoOptimize}
-                              onChange={(e) => setAutoOptimize(e.target.checked)}
-                              className="accent-[#ff6452] rounded"
-                            />
-                            <span>
-                              Auto-crop to {editingBanner.aspectRatio || '1:1'} WebP (
-                              {BANNER_ASPECT_RATIOS_MAP[editingBanner.aspectRatio || '1:1']?.recommendedResolution})
-                            </span>
-                          </label>
+                        <div className="flex items-center gap-3">
+                          <div className="w-16 h-16 rounded-xl bg-slate-900 border border-slate-300 dark:border-slate-700 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {editingBanner.mediaPosterUrl ? (
+                              <img
+                                src={editingBanner.mediaPosterUrl}
+                                alt="Poster thumbnail"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon className="w-6 h-6 text-slate-500" />
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 transition-colors cursor-pointer text-slate-800 dark:text-slate-200">
+                              <Upload className="w-3 h-3 text-[#ff6452]" />
+                              <span>{editingBanner.mediaPosterUrl ? 'Change Poster' : 'Upload Poster'}</span>
+                              <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                onChange={handlePosterUpload}
+                                disabled={isUploadingMedia}
+                                className="hidden"
+                              />
+                            </label>
+                            {editingBanner.mediaPosterUrl && (
+                              <button
+                                type="button"
+                                onClick={handleRemovePoster}
+                                className="text-[10px] text-rose-600 hover:underline block cursor-pointer"
+                              >
+                                Remove custom poster
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-slate-500 block">
+                          Displays instantly while video loads, or when reduced-motion/data-saver is active.
+                        </span>
+                      </div>
+
+                      {/* Center: Mobile Focal Position for Desktop Video Cropping */}
+                      <div className="md:col-span-4 space-y-2">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                          Mobile Video Focal Position
+                        </label>
+                        <p className="text-[10px] text-slate-500">
+                          When cropping Desktop Video for mobile devices:
+                        </p>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(['left', 'center', 'right'] as const).map((pos) => {
+                            const isSelected = (editingBanner.mobileVideoFocalPosition || 'center') === pos;
+                            return (
+                              <button
+                                key={pos}
+                                type="button"
+                                onClick={() =>
+                                  setEditingBanner({ ...editingBanner, mobileVideoFocalPosition: pos })
+                                }
+                                className={`py-1.5 px-2 rounded-xl text-xs font-bold capitalize transition-all cursor-pointer border ${
+                                  isSelected
+                                    ? 'bg-[#ff6452] text-white border-[#ff6452] shadow-xs'
+                                    : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {pos === 'center' ? 'Center ⭐' : pos}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
+                      {/* Right: Controls & Autoplay Switches */}
+                      <div className="md:col-span-4 space-y-2">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                          Interactive Controls & Playback
+                        </label>
+                        <div className="space-y-1.5">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editingBanner.videoControls !== false}
+                              onChange={(e) =>
+                                setEditingBanner({ ...editingBanner, videoControls: e.target.checked })
+                              }
+                              className="accent-[#ff6452] rounded w-4 h-4"
+                            />
+                            <span>Enable Video Controls (Play/Pause, Mute)</span>
+                          </label>
+
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editingBanner.videoAutoplay !== false}
+                              onChange={(e) =>
+                                setEditingBanner({ ...editingBanner, videoAutoplay: e.target.checked })
+                              }
+                              className="accent-[#ff6452] rounded w-4 h-4"
+                            />
+                            <span>Autoplay video (muted by browser policy)</span>
+                          </label>
+
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editingBanner.videoLoop !== false}
+                              onChange={(e) =>
+                                setEditingBanner({ ...editingBanner, videoLoop: e.target.checked })
+                              }
+                              className="accent-[#ff6452] rounded w-4 h-4"
+                            />
+                            <span>Loop video continuously</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. PROMOTIONAL IMAGE (FALLBACK & STANDARD STILL MEDIA) */}
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <ImageIcon className="w-4 h-4 text-[#ff6452]" />
+                        <span>Promotional Image / Fallback Still</span>
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Used as the primary banner image, or as silent fallback if video fails or when user enables Reduced Motion.
+                      </p>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoOptimize}
+                        onChange={(e) => setAutoOptimize(e.target.checked)}
+                        className="accent-[#ff6452] rounded"
+                      />
+                      <span>Auto-crop to {editingBanner.aspectRatio || '1:1'} WebP</span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                    <div className="md:col-span-3 flex justify-center">
+                      <div
+                        className={`relative rounded-xl overflow-hidden bg-slate-950 border border-slate-300 dark:border-slate-700 flex items-center justify-center ${
+                          editingBanner.aspectRatio === '16:9'
+                            ? 'w-36 aspect-video'
+                            : editingBanner.aspectRatio === '4:3'
+                            ? 'w-32 aspect-[4/3]'
+                            : 'w-28 aspect-square'
+                        }`}
+                      >
+                        {editingBanner.mediaUrl && !editingBanner.mediaUrl.endsWith('.mp4') && !editingBanner.mediaUrl.endsWith('.webm') ? (
+                          <img
+                            src={editingBanner.mediaUrl}
+                            alt="Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : editingBanner.mediaPosterUrl ? (
+                          <img
+                            src={editingBanner.mediaPosterUrl}
+                            alt="Poster Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="p-2 text-center text-slate-500 text-[10px]">
+                            <ImageIcon className="w-5 h-5 mx-auto mb-1 text-slate-400" />
+                            No Image
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="md:col-span-9 space-y-3">
                       <div className="flex items-center gap-3">
-                        <label className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-xs sm:text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors cursor-pointer shadow-2xs">
+                        <label className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors cursor-pointer">
                           <Upload className="w-4 h-4 text-[#ff6452]" />
                           <span>
-                            {editingBanner.mediaUrl
-                              ? `Replace ${editingBanner.aspectRatio || '1:1'} Media`
-                              : `Choose ${editingBanner.aspectRatio || '1:1'} File`}
+                            {editingBanner.mediaUrl && !editingBanner.mediaUrl.endsWith('.mp4')
+                              ? `Replace ${editingBanner.aspectRatio || '1:1'} Image`
+                              : `Upload ${editingBanner.aspectRatio || '1:1'} Image`}
                           </span>
                           <input
                             type="file"
-                            accept="image/jpeg,image/png,image/webp,video/mp4,video/webm"
-                            onChange={handleModalMediaUpload}
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={handleImageUpload}
                             disabled={isUploadingMedia}
                             className="hidden"
                           />
                         </label>
+                        {editingBanner.mediaUrl && !editingBanner.mediaUrl.endsWith('.mp4') && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveImage}
+                            className="px-3 py-2.5 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          >
+                            Remove Image
+                          </button>
+                        )}
                       </div>
 
-                      <p className="text-[11px] text-slate-500">
-                        Supports HD JPG, PNG, WebP images and MP4, WebM videos. Formatted for{' '}
-                        {BANNER_ASPECT_RATIOS_MAP[editingBanner.aspectRatio || '1:1']?.label || '1:1'}.
-                      </p>
-                    </div>
+                      {/* Direct Media URL Input */}
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                          Direct Media Image URL (Optional)
+                        </label>
+                        <input
+                          type="url"
+                          value={editingBanner.mediaUrl || ''}
+                          onChange={(e) =>
+                            setEditingBanner({ ...editingBanner, mediaUrl: e.target.value })
+                          }
+                          placeholder="https://..."
+                          className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-white font-mono"
+                        />
+                      </div>
 
-                    {/* Direct Media URL Input */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                        Direct Media URL (Optional alternative)
-                      </label>
-                      <input
-                        type="url"
-                        value={editingBanner.mediaUrl || ''}
-                        onChange={(e) =>
-                          setEditingBanner({ ...editingBanner, mediaUrl: e.target.value })
-                        }
-                        placeholder="https://..."
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white"
-                      />
-                    </div>
-
-                    {/* Media Alt Text for SEO & Accessibility */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                        SEO Alt Text / Accessibility Label
-                      </label>
-                      <input
-                        type="text"
-                        value={editingBanner.mediaAltText || ''}
-                        onChange={(e) =>
-                          setEditingBanner({ ...editingBanner, mediaAltText: e.target.value })
-                        }
-                        placeholder="e.g. Summer wireless headphones 50% discount banner"
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white"
-                      />
+                      {/* Media Alt Text for SEO & Accessibility */}
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                          SEO Alt Text / Accessibility Label
+                        </label>
+                        <input
+                          type="text"
+                          value={editingBanner.mediaAltText || ''}
+                          onChange={(e) =>
+                            setEditingBanner({ ...editingBanner, mediaAltText: e.target.value })
+                          }
+                          placeholder="e.g. Summer wireless headphones 50% discount banner"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-white"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2019,34 +2659,77 @@ CREATE POLICY "Admin upsert settings" ON public.settings FOR ALL USING (true);`}
                             </p>
                           )}
 
-                          {/* Media in preview with dynamic aspect ratio */}
-                          <div
-                            className={`w-full mx-auto rounded-2xl overflow-hidden bg-slate-900 shadow-md ${
-                              current.aspectRatio === '16:9'
-                                ? 'aspect-[16/9] max-w-[340px]'
-                                : current.aspectRatio === '4:3'
-                                ? 'aspect-[4/3] max-w-[300px]'
-                                : 'aspect-square max-w-[280px]'
-                            }`}
-                          >
-                            {current.mediaType === 'video' ? (
-                              <video
-                                src={current.mediaUrl}
-                                poster={current.mediaPosterUrl}
-                                autoPlay
-                                muted
-                                loop
-                                playsInline
-                                className="w-full h-full object-cover"
-                              />
-                            ) : current.mediaUrl ? (
-                              <img
-                                src={current.mediaUrl}
-                                alt="Preview"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : null}
-                          </div>
+                          {/* Media in preview with dynamic aspect ratio & responsive video stream */}
+                          {(() => {
+                            const isMobileMode = previewDevice === 'mobile';
+                            const hasMobileVideo = Boolean(current.mobileVideoUrl);
+                            const hasDesktopVideo = Boolean(current.desktopVideoUrl || (current.mediaType === 'video' && current.mediaUrl));
+                            const hasAnyVideo = hasMobileVideo || hasDesktopVideo;
+
+                            const activeVideoSrc = isMobileMode
+                              ? (current.mobileVideoUrl || current.desktopVideoUrl || current.mediaUrl)
+                              : (current.desktopVideoUrl || current.mediaUrl);
+
+                            const focalPos = current.mobileVideoFocalPosition || 'center';
+
+                            return (
+                              <div
+                                className={`w-full mx-auto rounded-2xl overflow-hidden bg-slate-950 shadow-md ${
+                                  isMobileMode
+                                    ? 'aspect-[4/5] max-w-[260px]'
+                                    : current.aspectRatio === '16:9'
+                                    ? 'aspect-[16/9] max-w-[420px]'
+                                    : current.aspectRatio === '4:3'
+                                    ? 'aspect-[4/3] max-w-[340px]'
+                                    : 'aspect-square max-w-[300px]'
+                                }`}
+                              >
+                                {hasAnyVideo && activeVideoSrc ? (
+                                  <div className="relative w-full h-full">
+                                    <video
+                                      src={activeVideoSrc}
+                                      poster={current.mediaPosterUrl}
+                                      autoPlay
+                                      muted
+                                      loop
+                                      playsInline
+                                      style={{
+                                        objectFit: 'cover',
+                                        objectPosition: isMobileMode && !hasMobileVideo ? `${focalPos} center` : 'center center',
+                                      }}
+                                      className="w-full h-full"
+                                    />
+                                    <div className="absolute top-2 left-2 bg-black/75 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                                      {isMobileMode ? (
+                                        hasMobileVideo ? (
+                                          <>
+                                            <Smartphone className="w-3 h-3 text-purple-400" />
+                                            <span>Dedicated 4:5 Mobile Video</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Monitor className="w-3 h-3 text-sky-400" />
+                                            <span>Desktop Video (Cropped 4:5 - {focalPos})</span>
+                                          </>
+                                        )
+                                      ) : (
+                                        <>
+                                          <Monitor className="w-3 h-3 text-sky-400" />
+                                          <span>Desktop Video (16:9)</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : current.mediaUrl ? (
+                                  <img
+                                    src={current.mediaUrl}
+                                    alt="Preview"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : null}
+                              </div>
+                            );
+                          })()}
 
                           <button
                             type="button"

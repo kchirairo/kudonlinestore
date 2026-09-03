@@ -135,6 +135,7 @@ async function fetchPublicSettingsRow(): Promise<SettingsTableRow | null> {
       const { data, error } = await supabase
         .from('settings')
         .select('id, store_name, currency_symbol, store_description, delivery_fee, free_shipping_threshold, support_email, support_phone, logo_url, banner_url, settings_data, created_at, updated_at')
+        .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
@@ -157,8 +158,19 @@ async function fetchPublicSettingsRow(): Promise<SettingsTableRow | null> {
 async function readSupabaseSettingHelper<T extends Record<string, any>>(key: string, defaultValue: T): Promise<T> {
   const row = await fetchPublicSettingsRow();
   
-  if (row?.settings_data && typeof row.settings_data === 'object' && row.settings_data[key] !== undefined) {
-    return { ...defaultValue, ...row.settings_data[key] };
+  if (row?.settings_data && typeof row.settings_data === 'object') {
+    if (row.settings_data[key] !== undefined) {
+      return { ...defaultValue, ...row.settings_data[key] };
+    }
+    // Also check alternate key aliases for banner_config
+    if (key === 'banner_config') {
+      if (row.settings_data['promo_banner'] !== undefined) {
+        return { ...defaultValue, ...row.settings_data['promo_banner'] };
+      }
+      if (row.settings_data['promo_banners'] !== undefined) {
+        return { ...defaultValue, ...row.settings_data['promo_banners'] };
+      }
+    }
   }
 
   // Handle general_settings mapping from columns if available
@@ -2412,9 +2424,9 @@ export const adminService = {
    */
   async getPromoBanner(): Promise<PromoBannerConfig> {
     const config = await readSupabaseSettingHelper<PromoBannerConfig>('banner_config', DEFAULT_PROMO_BANNER);
-    // Ensure banners array exists
-    if (!config.banners || config.banners.length === 0) {
-      config.banners = DEFAULT_PROMO_BANNER.banners || [];
+    // Ensure banners array is always initialized properly without inserting dummy banners
+    if (!config.banners || !Array.isArray(config.banners)) {
+      config.banners = [];
     }
     return config;
   },
@@ -2425,13 +2437,14 @@ export const adminService = {
   async savePromoBanner(config: PromoBannerConfig): Promise<{ success: boolean; error?: string; data?: PromoBannerConfig; databaseTable?: string }> {
     const updatedConfig: PromoBannerConfig = {
       ...config,
+      banners: Array.isArray(config.banners) ? config.banners : [],
       lastUpdated: new Date().toISOString(),
     };
     const res = await writeSupabaseSettingHelper<PromoBannerConfig>('banner_config', updatedConfig);
     return {
       success: res.success,
       error: res.error,
-      data: res.data,
+      data: res.data || updatedConfig,
       databaseTable: 'settings',
     };
   },

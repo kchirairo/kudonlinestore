@@ -36,16 +36,85 @@ export const PromoBanner: React.FC = () => {
   const touchStartXRef = useRef<number | null>(null);
   const touchEndXRef = useRef<number | null>(null);
   const bannerRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const recordedImpressionsRef = useRef<Set<string>>(new Set());
 
-  // Derive active banners list
+  // Detect mobile viewport (< 768px)
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(max-width: 767px)').matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const onChange = (e: MediaQueryListEvent) => setIsMobileViewport(e.matches);
+    if (mql.addEventListener) {
+      mql.addEventListener('change', onChange);
+      return () => mql.removeEventListener('change', onChange);
+    } else {
+      mql.addListener(onChange);
+      return () => mql.removeListener(onChange);
+    }
+  }, []);
+
+  // Check prefers-reduced-motion: reduce
+  const prefersReducedMotion = useMemo(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }, []);
+
+  // Check data-saving / Save-Data mode
+  const isDataSaverMode = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return Boolean((navigator as any).connection?.saveData);
+  }, []);
+
+  // IntersectionObserver to load/play video only when near/visible and pause when offscreen
+  const [isIntersecting, setIsIntersecting] = useState<boolean>(true);
+  useEffect(() => {
+    if (!bannerRef.current || typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const isVisible = entry.isIntersecting && entry.intersectionRatio >= 0.15;
+        setIsIntersecting(isVisible);
+      },
+      { threshold: [0, 0.15, 0.5, 1], rootMargin: '100px' }
+    );
+
+    observer.observe(bannerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Pause or play active video when intersecting status or user control changes
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (isIntersecting && isPlayingVideo) {
+      videoRef.current.play().catch(() => {
+        // Silently caught if browser policy restricts autoplay
+      });
+    } else {
+      videoRef.current.pause();
+    }
+  }, [isIntersecting, isPlayingVideo, currentIndex]);
+
+  // Derive active banners list (ignoring banners without any media)
   const activeBanners: PromotionalBannerItem[] = useMemo(() => {
     if (!promoBanner || !promoBanner.enabled) return [];
+
+    const hasMedia = (b: PromotionalBannerItem) =>
+      Boolean(b.mediaUrl || b.desktopVideoUrl || b.mobileVideoUrl || b.mediaPosterUrl);
 
     // If modern banners array is present
     if (promoBanner.banners && promoBanner.banners.length > 0) {
       const filtered = promoBanner.banners
         .filter(isBannerActive)
+        .filter(hasMedia)
         .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
       if (filtered.length > 0) {
@@ -244,7 +313,41 @@ export const PromoBanner: React.FC = () => {
 
   // Countdown timer hook/ticker
   const isVideoFailed = videoErrorMap[currentBanner.id] === true;
-  const isVideo = currentBanner.mediaType === 'video' && currentBanner.mediaUrl && !isVideoFailed;
+  const isVideoPermitted = !prefersReducedMotion && !isDataSaverMode && !isVideoFailed;
+
+  const hasMobileVideo = Boolean(currentBanner.mobileVideoUrl);
+  const hasDesktopVideo = Boolean(
+    currentBanner.desktopVideoUrl ||
+    (currentBanner.mediaType === 'video' && currentBanner.mediaUrl)
+  );
+
+  let activeVideoUrl: string | null = null;
+  let isDedicatedMobileVideo = false;
+
+  if (isVideoPermitted) {
+    if (isMobileViewport && hasMobileVideo) {
+      activeVideoUrl = currentBanner.mobileVideoUrl!;
+      isDedicatedMobileVideo = true;
+    } else if (hasDesktopVideo) {
+      activeVideoUrl = currentBanner.desktopVideoUrl || currentBanner.mediaUrl || null;
+    } else if (hasMobileVideo) {
+      activeVideoUrl = currentBanner.mobileVideoUrl!;
+      isDedicatedMobileVideo = true;
+    }
+  }
+
+  const isVideo = Boolean(activeVideoUrl);
+  const fallbackImageUrl = currentBanner.mediaUrl || currentBanner.mediaPosterUrl || '';
+  const showControls = Boolean(currentBanner.showVideoControls || currentBanner.videoControls);
+
+  // Object position for responsive cropping without stretching or distortion
+  const videoObjectPosition = isMobileViewport
+    ? (currentBanner.mobileVideoFocalPosition === 'left'
+        ? 'left center'
+        : currentBanner.mobileVideoFocalPosition === 'right'
+        ? 'right center'
+        : 'center center')
+    : 'center center';
 
   const currentRatio: '1:1' | '4:3' | '16:9' =
     currentBanner.aspectRatio === '4:3' || currentBanner.aspectRatio === '16:9' || currentBanner.aspectRatio === '1:1'
@@ -276,7 +379,9 @@ export const PromoBanner: React.FC = () => {
           /* OVERLAY HERO FULL VISUAL MODE */
           <div
             className={`relative w-full flex items-center overflow-hidden transition-all duration-300 ${
-              currentRatio === '16:9'
+              isMobileViewport && isDedicatedMobileVideo
+                ? 'min-h-[420px] sm:min-h-[460px]'
+                : currentRatio === '16:9'
                 ? 'min-h-[290px] sm:min-h-[380px] md:min-h-[440px]'
                 : currentRatio === '4:3'
                 ? 'min-h-[330px] sm:min-h-[410px] md:min-h-[460px]'
@@ -285,21 +390,24 @@ export const PromoBanner: React.FC = () => {
           >
             {/* Background Media */}
             <div className="absolute inset-0 w-full h-full">
-              {isVideo ? (
+              {isVideo && activeVideoUrl ? (
                 <video
-                  key={`video-${currentBanner.id}`}
-                  src={currentBanner.mediaUrl}
-                  poster={currentBanner.mediaPosterUrl || undefined}
+                  ref={videoRef}
+                  key={`video-overlay-${currentBanner.id}-${activeVideoUrl}`}
+                  src={activeVideoUrl}
+                  poster={currentBanner.mediaPosterUrl || fallbackImageUrl || undefined}
                   autoPlay={currentBanner.videoAutoplay !== false && isPlayingVideo}
                   muted={isMuted}
                   loop={currentBanner.videoLoop !== false}
                   playsInline
+                  preload="metadata"
                   onError={() => handleVideoError(currentBanner.id)}
+                  style={{ objectPosition: videoObjectPosition }}
                   className="w-full h-full object-cover"
                 />
-              ) : currentBanner.mediaUrl ? (
+              ) : fallbackImageUrl ? (
                 <img
-                  src={currentBanner.mediaUrl}
+                  src={fallbackImageUrl}
                   alt={currentBanner.mediaAltText || currentBanner.title}
                   loading={currentIndex === 0 ? 'eager' : 'lazy'}
                   fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
@@ -384,7 +492,7 @@ export const PromoBanner: React.FC = () => {
             </div>
 
             {/* Video Controls (Floating bottom right) */}
-            {isVideo && (
+            {isVideo && showControls && (
               <div className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-white text-xs border border-white/10">
                 <button
                   type="button"
@@ -487,7 +595,9 @@ export const PromoBanner: React.FC = () => {
             >
               <div
                 className={`relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-md bg-slate-900 border border-slate-200/60 dark:border-slate-800 group/media transition-all duration-300 ${
-                  currentRatio === '16:9'
+                  isMobileViewport && isDedicatedMobileVideo
+                    ? 'max-w-[320px] aspect-[4/5]'
+                    : currentRatio === '16:9'
                     ? 'max-w-[460px] sm:max-w-[520px] md:max-w-[580px] lg:max-w-[640px] aspect-[16/9]'
                     : currentRatio === '4:3'
                     ? 'max-w-[380px] sm:max-w-[440px] md:max-w-[480px] lg:max-w-[520px] aspect-[4/3]'
@@ -495,21 +605,24 @@ export const PromoBanner: React.FC = () => {
                 }`}
               >
                 {/* Media Container */}
-                {isVideo ? (
+                {isVideo && activeVideoUrl ? (
                   <video
-                    key={`video-${currentBanner.id}`}
-                    src={currentBanner.mediaUrl}
-                    poster={currentBanner.mediaPosterUrl || undefined}
+                    ref={videoRef}
+                    key={`video-split-${currentBanner.id}-${activeVideoUrl}`}
+                    src={activeVideoUrl}
+                    poster={currentBanner.mediaPosterUrl || fallbackImageUrl || undefined}
                     autoPlay={currentBanner.videoAutoplay !== false && isPlayingVideo}
                     muted={isMuted}
                     loop={currentBanner.videoLoop !== false}
                     playsInline
+                    preload="metadata"
                     onError={() => handleVideoError(currentBanner.id)}
+                    style={{ objectPosition: videoObjectPosition }}
                     className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
                   />
-                ) : currentBanner.mediaUrl ? (
+                ) : fallbackImageUrl ? (
                   <img
-                    src={currentBanner.mediaUrl}
+                    src={fallbackImageUrl}
                     alt={currentBanner.mediaAltText || currentBanner.title}
                     loading={currentIndex === 0 ? 'eager' : 'lazy'}
                     fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
@@ -531,7 +644,7 @@ export const PromoBanner: React.FC = () => {
                 )}
 
                 {/* Video controls */}
-                {isVideo && (
+                {isVideo && showControls && (
                   <div className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full text-white text-xs border border-white/10 z-10">
                     <button
                       type="button"

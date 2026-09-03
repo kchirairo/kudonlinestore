@@ -262,6 +262,30 @@ export const AccountPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [resendCooldown]);
 
+  // Check for OAuth error returned in URL query or hash params
+  useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+      const hashParams = new URLSearchParams(hash);
+      const errorDesc =
+        searchParams.get('error_description') ||
+        hashParams.get('error_description') ||
+        searchParams.get('error') ||
+        hashParams.get('error');
+
+      if (errorDesc) {
+        const decoded = decodeURIComponent(errorDesc.replace(/\+/g, ' '));
+        setLoginError(decoded);
+        showToast(decoded, 'error');
+        // Clean up URL parameters cleanly
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
   // Google OAuth Handler
   const handleGoogleSignIn = async () => {
     if (isGoogleLoading || isSubmitting || isResendingConfirmation) return;

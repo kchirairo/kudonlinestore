@@ -99,8 +99,8 @@ export async function convertImageToWebP(
   file: File,
   options: { maxWidth?: number; quality?: number } = {}
 ): Promise<File> {
-  // If already a webp file, return as is
-  if (file.type === 'image/webp') {
+  // If already a webp file or is a video file, return as is
+  if (file.type === 'image/webp' || file.type.startsWith('video/')) {
     return file;
   }
 

@@ -1,4 +1,65 @@
-import { PromotionalBannerItem, BannerStatusType, BannerBadgeType, BannerAspectRatio } from '../types';
+import { PromotionalBannerItem, BannerStatusType, BannerBadgeType, BannerAspectRatio, BannerVideoMetadata } from '../types';
+
+/**
+ * Promotional Banner Video Specifications
+ */
+export interface VideoRequirementSpec {
+  target: 'desktop' | 'mobile';
+  label: string;
+  recommendedResolution: string;
+  targetWidth: number;
+  targetHeight: number;
+  aspectRatio: string;
+  maxSizeBytes: number; // 25 MB
+  maxSizeMB: number; // 25
+  maxDurationSec: number; // 30
+  formats: string[];
+  formatExtensions: string[];
+  maxFps: number; // 30
+  recommendedBitrate: string; // '2–5 Mbps'
+  notes: string;
+}
+
+export const VIDEO_REQUIREMENTS: Record<'desktop' | 'mobile', VideoRequirementSpec> = {
+  desktop: {
+    target: 'desktop',
+    label: 'Desktop Video',
+    recommendedResolution: '1920 × 1080 px (16:9)',
+    targetWidth: 1920,
+    targetHeight: 1080,
+    aspectRatio: '16:9',
+    maxSizeBytes: 25 * 1024 * 1024,
+    maxSizeMB: 25,
+    maxDurationSec: 30,
+    formats: ['video/mp4', 'video/webm'],
+    formatExtensions: ['.mp4', '.webm'],
+    maxFps: 30,
+    recommendedBitrate: '2–5 Mbps',
+    notes: 'Landscape widescreen video for desktop & large screen displays.',
+  },
+  mobile: {
+    target: 'mobile',
+    label: 'Mobile Video',
+    recommendedResolution: '1080 × 1350 px (4:5)',
+    targetWidth: 1080,
+    targetHeight: 1350,
+    aspectRatio: '4:5',
+    maxSizeBytes: 25 * 1024 * 1024,
+    maxSizeMB: 25,
+    maxDurationSec: 30,
+    formats: ['video/mp4', 'video/webm'],
+    formatExtensions: ['.mp4', '.webm'],
+    maxFps: 30,
+    recommendedBitrate: '2–5 Mbps',
+    notes: 'Vertical portrait 4:5 video optimized for smartphones. If omitted, desktop video will be auto-cropped with selected focal position.',
+  },
+};
+
+export interface VideoValidationOutcome {
+  isValid: boolean;
+  error?: string;
+  metadata?: BannerVideoMetadata;
+}
 
 /**
  * Aspect Ratio Presets configuration
@@ -112,6 +173,292 @@ export const BADGE_PRESETS: { type: BannerBadgeType; label: string; bg: string; 
   { type: 'DISCOUNT', label: 'SPECIAL DISCOUNT 🎁', bg: '#10b981', text: '#ffffff' },
   { type: 'CUSTOM', label: 'CUSTOM BADGE', bg: '#ff6452', text: '#ffffff' },
 ];
+
+/**
+ * Formats byte size to human readable string (e.g. "12.4 MB")
+ */
+export function formatBytes(bytes?: number, decimals: number = 1): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+/**
+ * Formats seconds into MM:SS or SS.Ss
+ */
+export function formatVideoDuration(seconds?: number): string {
+  if (typeof seconds !== 'number' || isNaN(seconds) || seconds <= 0) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const decimal = Math.floor((seconds % 1) * 10);
+  if (mins > 0) {
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${secs}.${decimal}s`;
+}
+
+/**
+ * Measures video frame rate (FPS) using HTMLVideoElement.requestVideoFrameCallback
+ * if supported by browser, falling back safely if not available.
+ */
+function measureVideoFps(video: HTMLVideoElement): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    if (typeof (video as any).requestVideoFrameCallback !== 'function') {
+      return resolve(undefined);
+    }
+
+    let frameCount = 0;
+    let startTime = 0;
+    let timer: any = null;
+
+    const onFrame = (now: DOMHighResTimeStamp) => {
+      frameCount++;
+      if (frameCount === 1) {
+        startTime = now;
+        (video as any).requestVideoFrameCallback(onFrame);
+      } else if (frameCount < 12 && now - startTime < 350) {
+        (video as any).requestVideoFrameCallback(onFrame);
+      } else {
+        clearTimeout(timer);
+        video.pause();
+        const elapsedSec = (now - startTime) / 1000;
+        const fps = elapsedSec > 0 ? (frameCount - 1) / elapsedSec : undefined;
+        resolve(fps);
+      }
+    };
+
+    timer = setTimeout(() => {
+      video.pause();
+      resolve(undefined);
+    }, 600);
+
+    video
+      .play()
+      .then(() => {
+        (video as any).requestVideoFrameCallback(onFrame);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(undefined);
+      });
+  });
+}
+
+/**
+ * Validates a promotional banner video before upload against strict criteria:
+ * - Desktop: 1920×1080 px, 16:9
+ * - Mobile: 1080×1350 px, 4:5
+ * - Max file size: 25 MB
+ * - Max duration: 30 seconds
+ * - Formats: MP4 (H.264 preferred) or WebM
+ * - Max resolution: 1920×1080
+ * - Max FPS: 30
+ * - Recommended bitrate: 2–5 Mbps
+ */
+export async function validateBannerVideoFile(
+  file: File,
+  target: 'desktop' | 'mobile' = 'desktop'
+): Promise<VideoValidationOutcome> {
+  if (!file) {
+    return { isValid: false, error: 'No video file selected.' };
+  }
+
+  const spec = VIDEO_REQUIREMENTS[target];
+
+  // 1. Format validation
+  const lowerName = file.name.toLowerCase();
+  const isMp4 = file.type === 'video/mp4' || lowerName.endsWith('.mp4');
+  const isWebm = file.type === 'video/webm' || lowerName.endsWith('.webm');
+
+  if (!isMp4 && !isWebm) {
+    return {
+      isValid: false,
+      error: `Unsupported format "${file.type || file.name}". Only MP4 (H.264 preferred) and WebM formats are supported.`,
+    };
+  }
+
+  // 2. File size validation (Max 25 MB)
+  if (file.size > spec.maxSizeBytes) {
+    const uploadedMb = (file.size / (1024 * 1024)).toFixed(1);
+    return {
+      isValid: false,
+      error: `File size exceeds limit: ${uploadedMb} MB (maximum allowed is ${spec.maxSizeMB} MB). Please compress the video.`,
+    };
+  }
+
+  // If outside browser environment, return valid with file size
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return {
+      isValid: true,
+      metadata: {
+        fileSize: file.size,
+        format: file.type || (isMp4 ? 'video/mp4' : 'video/webm'),
+      },
+    };
+  }
+
+  // 3. Media decoding and metadata validation
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+
+    const objectUrl = URL.createObjectURL(file);
+    let isResolved = false;
+
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    // Timeout safety net (5 seconds)
+    const timeoutTimer = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
+        cleanup();
+        resolve({
+          isValid: false,
+          error: 'Video inspection timed out. The file may be corrupt or encoded with an unsupported codec.',
+        });
+      }
+    }, 5000);
+
+    video.onerror = () => {
+      if (isResolved) return;
+      isResolved = true;
+      clearTimeout(timeoutTimer);
+      cleanup();
+      resolve({
+        isValid: false,
+        error: 'Failed to decode video. The file may be corrupt or encoded in an unsupported codec (H.264/WebM recommended).',
+      });
+    };
+
+    video.onloadedmetadata = async () => {
+      const duration = video.duration;
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      // Validate duration (Max 30s)
+      if (typeof duration === 'number' && !isNaN(duration) && duration > spec.maxDurationSec + 0.5) {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(timeoutTimer);
+        cleanup();
+        return resolve({
+          isValid: false,
+          error: `Video duration (${duration.toFixed(1)}s) exceeds the maximum allowed ${spec.maxDurationSec} seconds.`,
+        });
+      }
+
+      // Validate resolution
+      if (!width || !height) {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(timeoutTimer);
+        cleanup();
+        return resolve({
+          isValid: false,
+          error: 'Could not detect video resolution dimensions.',
+        });
+      }
+
+      if (target === 'desktop') {
+        // Desktop max: 1920x1080 (16:9)
+        if (width > 1920 || height > 1080) {
+          if (isResolved) return;
+          isResolved = true;
+          clearTimeout(timeoutTimer);
+          cleanup();
+          return resolve({
+            isValid: false,
+            error: `Resolution exceeds maximum allowed: ${width}×${height} px (Desktop video maximum is 1920×1080 px, 16:9).`,
+          });
+        }
+      } else {
+        // Mobile max: 1080x1350 (4:5)
+        if (width > 1080 || height > 1350) {
+          if (isResolved) return;
+          isResolved = true;
+          clearTimeout(timeoutTimer);
+          cleanup();
+          return resolve({
+            isValid: false,
+            error: `Resolution exceeds maximum allowed: ${width}×${height} px (Mobile video maximum is 1080×1350 px, 4:5).`,
+          });
+        }
+      }
+
+      // Check FPS
+      let measuredFps: number | undefined;
+      try {
+        measuredFps = await measureVideoFps(video);
+      } catch {
+        measuredFps = undefined;
+      }
+
+      if (measuredFps && measuredFps > 32) {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(timeoutTimer);
+        cleanup();
+        return resolve({
+          isValid: false,
+          error: `Frame rate exceeds limit: ~${Math.round(measuredFps)} FPS (maximum allowed is 30 FPS). Please re-encode at 30 FPS.`,
+        });
+      }
+
+      // Calculate bitrate in Mbps
+      const bitrateMbps =
+        duration > 0 ? Number(((file.size * 8) / (duration * 1000000)).toFixed(2)) : undefined;
+
+      const metadata: BannerVideoMetadata = {
+        duration: Number((duration || 0).toFixed(1)),
+        durationSeconds: Number((duration || 0).toFixed(1)),
+        width,
+        height,
+        resolution: `${width}×${height}`,
+        fps: measuredFps ? Math.round(measuredFps) : undefined,
+        fileSize: file.size,
+        sizeBytes: file.size,
+        format: file.type || (isMp4 ? 'video/mp4' : 'video/webm'),
+        bitrateMbps,
+        aspectRatio: `${(width / height).toFixed(2)}:1`,
+      };
+
+      if (isResolved) return;
+      isResolved = true;
+      clearTimeout(timeoutTimer);
+      cleanup();
+      resolve({
+        isValid: true,
+        metadata,
+      });
+    };
+
+    video.src = objectUrl;
+  });
+}
+
+/**
+ * Converts a Base64/DataURL string into an HTML5 File object for uploading.
+ */
+export function dataUrlToFile(dataUrl: string, fileName: string = 'poster.webp'): File {
+  const arr = dataUrl.split(',');
+  const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/webp';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new File([u8arr], fileName, { type: mime, lastModified: Date.now() });
+}
 
 /**
  * Validates promotional media files (size & format).
