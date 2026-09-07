@@ -52,8 +52,8 @@ export const CustomerReferralBanner: React.FC<CustomerReferralBannerProps> = ({
 
   const effective = getEffectiveCustomerReferralSettings(userRewards, globalConfig);
 
-  // If program is disabled or invite is hidden by admin or user is banned, hide banner
-  if (isLoaded && (!effective.isProgramEnabled || effective.hideInvite || effective.isBanned)) {
+  // If program is disabled or customer has referral_rewards_enabled == false or invite is hidden by admin or user is banned, hide banner
+  if (isLoaded && (!effective.isProgramEnabled || !effective.referral_rewards_enabled || effective.hideInvite || effective.isBanned)) {
     return null;
   }
 

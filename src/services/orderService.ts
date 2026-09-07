@@ -72,6 +72,13 @@ export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Ord
     payment_method: row.payment_method || 'Online Payment',
     shipping_address: shippingAddress,
     items: parsedItems,
+    confirmation_email_sent: Boolean(row.confirmation_email_sent),
+    confirmation_email_sent_at: row.confirmation_email_sent_at || undefined,
+    confirmation_email_error: row.confirmation_email_error || undefined,
+    confirmation_email_resend_count: Number(row.confirmation_email_resend_count || 0),
+    confirmation_email_last_attempt_at: row.confirmation_email_last_attempt_at || undefined,
+    yoco_checkout_id: row.yoco_checkout_id || undefined,
+    paid_at: row.paid_at || undefined,
   };
 }
 
@@ -135,6 +142,39 @@ export const orderService = {
     return {
       redirectUrl: resRedirectUrl,
       orderId: createdOrder.id,
+    };
+  },
+
+  /**
+   * Helper to invoke the Yoco checkout Edge Function for an existing pending order (e.g. retrying payment)
+   */
+  async createYocoCheckoutForExistingOrder(
+    orderId: string
+  ): Promise<{ redirectUrl: string; orderId: string }> {
+    if (!isSupabaseConfigured() || !supabase) {
+      throw new Error('Supabase client is not configured.');
+    }
+
+    const { data: fnData, error: fnError } = await supabase.functions.invoke('create-yoco-checkout', {
+      body: {
+        orderId,
+      },
+    });
+
+    if (fnError) {
+      console.error('[YOCO CHECKOUT] Edge function invocation error:', fnError);
+      throw new Error(fnError.message || 'Failed to connect to Yoco checkout Edge Function.');
+    }
+
+    if (!fnData || (!fnData.redirectUrl && !fnData.success)) {
+      const errMsg = fnData?.error || 'Yoco Checkout Error: orderId parameter is required or invalid response.';
+      console.error('[YOCO CHECKOUT] Edge Function returned error:', errMsg);
+      throw new Error(errMsg);
+    }
+
+    return {
+      redirectUrl: fnData.redirectUrl,
+      orderId,
     };
   },
 
@@ -413,6 +453,16 @@ export const orderService = {
     paymentStatus: PaymentStatus,
     orderStatus?: string
   ): Promise<boolean> {
+    // CRITICAL SECURITY ENFORCEMENT:
+    // The frontend must NEVER directly set an order to "paid" or "completed".
+    // Payment status must ONLY be set authoritatively via Yoco webhook or server-side Edge Function.
+    if ((paymentStatus as string).toLowerCase() === 'paid' || (paymentStatus as string).toLowerCase() === 'completed') {
+      console.warn(
+        `[SECURITY GUARD] Blocked direct client-side update of order ${orderId} to "${paymentStatus}". Only server-side Yoco webhook or verified Edge Function can mark orders as paid.`
+      );
+      return false;
+    }
+
     // Update local storage orders
     const localOrders = orderService.getLocalOrders();
     const idx = localOrders.findIndex((o) => o.id === orderId);
@@ -442,6 +492,43 @@ export const orderService = {
     }
 
     return true;
+  },
+
+  /**
+   * Verify server-side payment and dispatch purchase confirmation email idempotently
+   */
+  async verifyAndSendOrderConfirmation(orderId: string): Promise<{
+    success: boolean;
+    alreadySent?: boolean;
+    message?: string;
+    error?: string;
+  }> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.functions.invoke('send-order-confirmation', {
+          body: {
+            orderId,
+            isResend: false,
+          },
+        });
+
+        if (error) {
+          console.warn('[ORDER SERVICE] Edge function verify confirmation warning:', error);
+          return { success: false, error: error.message };
+        }
+
+        return {
+          success: Boolean(data?.success),
+          alreadySent: Boolean(data?.alreadySent),
+          message: data?.message,
+          error: data?.error,
+        };
+      } catch (err: any) {
+        console.warn('[ORDER SERVICE] verifyAndSendOrderConfirmation exception:', err);
+        return { success: false, error: err?.message };
+      }
+    }
+    return { success: true, message: 'Local mode confirmation check completed' };
   },
 };
 

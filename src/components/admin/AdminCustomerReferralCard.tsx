@@ -21,6 +21,8 @@ import {
   ChevronUp,
   Snowflake,
   Mail,
+  PauseCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { Customer, UserReferralRewardsState, ReferralCommissionRecord } from '../../types';
 import { STORE_CONFIG } from '../../constants/config';
@@ -101,6 +103,15 @@ export const AdminCustomerReferralCard: React.FC<AdminCustomerReferralCardProps>
   const referralBalance = customer.referralBalance ?? 0;
   const totalEarned = customer.totalReferralEarned ?? 0;
   const referralCount = customer.referralCount ?? 0;
+
+  // Referral Rewards & Wallet Activation Status (admin-only controlled)
+  const isReferralRewardsEnabled = Boolean(
+    customer.referral_rewards_enabled ??
+    (customer as any).referralRewardsEnabled ??
+    false
+  );
+  const [showDeactivationConfirm, setShowDeactivationConfirm] = useState<boolean>(false);
+  const [isTogglingActivation, setIsTogglingActivation] = useState<boolean>(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
@@ -250,6 +261,43 @@ export const AdminCustomerReferralCard: React.FC<AdminCustomerReferralCardProps>
     }
   };
 
+  /**
+   * Admin-Only Referral Rewards & Wallet Activation RPC execution
+   */
+  const handleToggleActivation = async (newVal: boolean) => {
+    if (!newVal) {
+      setShowDeactivationConfirm(true);
+      return;
+    }
+    await executeActivationRpc(true);
+  };
+
+  const executeActivationRpc = async (newVal: boolean) => {
+    try {
+      setIsTogglingActivation(true);
+      const res = await adminService.adminSetReferralRewardsEnabled(customer.id, newVal);
+      if (res.success) {
+        onCustomerUpdated({
+          ...customer,
+          referral_rewards_enabled: newVal,
+          referralRewardsEnabled: newVal,
+        });
+        showToast(
+          newVal
+            ? 'Referral Rewards & Store Wallet successfully activated for this customer.'
+            : 'Referral Rewards & Store Wallet deactivated for this customer.'
+        );
+        setShowDeactivationConfirm(false);
+      } else {
+        showToast(res.error || 'Failed to update referral rewards activation status', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Error updating status', 'error');
+    } finally {
+      setIsTogglingActivation(false);
+    }
+  };
+
   // Handle Balance Adjustments from Modal
   const handleSaveAdjustment = async (adj: {
     amount: number;
@@ -383,6 +431,100 @@ export const AdminCustomerReferralCard: React.FC<AdminCustomerReferralCardProps>
           <span>{notification.message}</span>
         </div>
       )}
+
+      {/* ADMIN CUSTOMER MANAGEMENT: REFERRAL REWARDS & WALLET ACTIVATION */}
+      <div
+        id="admin-customer-referral-activation-box"
+        className={`p-5 sm:p-6 rounded-3xl border transition-all ${
+          isReferralRewardsEnabled
+            ? 'bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border-emerald-300 dark:border-emerald-800'
+            : 'bg-gradient-to-r from-slate-100 via-slate-50 to-transparent dark:from-slate-800/60 dark:via-slate-800/30 border-slate-200 dark:border-slate-700'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Admin Customer Management
+              </span>
+              <span className="text-slate-300 dark:text-slate-600">•</span>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Customer: <strong className="text-slate-900 dark:text-white">{customer.fullName || 'Registered User'}</strong>
+              </span>
+              <span className="text-xs text-slate-500 font-mono">({customer.email})</span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                  customer.role === 'admin'
+                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                    : 'bg-slate-200 text-slate-700 border border-slate-300'
+                }`}
+              >
+                Role: {customer.role || 'customer'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <h4 className="text-base font-black text-slate-950 dark:text-white">
+                Referral Rewards &amp; Store Wallet:
+              </h4>
+              {isReferralRewardsEnabled ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>ACTIVE</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-600">
+                  <span>DISABLED</span>
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+              {isReferralRewardsEnabled
+                ? 'This customer has active access to referral rewards, invitation links, commission allocations, and digital store wallet checkout deductions.'
+                : 'Referral rewards & store wallet are currently disabled for this customer. They cannot view referral metrics or redeem wallet balances. All historical earnings and referral logs remain preserved.'}
+            </p>
+          </div>
+
+          <div className="shrink-0 self-end sm:self-center">
+            {isReferralRewardsEnabled ? (
+              <button
+                id="admin-deactivate-referral-rewards-btn"
+                type="button"
+                disabled={isTogglingActivation || isUpdating}
+                onClick={() => handleToggleActivation(false)}
+                className="px-5 py-2.5 rounded-2xl font-black text-xs sm:text-sm bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition-all shadow-xs cursor-pointer flex items-center gap-2"
+              >
+                {isTogglingActivation ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <PauseCircle className="w-4 h-4 text-amber-600" />
+                    <span>Deactivate Rewards &amp; Wallet</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                id="admin-activate-referral-rewards-btn"
+                type="button"
+                disabled={isTogglingActivation || isUpdating}
+                onClick={() => handleToggleActivation(true)}
+                className="px-5 py-2.5 rounded-2xl font-black text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20 shadow-xs transition-all cursor-pointer flex items-center gap-2"
+              >
+                {isTogglingActivation ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Activate Rewards &amp; Wallet</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -801,6 +943,62 @@ export const AdminCustomerReferralCard: React.FC<AdminCustomerReferralCardProps>
         rewardsState={currentRewardsState}
         onSaveAdjustment={handleSaveAdjustment}
       />
+
+      {/* Referral Rewards & Wallet Deactivation Confirmation Modal */}
+      {showDeactivationConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 max-w-md w-full border border-gray-100 dark:border-slate-700 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+              <div className="w-11 h-11 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 dark:text-white">
+                  Deactivate Referral Rewards &amp; Wallet?
+                </h3>
+                <p className="text-xs text-gray-400 font-medium">Customer confirmation required</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-600 dark:text-slate-300 space-y-2 leading-relaxed">
+              <p>
+                Are you sure you want to deactivate Referral Rewards &amp; the Store Wallet for{' '}
+                <span className="font-bold text-gray-900 dark:text-white">
+                  {customer.fullName || 'this customer'}
+                </span>{' '}
+                (<span className="font-mono text-gray-500">{customer.email}</span>)?
+              </p>
+              <div className="p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-300">
+                <strong>Safety Notice:</strong> The customer will immediately stop seeing referral links, wallet credit redemption, and invitation rewards on their dashboard. Existing wallet balance ({STORE_CONFIG.STORE_CURRENCY}{referralBalance.toLocaleString()}) and referral history are 100% preserved.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={isTogglingActivation}
+                onClick={() => setShowDeactivationConfirm(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isTogglingActivation}
+                onClick={() => executeActivationRpc(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-black bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+              >
+                {isTogglingActivation ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <PauseCircle className="w-3.5 h-3.5" />
+                )}
+                <span>Confirm Deactivation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

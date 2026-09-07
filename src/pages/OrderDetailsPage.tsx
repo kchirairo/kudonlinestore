@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Package, MapPin, CreditCard, Clock, CheckCircle2, ShoppingBag, FileDown, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Package, MapPin, CreditCard, Clock, CheckCircle2, ShoppingBag, FileDown, RefreshCw, Mail, AlertCircle } from 'lucide-react';
 import { orderService } from '../services/orderService';
 import { useShop } from '../context/ShopContext';
 import { Order } from '../types';
@@ -24,7 +24,8 @@ export const OrderDetailsPage: React.FC = () => {
   const [isPaymentJustSuccess, setIsPaymentJustSuccess] = useState<boolean>(false);
   const [isGeneratingInvoice, setIsGeneratingInvoice] = useState<boolean>(false);
   const [allowCustomerDownload, setAllowCustomerDownload] = useState<boolean>(true);
-  const paymentHandledRef = useRef<boolean>(false);
+  const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
 
   const handleDownloadInvoice = async () => {
     if (!order) return;
@@ -40,47 +41,117 @@ export const OrderDetailsPage: React.FC = () => {
     }
   };
 
+  const handleRetryPayment = async () => {
+    if (!order) return;
+    setIsRetryingPayment(true);
+    try {
+      showToast('Connecting to Yoco Hosted Checkout...', 'info');
+      const { redirectUrl } = await orderService.createYocoCheckoutForExistingOrder(order.id);
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
+      } else {
+        throw new Error('No redirect URL returned from Yoco checkout.');
+      }
+    } catch (err: any) {
+      console.error('[Retry Payment] Error:', err);
+      showToast(err.message || 'Failed to initialize payment. Please try again.', 'error');
+      setIsRetryingPayment(false);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
     let isMounted = true;
+    let isPollingActive = true;
     setIsLoading(true);
 
-    const isPaymentSuccess =
+    const isSuccessRedirect =
       searchParams.get('payment') === 'success' ||
       searchParams.get('status') === 'success';
 
-    const processedKey = `kud_order_paid_${id}`;
-    const alreadyProcessed = sessionStorage.getItem(processedKey) === 'true';
-
-    if (isPaymentSuccess && !paymentHandledRef.current && !alreadyProcessed) {
-      paymentHandledRef.current = true;
-      sessionStorage.setItem(processedKey, 'true');
-      setIsPaymentJustSuccess(true);
-      clearCart();
-      showToast('Payment successful! Your order has been placed.', 'success');
-
-      // Safely remove query parameters from URL without reloading
+    async function processOrderVerification() {
       try {
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, '', cleanUrl);
-      } catch {
-        // Safe fallback
-      }
-    } else if (isPaymentSuccess || alreadyProcessed) {
-      setIsPaymentJustSuccess(true);
-    }
+        // 1. Authoritative source of truth: Load order directly from Supabase database
+        let currentOrder = await orderService.getOrderById(id!);
+        if (!isMounted) return;
 
-    orderService.getOrderById(id).then((res) => {
-      if (isMounted) {
-        setOrder(res);
+        let isPaidInDb =
+          currentOrder?.payment_status?.toLowerCase() === 'paid' ||
+          currentOrder?.payment_status?.toLowerCase() === 'completed';
+
+        // 2. If customer arrived from a payment return and DB is not yet marked paid,
+        // trigger server-side verification with Yoco API via Edge Function
+        if (isSuccessRedirect && !isPaidInDb && currentOrder) {
+          try {
+            console.log('[OrderDetailsPage] Verifying payment status authoritatively with server...');
+            await orderService.verifyAndSendOrderConfirmation(id!);
+            currentOrder = await orderService.getOrderById(id!);
+            isPaidInDb =
+              currentOrder?.payment_status?.toLowerCase() === 'paid' ||
+              currentOrder?.payment_status?.toLowerCase() === 'completed';
+          } catch (verifyErr) {
+            console.warn('[OrderDetailsPage] Server verification note:', verifyErr);
+          }
+
+          // If still awaiting webhook confirmation, poll briefly (up to 3 attempts, 1.5s interval)
+          let pollCount = 0;
+          while (!isPaidInDb && pollCount < 3 && isPollingActive && isMounted) {
+            pollCount++;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            if (!isMounted || !isPollingActive) break;
+            currentOrder = await orderService.getOrderById(id!);
+            isPaidInDb =
+              currentOrder?.payment_status?.toLowerCase() === 'paid' ||
+              currentOrder?.payment_status?.toLowerCase() === 'completed';
+          }
+        }
+
+        if (!isMounted) return;
+        setOrder(currentOrder);
         setIsLoading(false);
 
-        // Record sale in marketing analytics & pixel events ONLY after payment confirmation
-        if (res && (isPaymentSuccess || alreadyProcessed || res.payment_status === 'paid')) {
-          marketingService.trackPurchase(res, user);
+        // 3. CRITICAL SECURITY RULE:
+        // Clear cart and show success page ONLY IF the order is confirmed as 'paid' by the server!
+        if (isPaidInDb && currentOrder) {
+          setIsPaymentJustSuccess(true);
+
+          // Clear customer's cart idempotently
+          const cartClearedKey = `kud_cart_cleared_${id}`;
+          if (sessionStorage.getItem(cartClearedKey) !== 'true') {
+            sessionStorage.setItem(cartClearedKey, 'true');
+            clearCart();
+            sessionStorage.removeItem('kud_pending_checkout_order_id');
+            showToast('Payment verified successfully! Thank you for shopping with KUD Store.', 'success');
+          }
+
+          // Track purchase in analytics idempotently
+          const trackedKey = `kud_purchase_tracked_${id}`;
+          if (sessionStorage.getItem(trackedKey) !== 'true') {
+            sessionStorage.setItem(trackedKey, 'true');
+            marketingService.trackPurchase(currentOrder, user);
+          }
+
+          // Clean query parameters from URL safely
+          try {
+            window.history.replaceState({}, '', window.location.pathname);
+          } catch {
+            // Safe fallback
+          }
+        } else if (isSuccessRedirect && !isPaidInDb) {
+          // Manually opening the success URL without a confirmed YOCO payment must NOT mark the order paid
+          // and must NOT clear the cart (TEST 5).
+          console.warn('[SECURITY] Payment success URL visited without server-verified paid status. Cart preserved.');
+          setVerificationNotice(
+            'Payment verification has not been confirmed by Yoco. Your cart items remain saved, and the order is pending.'
+          );
         }
+      } catch (err: any) {
+        console.error('[OrderDetailsPage] Failed to fetch or verify order:', err);
+        if (isMounted) setIsLoading(false);
       }
-    });
+    }
+
+    processOrderVerification();
 
     adminService.getInvoiceSettings().then((settings) => {
       if (isMounted) {
@@ -92,8 +163,9 @@ export const OrderDetailsPage: React.FC = () => {
 
     return () => {
       isMounted = false;
+      isPollingActive = false;
     };
-  }, [id]);
+  }, [id, searchParams, clearCart, showToast, user]);
 
   if (isLoading) {
     return (
@@ -197,7 +269,10 @@ export const OrderDetailsPage: React.FC = () => {
             <CheckCircle2 className="w-7 h-7 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <div>
               <p className="font-extrabold text-base text-emerald-950 dark:text-emerald-100">Payment Successful & Order Confirmed!</p>
-              <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">Thank you for your purchase. Your payment was authorized and your order is now being processed.</p>
+              <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+                Thank you for your purchase. Your payment was verified and a confirmation receipt has been dispatched to{' '}
+                <span className="font-bold underline">{order?.shipping_address?.email || order?.customer_email || 'your email'}</span>.
+              </p>
             </div>
           </div>
           <button
@@ -207,6 +282,53 @@ export const OrderDetailsPage: React.FC = () => {
             <ShoppingBag className="w-4 h-4" />
             <span>Continue Shopping</span>
           </button>
+        </div>
+      )}
+
+      {/* Unpaid / Pending Payment Card with Retry Option */}
+      {!isPaymentJustSuccess && order.payment_status !== 'paid' && order.payment_status !== 'completed' && (
+        <div className="mb-6 p-5 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-sm font-semibold flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-7 h-7 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div>
+              <p className="font-extrabold text-base text-amber-950 dark:text-amber-100">
+                {order.payment_status === 'payment_failed' || order.payment_status === 'failed'
+                  ? 'Payment Attempt Incomplete'
+                  : 'Payment Awaiting Confirmation'}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                {verificationNotice ||
+                  'This order is not yet marked as paid. Your cart items remain saved so you can complete payment anytime.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+            <button
+              type="button"
+              onClick={handleRetryPayment}
+              disabled={isRetryingPayment}
+              className="w-full sm:w-auto px-5 py-2.5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-extrabold rounded-2xl text-xs transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isRetryingPayment ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <>
+                  <CreditCard className="w-4 h-4" />
+                  <span>Pay with Yoco</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/checkout')}
+              className="w-full sm:w-auto px-4 py-2.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 font-bold rounded-2xl text-xs transition-all hover:bg-amber-100 dark:hover:bg-slate-700 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>Return to Checkout</span>
+            </button>
+          </div>
         </div>
       )}
 

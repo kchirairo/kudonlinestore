@@ -133,7 +133,8 @@ export const DEFAULT_COUPONS: Coupon[] = [
 ];
 
 export const DEFAULT_PROMO_BANNER: PromoBannerConfig = {
-  enabled: true,
+  enabled: false,
+  promotional_banner_enabled: false,
   layout: 'square-showcase',
   headline: '',
   subtext: '',

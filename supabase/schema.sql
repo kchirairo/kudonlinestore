@@ -117,9 +117,36 @@ CREATE TABLE IF NOT EXISTS public.orders (
     payment_id TEXT,
     tracking_number TEXT,
     notes TEXT,
+    confirmation_email_sent BOOLEAN DEFAULT false,
+    confirmation_email_sent_at TIMESTAMPTZ,
+    confirmation_email_error TEXT,
+    confirmation_email_resend_count INTEGER DEFAULT 0,
+    confirmation_email_last_attempt_at TIMESTAMPTZ,
+    payment_provider TEXT DEFAULT 'yoco',
+    payment_reference TEXT,
+    yoco_checkout_id TEXT,
+    paid_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure orders table receives payment tracking and confirmation email columns safely
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_provider TEXT DEFAULT 'yoco';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS yoco_checkout_id TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS confirmation_email_sent BOOLEAN DEFAULT false;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS confirmation_email_sent_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS confirmation_email_error TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS confirmation_email_resend_count INTEGER DEFAULT 0;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS confirmation_email_last_attempt_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_orders_payment_reference ON public.orders(payment_reference);
+CREATE INDEX IF NOT EXISTS idx_orders_payment_provider ON public.orders(payment_provider);
+CREATE INDEX IF NOT EXISTS idx_orders_yoco_checkout_id ON public.orders(yoco_checkout_id);
+CREATE INDEX IF NOT EXISTS idx_orders_paid_at ON public.orders(paid_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_confirmation_email_sent ON public.orders(confirmation_email_sent);
+CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders(payment_status);
 
 -- 5. SETTINGS TABLE (Store settings, delivery fees, contact details, payment gateways, branding, promo banners)
 CREATE TABLE IF NOT EXISTS public.settings (
@@ -251,3 +278,98 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
+
+-- 10. CUSTOMER REFERRAL REWARDS & WALLET ACTIVATION CONTROL
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS referral_rewards_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_profiles_referral_rewards_enabled ON public.profiles(referral_rewards_enabled);
+
+-- Secure Admin RPC to toggle customer referral rewards & wallet
+CREATE OR REPLACE FUNCTION public.admin_set_referral_rewards_enabled(
+    target_user_id UUID,
+    enabled BOOLEAN
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_role TEXT;
+  v_is_admin BOOLEAN := FALSE;
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    v_is_admin := TRUE;
+  ELSE
+    IF EXISTS (
+      SELECT 1 FROM pg_proc WHERE proname = 'is_admin' AND pronamespace = 'public'::regnamespace
+    ) THEN
+      BEGIN
+        EXECUTE 'SELECT public.is_admin()' INTO v_is_admin;
+      EXCEPTION WHEN OTHERS THEN
+        v_is_admin := FALSE;
+      END;
+    END IF;
+
+    IF NOT v_is_admin AND auth.uid() IS NOT NULL THEN
+      SELECT role INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+      IF v_caller_role = 'admin' THEN
+        v_is_admin := TRUE;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_admin THEN
+    RAISE EXCEPTION 'Access denied. Only store administrators can modify referral and wallet activation status.';
+  END IF;
+
+  UPDATE public.profiles
+  SET 
+    referral_rewards_enabled = enabled,
+    referral_rewards = jsonb_set(
+      COALESCE(referral_rewards, '{}'::jsonb),
+      '{referral_rewards_enabled}',
+      to_jsonb(enabled)
+    ),
+    updated_at = timezone('utc'::text, now())
+  WHERE id = target_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Customer profile not found for target_user_id: %', target_user_id;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'target_user_id', target_user_id,
+    'referral_rewards_enabled', enabled,
+    'updated_at', timezone('utc'::text, now())
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_set_referral_rewards_enabled(UUID, BOOLEAN) TO authenticated, service_role;
+
+-- Tamper-prevention trigger on public.profiles
+CREATE OR REPLACE FUNCTION public.prevent_customer_referral_rewards_enabled_modification()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  IF NEW.referral_rewards_enabled IS DISTINCT FROM OLD.referral_rewards_enabled THEN
+    IF auth.role() != 'service_role' THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+      ) THEN
+        RAISE EXCEPTION 'Permission denied: Customers cannot modify referral_rewards_enabled.';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_prevent_customer_referral_rewards_enabled ON public.profiles;
+CREATE TRIGGER trg_prevent_customer_referral_rewards_enabled
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_customer_referral_rewards_enabled_modification();

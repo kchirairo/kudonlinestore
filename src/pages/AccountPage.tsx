@@ -1180,7 +1180,7 @@ export const AccountPage: React.FC = () => {
           )}
 
           {/* Loyalty & Reward Tiers Progress Section */}
-          {effectiveReferral.isProgramEnabled && (
+          {effectiveReferral.isProgramEnabled && effectiveReferral.referral_rewards_enabled && (
             <LoyaltyTiersCard
               referralsCount={userRewards?.successfulReferralsCount ?? 0}
               expiringVouchersCount={expiringVouchers.length}

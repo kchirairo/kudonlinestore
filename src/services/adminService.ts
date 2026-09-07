@@ -149,6 +149,20 @@ async function fetchPublicSettingsRow(): Promise<SettingsTableRow | null> {
       console.warn('[AdminService] Exception querying public.settings:', err);
     }
   }
+
+  // Reliable fallback for client/customer context where anon cannot direct-select settings table due to RLS
+  try {
+    const res = await fetch('/api/settings/public-row');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data as SettingsTableRow;
+      }
+    }
+  } catch (apiErr) {
+    console.warn('[AdminService] Fallback to /api/settings/public-row failed:', apiErr);
+  }
+
   return null;
 }
 
@@ -160,17 +174,47 @@ async function readSupabaseSettingHelper<T extends Record<string, any>>(key: str
   
   if (row?.settings_data && typeof row.settings_data === 'object') {
     if (row.settings_data[key] !== undefined) {
-      return { ...defaultValue, ...row.settings_data[key] };
+      const merged = { ...defaultValue, ...row.settings_data[key] };
+      // Synchronize promotional_banner_enabled for banner_config - single source of truth
+      if (key === 'banner_config') {
+        const isEnabled = row.settings_data.promotional_banner_enabled === true;
+        merged.enabled = isEnabled;
+        merged.promotional_banner_enabled = isEnabled;
+      }
+      return merged;
     }
     // Also check alternate key aliases for banner_config
     if (key === 'banner_config') {
+      let altConfig: any = null;
       if (row.settings_data['promo_banner'] !== undefined) {
-        return { ...defaultValue, ...row.settings_data['promo_banner'] };
+        altConfig = { ...defaultValue, ...row.settings_data['promo_banner'] };
+      } else if (row.settings_data['promo_banners'] !== undefined) {
+        altConfig = { ...defaultValue, ...row.settings_data['promo_banners'] };
       }
-      if (row.settings_data['promo_banners'] !== undefined) {
-        return { ...defaultValue, ...row.settings_data['promo_banners'] };
+      if (altConfig) {
+        const isEnabled = row.settings_data.promotional_banner_enabled === true;
+        altConfig.enabled = isEnabled;
+        altConfig.promotional_banner_enabled = isEnabled;
+        return altConfig;
       }
+      // If banner_config was not in settings_data, but row exists
+      const isEnabled = row.settings_data.promotional_banner_enabled === true;
+      return {
+        ...defaultValue,
+        enabled: isEnabled,
+        promotional_banner_enabled: isEnabled,
+      };
     }
+  }
+
+  // Fail-closed for promotional banner:
+  // If row read failed or is missing, banner MUST NOT render
+  if (key === 'banner_config') {
+    return {
+      ...defaultValue,
+      enabled: false,
+      promotional_banner_enabled: false,
+    };
   }
 
   // Handle general_settings mapping from columns if available
@@ -530,6 +574,92 @@ export const adminService = {
     }
 
     return { success, error: success ? undefined : 'Failed to update order status in database.' };
+  },
+
+  /**
+   * Manually resend customer purchase confirmation email via send-order-confirmation Edge Function
+   */
+  async resendOrderConfirmationEmail(orderId: string): Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    sentAt?: string;
+  }> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.functions.invoke('send-order-confirmation', {
+          body: {
+            orderId,
+            isResend: true,
+          },
+        });
+
+        if (error) {
+          console.error('[ADMIN] Edge function error resending confirmation email:', error);
+          return {
+            success: false,
+            error: error.message || 'Failed to call send-order-confirmation Edge Function',
+          };
+        }
+
+        if (data && data.success) {
+          // Sync local storage if present
+          const localOrders = orderService.getLocalOrders();
+          const idx = localOrders.findIndex((o) => o.id === orderId);
+          if (idx > -1) {
+            localOrders[idx].confirmation_email_sent = true;
+            localOrders[idx].confirmation_email_sent_at = data.sentAt || new Date().toISOString();
+            localOrders[idx].confirmation_email_error = undefined;
+            localOrders[idx].confirmation_email_resend_count =
+              (Number(localOrders[idx].confirmation_email_resend_count) || 0) + 1;
+            localOrders[idx].confirmation_email_last_attempt_at = data.sentAt || new Date().toISOString();
+            safeSetItem('kud_store_orders_history', localOrders);
+          }
+
+          return {
+            success: true,
+            message: data.message || 'Purchase confirmation email resent successfully',
+            sentAt: data.sentAt,
+          };
+        }
+
+        return {
+          success: false,
+          error: data?.error || 'Unknown response from confirmation email service',
+        };
+      } catch (err: any) {
+        console.error('[ADMIN] Exception invoking send-order-confirmation:', err);
+        return {
+          success: false,
+          error: err?.message || 'Failed to invoke email confirmation service',
+        };
+      }
+    }
+
+    // Demo/Local fallback when Supabase is not configured
+    const localOrders = orderService.getLocalOrders();
+    const idx = localOrders.findIndex((o) => o.id === orderId);
+    if (idx > -1) {
+      const now = new Date().toISOString();
+      localOrders[idx].confirmation_email_sent = true;
+      localOrders[idx].confirmation_email_sent_at = now;
+      localOrders[idx].confirmation_email_error = undefined;
+      localOrders[idx].confirmation_email_resend_count =
+        (Number(localOrders[idx].confirmation_email_resend_count) || 0) + 1;
+      localOrders[idx].confirmation_email_last_attempt_at = now;
+      safeSetItem('kud_store_orders_history', localOrders);
+
+      return {
+        success: true,
+        message: 'Order confirmation email resent successfully (Local Simulation Mode)',
+        sentAt: now,
+      };
+    }
+
+    return {
+      success: false,
+      error: 'Order not found in records',
+    };
   },
 
   /**
@@ -1458,11 +1588,17 @@ export const adminService = {
       try {
         const { data: profile } = await supabase
           .from('profiles')
-          .select('id, wallet_balance, referral_rewards')
+          .select('id, wallet_balance, referral_rewards, referral_rewards_enabled')
           .eq('id', userId)
           .maybeSingle();
 
         if (profile?.referral_rewards && typeof profile.referral_rewards === 'object') {
+          const isRefEnabled = (profile as any).referral_rewards_enabled !== undefined
+            ? Boolean((profile as any).referral_rewards_enabled)
+            : (profile.referral_rewards.referral_rewards_enabled !== undefined
+                ? Boolean(profile.referral_rewards.referral_rewards_enabled)
+                : false);
+
           const merged: UserReferralRewardsState = {
             userId,
             referralBalance: profile.referral_rewards.referralBalance ?? 0,
@@ -1476,6 +1612,8 @@ export const adminService = {
             banReason: profile.referral_rewards.banReason || '',
             hideReferralEarnings: profile.referral_rewards.hideReferralEarnings ?? false,
             hideInviteOption: profile.referral_rewards.hideInviteOption ?? false,
+            referral_rewards_enabled: isRefEnabled,
+            referralRewardsEnabled: isRefEnabled,
             adminAdjustments: profile.referral_rewards.adminAdjustments || [],
             lastUpdated: profile.referral_rewards.lastUpdated || new Date().toISOString(),
           };
@@ -1493,7 +1631,7 @@ export const adminService = {
       return local;
     }
 
-    // 3. Clean Initial State
+    // 3. Clean Initial State (defaults referral_rewards_enabled to false for customers)
     const defaultState: UserReferralRewardsState = {
       userId,
       referralBalance: 0,
@@ -1506,6 +1644,8 @@ export const adminService = {
       isBanned: false,
       hideReferralEarnings: false,
       hideInviteOption: false,
+      referral_rewards_enabled: false,
+      referralRewardsEnabled: false,
       adminAdjustments: [],
       lastUpdated: new Date().toISOString(),
     };
@@ -1521,6 +1661,10 @@ export const adminService = {
     updates: Partial<UserReferralRewardsState>
   ): Promise<{ success: boolean; error?: string; data?: UserReferralRewardsState }> {
     const current = await this.getCustomerReferralData(userId);
+    const updatedRefEnabled = updates.referral_rewards_enabled !== undefined
+      ? Boolean(updates.referral_rewards_enabled)
+      : (updates.referralRewardsEnabled !== undefined ? Boolean(updates.referralRewardsEnabled) : current.referral_rewards_enabled);
+
     const updatedState: UserReferralRewardsState = {
       ...current,
       ...updates,
@@ -1537,23 +1681,26 @@ export const adminService = {
       frozenAt: updates.frozenAt !== undefined ? updates.frozenAt : current.frozenAt,
       hideReferralEarnings: updates.hideReferralEarnings !== undefined ? Boolean(updates.hideReferralEarnings) : current.hideReferralEarnings,
       hideInviteOption: updates.hideInviteOption !== undefined ? Boolean(updates.hideInviteOption) : current.hideInviteOption,
+      referral_rewards_enabled: updatedRefEnabled,
+      referralRewardsEnabled: updatedRefEnabled,
       lastUpdated: new Date().toISOString(),
     };
 
     const storageKey = `kud_store_user_rewards_${userId || 'guest'}`;
     safeSetItem(storageKey, updatedState);
 
-    // Sync to Supabase
+    // Sync to Supabase (only non-restricted columns; referral_rewards_enabled MUST use the secure admin RPC)
     if (isSupabaseConfigured() && supabase && userId && userId !== 'guest') {
       try {
-        await supabase
-          .from('profiles')
-          .update({
-            wallet_balance: updatedState.walletBalance,
-            referral_rewards: updatedState,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', userId);
+        const profilePayload: any = {
+          wallet_balance: updatedState.walletBalance,
+          referral_rewards: updatedState,
+          updated_at: new Date().toISOString(),
+        };
+        await executeWithColumnFallback(
+          (p) => supabase.from('profiles').update(p).eq('id', userId),
+          profilePayload
+        );
       } catch (err) {
         console.warn('[AdminService] Supabase profile referral update notice:', err);
       }
@@ -1571,6 +1718,72 @@ export const adminService = {
     }
 
     return { success: true, data: updatedState };
+  },
+
+  /**
+   * Secure Admin RPC: Set customer referral_rewards_enabled status
+   * Uses supabase.rpc('admin_set_referral_rewards_enabled', { target_user_id, enabled })
+   * Strictly prevents direct update to profiles.referral_rewards_enabled from browser.
+   */
+  async adminSetReferralRewardsEnabled(
+    targetUserId: string,
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string; data?: any }> {
+    if (!targetUserId) {
+      return { success: false, error: 'Target customer ID is required.' };
+    }
+
+    // 1. Invoke the secure Supabase RPC
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_set_referral_rewards_enabled', {
+          target_user_id: targetUserId,
+          enabled: Boolean(enabled),
+        });
+
+        if (error) {
+          console.error('[AdminService] admin_set_referral_rewards_enabled RPC error:', error);
+          return { success: false, error: error.message };
+        }
+
+        // Update local cache so customer immediately reflects new status without waiting
+        const current = await this.getCustomerReferralData(targetUserId);
+        const updatedState: UserReferralRewardsState = {
+          ...current,
+          referral_rewards_enabled: Boolean(enabled),
+          referralRewardsEnabled: Boolean(enabled),
+          lastUpdated: new Date().toISOString(),
+        };
+        safeSetItem(`kud_store_user_rewards_${targetUserId}`, updatedState);
+
+        return { success: true, data: data || updatedState };
+      } catch (err: any) {
+        console.error('[AdminService] Exception invoking admin_set_referral_rewards_enabled:', err);
+        return { success: false, error: err?.message || 'RPC invocation failed' };
+      }
+    }
+
+    // Local / offline fallback
+    const current = await this.getCustomerReferralData(targetUserId);
+    const updatedState: UserReferralRewardsState = {
+      ...current,
+      referral_rewards_enabled: Boolean(enabled),
+      referralRewardsEnabled: Boolean(enabled),
+      lastUpdated: new Date().toISOString(),
+    };
+    safeSetItem(`kud_store_user_rewards_${targetUserId}`, updatedState);
+    return { success: true, data: updatedState };
+  },
+
+  /**
+   * Toggle per-customer Referral Rewards & Wallet activation (Active / Disabled)
+   * Delegates to secure admin RPC adminSetReferralRewardsEnabled
+   */
+  async toggleCustomerReferralRewardsEnabled(
+    userId: string,
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string; data?: any }> {
+    return this.adminSetReferralRewardsEnabled(userId, enabled);
   },
 
   /**
@@ -2420,6 +2633,86 @@ export const adminService = {
   },
 
   /**
+   * Fetch promotional_banner_enabled visibility status directly from public.settings.settings_data
+   * Single source of truth: row.settings_data.promotional_banner_enabled === true
+   * Fails closed: returns false on null, undefined, error, or missing.
+   */
+  async getPromotionalBannerEnabled(): Promise<boolean> {
+    const row = await fetchPublicSettingsRow();
+    if (row?.settings_data && typeof row.settings_data === 'object') {
+      return row.settings_data.promotional_banner_enabled === true;
+    }
+    return false;
+  },
+
+  /**
+   * Admin ON/OFF Toggle for Promotional Banner Storefront Visibility
+   * Stored directly in public.settings.settings_data.promotional_banner_enabled
+   * Strictly preserves all existing settings_data properties, banners, slides, media, and copy.
+   */
+  async setPromotionalBannerEnabled(
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string; data?: any }> {
+    const now = new Date().toISOString();
+    const boolVal = Boolean(enabled);
+
+    safeSetItem('kud_store_promotional_banner_enabled', boolVal);
+
+    try {
+      const existingRow = await fetchPublicSettingsRow();
+      const currentSettingsData = (existingRow?.settings_data as Record<string, any>) || {};
+      const settingsId = existingRow?.id || '5411b2f4-8189-4a14-882d-b3c280aeaba4';
+      const existingBannerConfig = currentSettingsData.banner_config || {};
+
+      // CRITICAL: Preserve all other existing settings_data JSON properties!
+      const updatedSettingsData = {
+        ...currentSettingsData,
+        promotional_banner_enabled: boolVal,
+        banner_config: {
+          ...existingBannerConfig,
+          enabled: boolVal,
+          promotional_banner_enabled: boolVal,
+          lastUpdated: now,
+        },
+      };
+
+      let directSuccess = false;
+      if (isSupabaseConfigured() && supabase) {
+        const updateRes = await supabase
+          .from('settings')
+          .update({
+            settings_data: updatedSettingsData,
+            updated_at: now,
+          })
+          .eq('id', settingsId)
+          .select('*')
+          .maybeSingle();
+
+        if (!updateRes.error && updateRes.data) {
+          directSuccess = true;
+        }
+      }
+
+      if (!directSuccess) {
+        try {
+          await fetch('/api/admin/settings/promotional_banner_enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: boolVal, promotional_banner_enabled: boolVal }),
+          });
+        } catch (apiErr) {
+          console.warn('[AdminService] Fallback to /api/admin/settings failed:', apiErr);
+        }
+      }
+
+      return { success: true, data: { promotional_banner_enabled: boolVal } };
+    } catch (err: any) {
+      console.error('[AdminService] setPromotionalBannerEnabled error:', err);
+      return { success: false, error: err?.message || 'Failed to update promotional banner visibility' };
+    }
+  },
+
+  /**
    * Fetch stored promotional banner & advertising media configuration from Supabase
    */
   async getPromoBanner(): Promise<PromoBannerConfig> {
@@ -2432,21 +2725,69 @@ export const adminService = {
   },
 
   /**
-   * Save promotional banner, media upload, and text overlay configuration to Supabase settings table
+   * Save promotional banner, media upload, and text overlay configuration to Supabase settings table.
+   * Strictly preserves all other settings_data properties and syncs promotional_banner_enabled.
    */
   async savePromoBanner(config: PromoBannerConfig): Promise<{ success: boolean; error?: string; data?: PromoBannerConfig; databaseTable?: string }> {
+    const isEnabled = Boolean(config.enabled);
     const updatedConfig: PromoBannerConfig = {
       ...config,
+      enabled: isEnabled,
+      promotional_banner_enabled: isEnabled,
       banners: Array.isArray(config.banners) ? config.banners : [],
       lastUpdated: new Date().toISOString(),
     };
-    const res = await writeSupabaseSettingHelper<PromoBannerConfig>('banner_config', updatedConfig);
-    return {
-      success: res.success,
-      error: res.error,
-      data: res.data || updatedConfig,
-      databaseTable: 'settings',
-    };
+
+    safeSetItem(`kud_store_settings_banner_config`, updatedConfig);
+    safeSetItem('kud_store_promotional_banner_enabled', isEnabled);
+
+    try {
+      const existingRow = await fetchPublicSettingsRow();
+      const currentSettingsData = (existingRow?.settings_data as Record<string, any>) || {};
+      const settingsId = existingRow?.id || '5411b2f4-8189-4a14-882d-b3c280aeaba4';
+      const now = new Date().toISOString();
+
+      // Preserve all other existing settings_data properties while updating banner_config and promotional_banner_enabled
+      const updatedSettingsData = {
+        ...currentSettingsData,
+        promotional_banner_enabled: isEnabled,
+        banner_config: updatedConfig,
+      };
+
+      let result;
+      if (settingsId) {
+        result = await supabase
+          .from('settings')
+          .update({
+            settings_data: updatedSettingsData,
+            updated_at: now,
+          })
+          .eq('id', settingsId)
+          .select('*')
+          .maybeSingle();
+      } else {
+        result = await supabase
+          .from('settings')
+          .insert({
+            store_name: 'KUD Store',
+            currency_symbol: 'R',
+            settings_data: updatedSettingsData,
+            created_at: now,
+            updated_at: now,
+          })
+          .select('*')
+          .maybeSingle();
+      }
+
+      if (result?.error) {
+        return { success: false, error: result.error.message };
+      }
+
+      return { success: true, data: updatedConfig, databaseTable: 'settings' };
+    } catch (err: any) {
+      console.error('[AdminService] savePromoBanner error:', err);
+      return { success: false, error: err?.message || 'Failed to save promotional banner' };
+    }
   },
 
   /**
@@ -3587,6 +3928,9 @@ export const adminService = {
             const totalRefEarned = Number(refState.totalEarned ?? 0);
             const hideEarnings = Boolean(refState.hideReferralEarnings);
             const hideInvites = Boolean(refState.hideInviteOption);
+            const isRefRewardsEnabled = p.referral_rewards_enabled !== undefined
+              ? Boolean(p.referral_rewards_enabled)
+              : (refState.referral_rewards_enabled !== undefined ? Boolean(refState.referral_rewards_enabled) : false);
 
             const accountStatus = (p.account_status || p.status || (p.is_disabled ? 'disabled' : 'active')) as CustomerAccountStatus;
             const isDisabled = accountStatus === 'disabled' || accountStatus === 'on_hold' || Boolean(p.is_disabled);
@@ -3617,6 +3961,8 @@ export const adminService = {
               totalReferralEarned: totalRefEarned,
               hideEarnings,
               hideInvites,
+              referral_rewards_enabled: isRefRewardsEnabled,
+              referralRewardsEnabled: isRefRewardsEnabled,
             };
           });
         }
@@ -3672,6 +4018,8 @@ export const adminService = {
           totalReferralEarned: userRefData.totalEarned ?? c.totalReferralEarned ?? 0,
           hideEarnings: Boolean(userRefData.hideReferralEarnings),
           hideInvites: Boolean(userRefData.hideInviteOption),
+          referral_rewards_enabled: Boolean(userRefData.referral_rewards_enabled ?? c.referral_rewards_enabled ?? false),
+          referralRewardsEnabled: Boolean(userRefData.referral_rewards_enabled ?? c.referral_rewards_enabled ?? false),
         };
       }
       const isBanned = c.isReferralBanned ?? (c.referralStatus === 'banned');
@@ -3692,6 +4040,8 @@ export const adminService = {
         totalReferralEarned: c.totalReferralEarned ?? 0,
         hideEarnings: Boolean(c.hideEarnings),
         hideInvites: Boolean(c.hideInvites),
+        referral_rewards_enabled: Boolean(c.referral_rewards_enabled ?? false),
+        referralRewardsEnabled: Boolean(c.referral_rewards_enabled ?? false),
       };
     });
 

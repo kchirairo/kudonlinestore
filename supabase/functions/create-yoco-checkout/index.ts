@@ -145,12 +145,28 @@ serve(async (req) => {
       );
     }
 
+    // Safely store yoco_checkout_id for server-side verification and webhook reconciliation
+    if (yocoData?.id) {
+      try {
+        await supabase
+          .from('orders')
+          .update({
+            yoco_checkout_id: yocoData.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', order.id);
+      } catch (saveErr) {
+        console.warn('[create-yoco-checkout] Notice saving yoco_checkout_id to order:', saveErr);
+      }
+    }
+
     // Return Yoco redirectUrl to React without marking order as paid
     return new Response(
       JSON.stringify({
         success: true,
         redirectUrl: redirectUrl,
         orderId: order.id,
+        checkoutId: yocoData?.id,
       }),
       {
         status: 200,

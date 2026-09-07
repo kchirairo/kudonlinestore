@@ -350,6 +350,23 @@ export const productService = {
           error = fallbackRes.error;
         }
 
+        // If client query still encounters an error (such as function permission restrictions for logged-out visitors),
+        // seamlessly fallback to the secure server products API
+        if (error || !data || data.length === 0) {
+          try {
+            const apiRes = await fetch('/api/products');
+            if (apiRes.ok) {
+              const apiJson = await apiRes.json();
+              if (apiJson.success && Array.isArray(apiJson.data) && apiJson.data.length > 0) {
+                data = apiJson.data;
+                error = null;
+              }
+            }
+          } catch (apiErr) {
+            console.warn('[Supabase Storefront] Server API fallback failed:', apiErr);
+          }
+        }
+
         if (error) {
           console.warn('[Supabase Storefront] Supabase query notice:', {
             message: error.message,
@@ -477,6 +494,20 @@ export const productService = {
         .eq('id', id)
         .maybeSingle();
       data = fallbackRes.data;
+    }
+
+    if (!data) {
+      try {
+        const apiRes = await fetch(`/api/products/${encodeURIComponent(id)}`);
+        if (apiRes.ok) {
+          const apiJson = await apiRes.json();
+          if (apiJson.success && apiJson.data) {
+            data = apiJson.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[ProductService] Fallback to server API failed for product:', id, apiErr);
+      }
     }
 
     if (!data) return null;

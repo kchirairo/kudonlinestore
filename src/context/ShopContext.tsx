@@ -95,9 +95,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return safeGetItem<StoreBrandingConfig>(BRANDING_STORAGE_KEY, DEFAULT_STORE_BRANDING);
   });
 
-  // Promo Banner State
+  // Promo Banner State - fails closed (enabled: false) initially until Supabase confirms it is explicitly true
   const [promoBanner, setPromoBanner] = useState<PromoBannerConfig>(() => {
-    return safeGetItem<PromoBannerConfig>(PROMO_BANNER_STORAGE_KEY, DEFAULT_PROMO_BANNER);
+    const initial = safeGetItem<PromoBannerConfig>(PROMO_BANNER_STORAGE_KEY, DEFAULT_PROMO_BANNER);
+    return {
+      ...initial,
+      enabled: false,
+      promotional_banner_enabled: false,
+    };
   });
 
   // Cart State
@@ -609,9 +614,32 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ]);
       if (general) setGeneralSettings(general);
       if (branding) setStoreBranding(branding);
-      if (banner) setPromoBanner(banner);
+      if (banner) {
+        // Enforce single source of truth from Supabase
+        const isAuthoritativeTrue = banner.promotional_banner_enabled === true;
+        const authoritativeBanner: PromoBannerConfig = {
+          ...banner,
+          enabled: isAuthoritativeTrue,
+          promotional_banner_enabled: isAuthoritativeTrue,
+        };
+        setPromoBanner(authoritativeBanner);
+        safeSetItem(PROMO_BANNER_STORAGE_KEY, authoritativeBanner);
+      } else {
+        // Fail closed if banner is null/empty
+        setPromoBanner((prev) => ({
+          ...prev,
+          enabled: false,
+          promotional_banner_enabled: false,
+        }));
+      }
     } catch (err) {
       console.warn('Failed to load store settings / branding / promo banner from Supabase:', err);
+      // Fail closed on error
+      setPromoBanner((prev) => ({
+        ...prev,
+        enabled: false,
+        promotional_banner_enabled: false,
+      }));
     }
   }, []);
 
@@ -644,9 +672,15 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const updatePromoBanner = useCallback(async (config: PromoBannerConfig) => {
-    setPromoBanner(config);
-    safeSetItem(PROMO_BANNER_STORAGE_KEY, config);
-    const res = await adminService.savePromoBanner(config);
+    const isEnabled = Boolean(config.enabled);
+    const syncedConfig: PromoBannerConfig = {
+      ...config,
+      enabled: isEnabled,
+      promotional_banner_enabled: isEnabled,
+    };
+    setPromoBanner(syncedConfig);
+    safeSetItem(PROMO_BANNER_STORAGE_KEY, syncedConfig);
+    const res = await adminService.savePromoBanner(syncedConfig);
     return res;
   }, []);
 

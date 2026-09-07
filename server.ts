@@ -882,6 +882,12 @@ async function startServer() {
 
           if (profile) {
             const storedRewards = (profile as any).referral_rewards || (profile as any).referral_data;
+            const isRefRewardsEnabled = (profile as any).referral_rewards_enabled !== undefined
+              ? Boolean((profile as any).referral_rewards_enabled)
+              : (storedRewards && typeof storedRewards === 'object' && storedRewards.referral_rewards_enabled !== undefined
+                  ? Boolean(storedRewards.referral_rewards_enabled)
+                  : false);
+
             if (storedRewards && typeof storedRewards === 'object') {
               userData = {
                 userId,
@@ -899,6 +905,8 @@ async function startServer() {
                 frozenAt: storedRewards.frozenAt,
                 hideReferralEarnings: Boolean(storedRewards.hideReferralEarnings),
                 hideInviteOption: Boolean(storedRewards.hideInviteOption),
+                referral_rewards_enabled: isRefRewardsEnabled,
+                referralRewardsEnabled: isRefRewardsEnabled,
                 adminAdjustments: storedRewards.adminAdjustments || [],
                 lastUpdated: storedRewards.lastUpdated || new Date().toISOString(),
               };
@@ -909,41 +917,19 @@ async function startServer() {
         }
       }
 
-      // 2. Default initial state if fresh or not in database yet
+      // 2. Default initial state if fresh or not in database yet (referral_rewards_enabled: false)
       if (!userData) {
         userData = {
           userId,
-          referralBalance: 150,
-          totalEarned: 250,
-          walletBalance: 50,
-          successfulReferralsCount: 3,
-          pendingReferralsCount: 1,
-          vouchers: [
-            {
-              id: `vouch-init-${userId.slice(0, 4)}`,
-              userId,
-              type: 'discount_voucher',
-              amount: 50,
-              voucherCode: 'KUD-REWARD-50-INIT',
-              voucherExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
-              status: 'active',
-              createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-              note: 'Initial welcome referral voucher',
-            },
-          ],
-          history: [
-            {
-              id: `vouch-init-${userId.slice(0, 4)}`,
-              userId,
-              type: 'discount_voucher',
-              amount: 50,
-              voucherCode: 'KUD-REWARD-50-INIT',
-              voucherExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
-              status: 'active',
-              createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-              note: 'Initial welcome referral voucher',
-            },
-          ],
+          referralBalance: 0,
+          totalEarned: 0,
+          walletBalance: 0,
+          successfulReferralsCount: 0,
+          pendingReferralsCount: 0,
+          referral_rewards_enabled: false,
+          referralRewardsEnabled: false,
+          vouchers: [],
+          history: [],
           lastUpdated: new Date().toISOString(),
         };
       }
@@ -974,16 +960,26 @@ async function startServer() {
 
       const supabase = getServerSupabase();
 
-      // Check if user earnings are frozen or banned in database
+      // Check if user earnings are frozen, banned, or disabled in database
       if (supabase && userId && userId !== 'guest') {
         try {
           const { data: userProfile } = await supabase
             .from('profiles')
-            .select('referral_rewards')
+            .select('referral_rewards, referral_rewards_enabled')
             .eq('id', userId)
             .maybeSingle();
 
           const dbRewards = userProfile?.referral_rewards || {};
+          const isRefEnabled = (userProfile as any)?.referral_rewards_enabled !== undefined
+            ? Boolean((userProfile as any).referral_rewards_enabled)
+            : (dbRewards.referral_rewards_enabled !== undefined ? Boolean(dbRewards.referral_rewards_enabled) : false);
+
+          if (!isRefEnabled) {
+            return res.status(403).json({
+              success: false,
+              error: 'Referral Rewards & Wallet is not active for your account.',
+            });
+          }
           if (dbRewards.isEarningsFrozen) {
             return res.status(403).json({
               success: false,
@@ -1269,13 +1265,17 @@ async function startServer() {
       const supabase = getServerSupabase();
       if (supabase && userId !== 'guest') {
         try {
+          const profileUpdates: any = {
+            wallet_balance: updatedState.walletBalance,
+            referral_rewards: updatedState,
+            updated_at: new Date().toISOString(),
+          };
+          if (updatedState.referral_rewards_enabled !== undefined) {
+            profileUpdates.referral_rewards_enabled = Boolean(updatedState.referral_rewards_enabled);
+          }
           await supabase
             .from('profiles')
-            .update({
-              wallet_balance: updatedState.walletBalance,
-              referral_rewards: updatedState,
-              updated_at: new Date().toISOString(),
-            })
+            .update(profileUpdates)
             .eq('id', userId);
         } catch (dbErr: any) {
           console.warn('[Admin Referrals API] Error updating DB profile:', dbErr.message);
@@ -1833,7 +1833,119 @@ async function startServer() {
     }
   });
 
+  // --- PUBLIC PRODUCT STOREFRONT ENDPOINTS ---
+  // Public GET all active products (used for guest / logged-out storefront browsing fallback)
+  app.get('/api/products', async (_req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[ProductsAPI] Error fetching products:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data: data || [] });
+    } catch (err: any) {
+      console.error('[ProductsAPI] Server exception:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch products.' });
+    }
+  });
+
+  // Public GET single product by ID
+  app.get('/api/products/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('[ProductsAPI] Error fetching product by id:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data: data || null });
+    } catch (err: any) {
+      console.error('[ProductsAPI] Server exception:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch product.' });
+    }
+  });
+
   // --- STORE SETTINGS PERSISTENCE ENDPOINTS ---
+  // Public GET settings row for customer storefront (single source of truth without exposing sensitive credentials)
+  app.get('/api/settings/public-row', async (_req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
+      }
+
+      const { data, error } = await supabase
+        .from('settings')
+        .select('id, store_name, currency_symbol, store_description, delivery_fee, free_shipping_threshold, support_email, support_phone, logo_url, banner_url, settings_data, created_at, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      if (!data) {
+        return res.status(404).json({ success: false, error: 'No settings row found.' });
+      }
+
+      const sanitized: any = { ...data };
+      if (sanitized.settings_data && typeof sanitized.settings_data === 'object') {
+        const cleanSettings = { ...sanitized.settings_data };
+        // Single source of truth: promotional_banner_enabled must be explicitly true
+        const promoBannerEnabled = cleanSettings.promotional_banner_enabled === true;
+        cleanSettings.promotional_banner_enabled = promoBannerEnabled;
+        if (cleanSettings.banner_config && typeof cleanSettings.banner_config === 'object') {
+          cleanSettings.banner_config = {
+            ...cleanSettings.banner_config,
+            enabled: promoBannerEnabled,
+            promotional_banner_enabled: promoBannerEnabled,
+          };
+        }
+        // Sanitize payment gateway credentials
+        if (cleanSettings.payment_gateways && typeof cleanSettings.payment_gateways === 'object') {
+          const cleanGateways: any = {};
+          for (const [k, v] of Object.entries(cleanSettings.payment_gateways as any)) {
+            if (v && typeof v === 'object') {
+              const { secretKey, privateKey, passphrase, ...safeObj } = v as any;
+              cleanGateways[k] = safeObj;
+            } else {
+              cleanGateways[k] = v;
+            }
+          }
+          cleanSettings.payment_gateways = cleanGateways;
+        }
+        sanitized.settings_data = cleanSettings;
+      }
+
+      return res.json({ success: true, data: sanitized });
+    } catch (err: any) {
+      console.error('[Settings] Error fetching public-row:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch settings row.' });
+    }
+  });
+
   // Public GET settings by section key (filters sensitive fields for unauthenticated visitors)
   app.get('/api/settings/:key', async (req, res) => {
     try {
@@ -1852,9 +1964,22 @@ async function startServer() {
           .maybeSingle();
 
         if (!tableError && tableData?.settings_data && typeof tableData.settings_data === 'object') {
+          if (key === 'promotional_banner_enabled') {
+            const isEnabled = tableData.settings_data.promotional_banner_enabled === true;
+            return res.json({ success: true, data: isEnabled, source: 'database_table' });
+          }
+
           const sectionData = (tableData.settings_data as any)[key];
           if (sectionData !== undefined) {
             let val = sectionData;
+            if (key === 'banner_config' && typeof val === 'object') {
+              const isEnabled = tableData.settings_data.promotional_banner_enabled === true;
+              val = {
+                ...val,
+                enabled: isEnabled,
+                promotional_banner_enabled: isEnabled,
+              };
+            }
             if (key === 'payment_gateways' && typeof val === 'object') {
               val = { ...val };
               for (const gKey of Object.keys(val)) {
@@ -1979,10 +2104,32 @@ async function startServer() {
           .maybeSingle();
 
         const currentSettingsData = (current?.settings_data as Record<string, any>) || {};
-        const updatedSettingsData = {
+        const updatedSettingsData: Record<string, any> = {
           ...(currentSettingsData || {}),
           [key]: updatedPayload,
         };
+
+        if (key === 'banner_config') {
+          if (updatedPayload.enabled !== undefined) {
+            const isEnabled = Boolean(updatedPayload.enabled);
+            updatedSettingsData.promotional_banner_enabled = isEnabled;
+            updatedSettingsData.banner_config = {
+              ...updatedPayload,
+              enabled: isEnabled,
+              promotional_banner_enabled: isEnabled,
+            };
+          }
+        } else if (key === 'promotional_banner_enabled') {
+          const isEnabled = Boolean(typeof updatedPayload === 'object' ? (updatedPayload.enabled ?? updatedPayload.promotional_banner_enabled) : updatedPayload);
+          updatedSettingsData.promotional_banner_enabled = isEnabled;
+          if (updatedSettingsData.banner_config) {
+            updatedSettingsData.banner_config = {
+              ...updatedSettingsData.banner_config,
+              enabled: isEnabled,
+              promotional_banner_enabled: isEnabled,
+            };
+          }
+        }
 
         let result;
         if (current?.id) {

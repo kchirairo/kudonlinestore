@@ -72,7 +72,6 @@ import {
   VIDEO_REQUIREMENTS,
   validateBannerVideoFile,
   validateBannerMediaFile,
-  extractVideoPosterFrame,
   optimizeBannerImage,
   formatBytes,
   formatVideoDuration,
@@ -146,6 +145,32 @@ export const PromoBannerSettings: React.FC = () => {
 
   // Delete Confirmation Modal State
   const [bannerToDelete, setBannerToDelete] = useState<PromotionalBannerItem | null>(null);
+  const [isTogglingVisibility, setIsTogglingVisibility] = useState(false);
+
+  // Toggle master promotional banner storefront visibility
+  const handleToggleStorefrontVisibility = async (newVal: boolean) => {
+    try {
+      setIsTogglingVisibility(true);
+      const res = await adminService.setPromotionalBannerEnabled(newVal);
+      if (res.success) {
+        const updatedFormData = { ...formData, enabled: newVal, promotional_banner_enabled: newVal };
+        setFormData(updatedFormData);
+        await updatePromoBanner(updatedFormData);
+        showToast(
+          newVal
+            ? 'Promotional banner is now ON and visible on the storefront.'
+            : 'Promotional banner is now OFF and completely removed from the storefront.',
+          'success'
+        );
+      } else {
+        showToast(`Failed to update banner visibility: ${res.error || 'Unknown error'}`, 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Error updating promotional banner visibility', 'error');
+    } finally {
+      setIsTogglingVisibility(false);
+    }
+  };
 
   // Load products list for direct product selector in CTA
   useEffect(() => {
@@ -440,17 +465,9 @@ export const PromoBannerSettings: React.FC = () => {
 
       setUploadProgress(40);
       const url = await adminService.uploadMedia(file, 'banner');
-      setUploadProgress(75);
+      setUploadProgress(90);
 
-      let posterUrl = editingBanner.mediaPosterUrl;
-      if (!posterUrl) {
-        try {
-          const autoPoster = await extractVideoPosterFrame(file);
-          if (autoPoster) posterUrl = autoPoster;
-        } catch {
-          // Poster extraction is optional
-        }
-      }
+      const posterUrl = editingBanner.mediaPosterUrl;
 
       setUploadProgress(95);
 
@@ -716,6 +733,72 @@ export const PromoBannerSettings: React.FC = () => {
             )}
             <span>{isSaving ? 'Publishing...' : 'Save & Publish'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Master Promotional Banner Storefront Visibility Control */}
+      <div className={`p-5 sm:p-6 rounded-3xl border transition-all shadow-xs ${
+        formData.enabled
+          ? 'bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border-emerald-300 dark:border-emerald-800/80'
+          : 'bg-gradient-to-r from-slate-100 via-slate-50 to-transparent dark:from-slate-800/60 dark:via-slate-800/30 border-slate-200 dark:border-slate-700'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-2xs ${
+              formData.enabled
+                ? 'bg-emerald-600 text-white'
+                : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+            }`}>
+              {formData.enabled ? <Sparkles className="w-6 h-6" /> : <EyeOff className="w-6 h-6" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Promotional Banner Storefront Visibility
+                </h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
+                  formData.enabled
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300'
+                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-600'
+                }`}>
+                  {formData.enabled ? 'ON (VISIBLE)' : 'OFF (HIDDEN)'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                {formData.enabled
+                  ? 'The promotional banner is currently active and visible on the customer storefront. Toggling OFF removes it completely without deleting any banners, images, videos, or copy.'
+                  : 'The promotional banner is currently completely hidden from the storefront. All banners, images, videos, and settings remain safely preserved and will restore instantly when turned ON.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
+            <button
+              id="toggle-storefront-banner-visibility-btn"
+              type="button"
+              disabled={isTogglingVisibility || isSaving}
+              onClick={() => handleToggleStorefrontVisibility(!formData.enabled)}
+              className={`px-5 py-2.5 rounded-2xl font-black text-xs sm:text-sm transition-all shadow-xs cursor-pointer flex items-center gap-2 ${
+                formData.enabled
+                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+              }`}
+            >
+              {isTogglingVisibility ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : formData.enabled ? (
+                <>
+                  <EyeOff className="w-4 h-4" />
+                  <span>Turn OFF Banner</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Turn ON Banner</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

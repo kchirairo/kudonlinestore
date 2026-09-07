@@ -180,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 role: fetchedRole || 'customer',
                 phone: authUser.phone || '',
                 avatar_url: defaultAvatar,
+                referral_rewards_enabled: false,
                 created_at: new Date().toISOString(),
               },
               { onConflict: 'id' }

@@ -5,7 +5,7 @@ import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG, PAYMENT_METHODS } from '../constants/config';
 import { orderService } from '../services/orderService';
 import { adminService } from '../services/adminService';
-import { ShippingAddress, PaymentGatewayConfig } from '../types';
+import { ShippingAddress, PaymentGatewayConfig, Order } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SEOHead } from '../components/SEOHead';
 import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
@@ -282,16 +282,42 @@ export const CheckoutPage: React.FC = () => {
           ? 'Peach Payments'
           : 'Cash on Delivery';
 
-      // 1. Create order in Supabase public.orders database table first
-      const createdOrder = await orderService.createOrder(
-        orderItems,
-        shippingAddress,
-        cartSubtotal,
-        deliveryFee,
-        discountAmount,
-        finalPaymentMethodName,
-        user?.id
-      );
+      // 1. Create or reuse order in Supabase public.orders database table first
+      let createdOrder: Order | null = null;
+      const cachedPendingOrderId = sessionStorage.getItem('kud_pending_checkout_order_id');
+
+      // Prevent duplicate orders from repeated checkout attempts with the same cart/session
+      if (cachedPendingOrderId && paymentMethod === 'yoco') {
+        try {
+          const existingPending = await orderService.getOrderById(cachedPendingOrderId);
+          const currentTotal = cartSubtotal + deliveryFee - discountAmount;
+          if (
+            existingPending &&
+            existingPending.payment_status === 'pending' &&
+            Math.abs(existingPending.total_amount - currentTotal) < 0.01
+          ) {
+            console.log('[CHECKOUT] Reusing existing pending order for repeated Yoco checkout attempt:', cachedPendingOrderId);
+            createdOrder = existingPending;
+          }
+        } catch (reuseErr) {
+          console.warn('[CHECKOUT] Could not reuse cached pending order:', reuseErr);
+        }
+      }
+
+      if (!createdOrder) {
+        createdOrder = await orderService.createOrder(
+          orderItems,
+          shippingAddress,
+          cartSubtotal,
+          deliveryFee,
+          discountAmount,
+          finalPaymentMethodName,
+          user?.id
+        );
+        if (createdOrder?.id) {
+          sessionStorage.setItem('kud_pending_checkout_order_id', createdOrder.id);
+        }
+      }
 
       // Verify that createdOrder.id exists
       if (!createdOrder || !createdOrder.id) {
@@ -302,7 +328,7 @@ export const CheckoutPage: React.FC = () => {
       if (paymentMethod === 'yoco') {
         showToast('Connecting to Yoco Hosted Checkout...', 'info');
 
-        // Temporary console logging showing only createdOrder.id, orderNumber, and total
+        // Console logging showing only createdOrder.id, orderNumber, and total
         console.log('[YOCO CHECKOUT REACT LOG]', {
           createdOrderId: createdOrder.id,
           orderNumber: createdOrder.order_number,
@@ -333,7 +359,10 @@ export const CheckoutPage: React.FC = () => {
           return;
         }
 
-        clearCart();
+        // CRITICAL PAYMENT FLOW REQUIREMENT:
+        // Do NOT clear customer's cart when redirecting to YOCO!
+        // The cart must remain intact if the customer cancels, closes the tab, or payment fails.
+        // The cart will ONLY be cleared after verified payment confirmation by Yoco webhook/server.
         showToast('Redirecting to Yoco payment portal...', 'success');
 
         // Redirect using window.location.href

@@ -19,6 +19,7 @@ import {
   Snowflake,
   PauseCircle,
   RotateCcw,
+  RefreshCw,
   Trash2,
   X,
 } from 'lucide-react';
@@ -59,6 +60,10 @@ export const AdminCustomersPage: React.FC = () => {
   const [isBulkStatusModalOpen, setIsBulkStatusModalOpen] = useState<boolean>(false);
   const [bulkStatusTarget, setBulkStatusTarget] = useState<CustomerAccountStatus>('disabled');
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState<boolean>(false);
+
+  // Referral Rewards & Wallet Activation Control State
+  const [deactivationTarget, setDeactivationTarget] = useState<Customer | null>(null);
+  const [isTogglingReferralId, setIsTogglingReferralId] = useState<string | null>(null);
 
   const fetchCustomers = async () => {
     setIsLoading(true);
@@ -292,6 +297,64 @@ export const AdminCustomersPage: React.FC = () => {
       showToast(err?.message || 'Error deleting customer', 'error');
     } finally {
       setIsActionLoading(false);
+    }
+  };
+
+  /**
+   * Admin-Only Referral Rewards & Wallet Activation Switch
+   * Dispatches supabase.rpc('admin_set_referral_rewards_enabled', { target_user_id, enabled })
+   */
+  const handleToggleReferralRewards = async (customer: Customer, newEnabled: boolean) => {
+    if (!newEnabled) {
+      // Prompt confirmation before deactivating
+      setDeactivationTarget(customer);
+      return;
+    }
+
+    try {
+      setIsTogglingReferralId(customer.id);
+      const res = await adminService.adminSetReferralRewardsEnabled(customer.id, true);
+      if (res.success) {
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === customer.id
+              ? { ...c, referral_rewards_enabled: true, referralRewardsEnabled: true }
+              : c
+          )
+        );
+        showToast(`Referral Rewards & Store Wallet activated for ${customer.fullName || customer.email}`, 'success');
+      } else {
+        showToast(res.error || 'Failed to activate referral rewards', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Error updating status', 'error');
+    } finally {
+      setIsTogglingReferralId(null);
+    }
+  };
+
+  const handleConfirmDeactivation = async () => {
+    if (!deactivationTarget) return;
+    try {
+      setIsTogglingReferralId(deactivationTarget.id);
+      const res = await adminService.adminSetReferralRewardsEnabled(deactivationTarget.id, false);
+      if (res.success) {
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === deactivationTarget.id
+              ? { ...c, referral_rewards_enabled: false, referralRewardsEnabled: false }
+              : c
+          )
+        );
+        showToast(`Referral Rewards & Store Wallet deactivated for ${deactivationTarget.fullName || deactivationTarget.email}`, 'info');
+        setDeactivationTarget(null);
+      } else {
+        showToast(res.error || 'Failed to deactivate referral rewards', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Error deactivating', 'error');
+    } finally {
+      setIsTogglingReferralId(null);
     }
   };
 
@@ -589,8 +652,19 @@ export const AdminCustomersPage: React.FC = () => {
                                 {cust.fullName ? cust.fullName[0].toUpperCase() : 'C'}
                               </div>
                               <div>
-                                <div className="font-bold text-gray-900 dark:text-white text-sm">
-                                  {cust.fullName || 'Registered Customer'}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-gray-900 dark:text-white text-sm">
+                                    {cust.fullName || 'Registered Customer'}
+                                  </span>
+                                  {cust.role === 'admin' ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                      Admin
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                      Customer
+                                    </span>
+                                  )}
                                 </div>
                                 <span className="text-[10px] text-gray-400 block mt-0.5">
                                   Joined {new Date(cust.createdAt).toLocaleDateString()}
@@ -657,21 +731,58 @@ export const AdminCustomersPage: React.FC = () => {
                             )}
                           </td>
 
-                          {/* Referral Program Status */}
-                          <td className="py-4 px-6">
-                            {refBanned ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-rose-50 text-rose-700 rounded-md border border-rose-200">
-                                Banned
-                              </span>
-                            ) : (
-                              <div className="font-extrabold text-[#16a34a] font-mono text-xs">
-                                {STORE_CONFIG.STORE_CURRENCY}
-                                {(cust.referralBalance ?? 0).toLocaleString()}
-                                <span className="text-[10px] text-gray-400 font-normal block">
-                                  {cust.referralCount ?? 0} invites
-                                </span>
-                              </div>
-                            )}
+                          {/* Referral & Wallet Activation Column */}
+                          <td className="py-4 px-6" onClick={(e) => e.stopPropagation()}>
+                            {(() => {
+                              const isRefActive = Boolean(cust.referral_rewards_enabled ?? cust.referralRewardsEnabled);
+                              const isPending = isTogglingReferralId === cust.id;
+
+                              return (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {isRefActive ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 shadow-2xs">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>ACTIVE</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
+                                        <span>DISABLED</span>
+                                      </span>
+                                    )}
+
+                                    {/* Activate / Deactivate Toggle Button */}
+                                    {isRefActive ? (
+                                      <button
+                                        id={`deactivate-ref-${cust.id}`}
+                                        type="button"
+                                        disabled={isPending}
+                                        onClick={() => handleToggleReferralRewards(cust, false)}
+                                        className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800/80 transition-all cursor-pointer"
+                                        title="Deactivate Referral Rewards & Store Wallet"
+                                      >
+                                        {isPending ? 'Saving...' : 'Deactivate'}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        id={`activate-ref-${cust.id}`}
+                                        type="button"
+                                        disabled={isPending}
+                                        onClick={() => handleToggleReferralRewards(cust, true)}
+                                        className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition-all cursor-pointer"
+                                        title="Activate Referral Rewards & Store Wallet"
+                                      >
+                                        {isPending ? 'Activating...' : 'Activate'}
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  <div className="text-[10px] text-gray-500 dark:text-slate-400 font-mono">
+                                    Bal: {STORE_CONFIG.STORE_CURRENCY}{(cust.referralBalance ?? 0).toLocaleString()} • {cust.referralCount ?? 0} invites
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </td>
 
                           {/* Action Buttons */}
@@ -811,6 +922,49 @@ export const AdminCustomersPage: React.FC = () => {
                         )}
                       </div>
 
+                      {/* Referral & Wallet Activation row for Mobile */}
+                      <div
+                        className="flex items-center justify-between p-2.5 rounded-2xl bg-gray-50 dark:bg-slate-900/60 border border-gray-100 dark:border-slate-800 text-xs"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-bold text-gray-700 dark:text-slate-300">
+                            Referral &amp; Wallet:
+                          </span>
+                          {cust.referral_rewards_enabled ?? cust.referralRewardsEnabled ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              ACTIVE
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                              DISABLED
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          {cust.referral_rewards_enabled ?? cust.referralRewardsEnabled ? (
+                            <button
+                              type="button"
+                              disabled={isTogglingReferralId === cust.id}
+                              onClick={() => handleToggleReferralRewards(cust, false)}
+                              className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 cursor-pointer"
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isTogglingReferralId === cust.id}
+                              onClick={() => handleToggleReferralRewards(cust, true)}
+                              className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-2xs"
+                            >
+                              Activate
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-slate-700 text-xs">
                         <div>
                           <span className="font-semibold text-gray-500 dark:text-slate-400">{cust.orderCount} Orders</span>
@@ -910,6 +1064,62 @@ export const AdminCustomersPage: React.FC = () => {
         onConfirm={handleBulkDeleteCustomers}
         isLoading={isActionLoading}
       />
+
+      {/* Referral Rewards & Wallet Deactivation Confirmation Modal */}
+      {deactivationTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-850 rounded-3xl p-6 max-w-md w-full border border-gray-100 dark:border-slate-700 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+              <div className="w-11 h-11 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 dark:text-white">
+                  Deactivate Referral Rewards &amp; Wallet?
+                </h3>
+                <p className="text-xs text-gray-400 font-medium">Customer confirmation required</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-600 dark:text-slate-300 space-y-2 leading-relaxed">
+              <p>
+                Are you sure you want to deactivate Referral Rewards &amp; the Digital Store Wallet for{' '}
+                <span className="font-bold text-gray-900 dark:text-white">
+                  {deactivationTarget.fullName || 'this customer'}
+                </span>{' '}
+                (<span className="font-mono text-gray-500">{deactivationTarget.email}</span>)?
+              </p>
+              <div className="p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-300">
+                <strong>Safety Notice:</strong> The customer will immediately stop seeing referral links, wallet credit redemption, and invitation rewards on their dashboard. Existing wallet balance and referral history are 100% preserved.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={Boolean(isTogglingReferralId)}
+                onClick={() => setDeactivationTarget(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(isTogglingReferralId)}
+                onClick={handleConfirmDeactivation}
+                className="px-4 py-2.5 rounded-xl text-xs font-black bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+              >
+                {isTogglingReferralId ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <PauseCircle className="w-3.5 h-3.5" />
+                )}
+                <span>Confirm Deactivation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

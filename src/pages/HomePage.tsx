@@ -18,35 +18,13 @@ import { generateStoreJsonLd } from '../utils/seo';
 import { SlidersHorizontal, PackageX, ArrowUpDown, X, Sparkles, Flame, Check } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
-  const { selectedCategory, setSelectedCategory, filters, setFilters, resetFilters, clearCart, showToast } = useShop();
+  const { selectedCategory, setSelectedCategory, filters, setFilters, resetFilters } = useShop();
   const [searchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [dbError, setDbError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState<boolean>(false);
   const isFetchingRef = useRef<boolean>(false);
-  const paymentHandledRef = useRef<boolean>(false);
-
-  // Handle post-payment redirect if user arrives at storefront with payment=success
-  useEffect(() => {
-    const isPaymentSuccess =
-      searchParams.get('payment') === 'success' ||
-      searchParams.get('status') === 'success';
-
-    if (isPaymentSuccess && !paymentHandledRef.current) {
-      paymentHandledRef.current = true;
-      clearCart();
-      showToast('Order completed successfully! Thank you for shopping with KUD Store.', 'success');
-
-      // Clean the query parameters from URL without reloading so browser refresh is clean
-      try {
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, '', cleanUrl);
-      } catch {
-        // Safe fallback
-      }
-    }
-  }, [searchParams, clearCart, showToast]);
 
   const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
 

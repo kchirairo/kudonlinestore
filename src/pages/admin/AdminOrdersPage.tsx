@@ -1,11 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, ArrowUpDown, ShoppingBag, Eye, RefreshCw } from 'lucide-react';
+import { Search, Filter, ArrowUpDown, ShoppingBag, Eye, RefreshCw, MailCheck, MailWarning, Clock } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Order, OrderStatus, PaymentStatus } from '../../types';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
 import { STORE_CONFIG } from '../../constants/config';
+
+const EmailConfirmationBadge: React.FC<{ order: Order }> = ({ order }) => {
+  if (order.confirmation_email_sent) {
+    return (
+      <span
+        title={order.confirmation_email_sent_at ? `Sent at ${new Date(order.confirmation_email_sent_at).toLocaleString()}` : 'Confirmation email sent'}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200"
+      >
+        <MailCheck className="w-3 h-3" />
+        Sent
+      </span>
+    );
+  }
+  const isPaid = order.payment_status?.toLowerCase() === 'paid' || order.status?.toLowerCase() === 'confirmed';
+  if (isPaid) {
+    if (order.confirmation_email_error) {
+      return (
+        <span
+          title={`Delivery failed: ${order.confirmation_email_error}`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-200"
+        >
+          <MailWarning className="w-3 h-3" />
+          Failed
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+        <Clock className="w-3 h-3" />
+        Pending
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-gray-400 bg-gray-50 border border-gray-100">
+      Unpaid
+    </span>
+  );
+};
 
 export const AdminOrdersPage: React.FC = () => {
   const navigate = useNavigate();
@@ -185,6 +224,7 @@ export const AdminOrdersPage: React.FC = () => {
                   <th className="py-3.5 px-6">Items</th>
                   <th className="py-3.5 px-6">Total</th>
                   <th className="py-3.5 px-6">Payment</th>
+                  <th className="py-3.5 px-6">Email</th>
                   <th className="py-3.5 px-6">Status</th>
                   <th className="py-3.5 px-6 text-right">Action</th>
                 </tr>
@@ -213,6 +253,9 @@ export const AdminOrdersPage: React.FC = () => {
                     </td>
                     <td className="py-4 px-6">
                       <PaymentStatusBadge status={order.payment_status} />
+                    </td>
+                    <td className="py-4 px-6">
+                      <EmailConfirmationBadge order={order} />
                     </td>
                     <td className="py-4 px-6">
                       <OrderStatusBadge status={order.status} />
@@ -261,7 +304,8 @@ export const AdminOrdersPage: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className="text-right">
+                  <div className="text-right flex items-center gap-2">
+                    <EmailConfirmationBadge order={order} />
                     <PaymentStatusBadge status={order.payment_status} />
                   </div>
                 </div>

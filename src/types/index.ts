@@ -191,6 +191,13 @@ export interface Order {
   payment_method: string;
   shipping_address: ShippingAddress;
   items: OrderItem[];
+  confirmation_email_sent?: boolean;
+  confirmation_email_sent_at?: string;
+  confirmation_email_error?: string;
+  confirmation_email_resend_count?: number;
+  confirmation_email_last_attempt_at?: string;
+  yoco_checkout_id?: string;
+  paid_at?: string;
 }
 
 export type CustomerAccountStatus = 'active' | 'on_hold' | 'disabled';
@@ -257,6 +264,8 @@ export interface Customer {
   hideReferralEarnings?: boolean;
   hideInviteOption?: boolean;
   hideReferralWallet?: boolean;
+  referral_rewards_enabled?: boolean; // Per-customer activation for Referral Rewards & Wallet
+  referralRewardsEnabled?: boolean;
 }
 
 export interface AdminStats {
@@ -629,6 +638,7 @@ export interface PromoBannerSlide {
 
 export interface PromoBannerConfig {
   enabled: boolean;
+  promotional_banner_enabled?: boolean;
   layout: 'compact' | 'hero' | 'split' | 'video-focus' | 'slides' | 'square-showcase';
   headline: string;
   subtext: string;
@@ -781,6 +791,8 @@ export interface UserReferralRewardsState {
   hideReferralEarnings?: boolean; // Per-customer toggle to hide earnings from their dashboard
   hideInviteOption?: boolean; // Per-customer toggle to hide invite options from their dashboard
   hideReferralWallet?: boolean; // Per-customer toggle to hide Referral Rewards & Wallet completely
+  referral_rewards_enabled?: boolean; // Admin per-customer activation flag (defaults to false for new customers)
+  referralRewardsEnabled?: boolean;
   adminAdjustments?: AdminReferralAdjustment[];
   lastUpdated?: string;
 }

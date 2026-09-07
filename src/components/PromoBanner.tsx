@@ -31,6 +31,15 @@ export const PromoBanner: React.FC = () => {
   const [isMuted, setIsMuted] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [videoErrorMap, setVideoErrorMap] = useState<Record<string, boolean>>({});
+  const [imageErrorMap, setImageErrorMap] = useState<Record<string, boolean>>({});
+
+  const handleVideoError = useCallback((bannerId: string) => {
+    setVideoErrorMap((prev) => ({ ...prev, [bannerId]: true }));
+  }, []);
+
+  const handleImageError = useCallback((bannerId: string) => {
+    setImageErrorMap((prev) => ({ ...prev, [bannerId]: true }));
+  }, []);
 
   // Touch swipe support refs
   const touchStartXRef = useRef<number | null>(null);
@@ -103,84 +112,19 @@ export const PromoBanner: React.FC = () => {
     }
   }, [isIntersecting, isPlayingVideo, currentIndex]);
 
-  // Derive active banners list (ignoring banners without any media)
+  // Derive active banners list strictly from Admin-saved banners in Supabase
   const activeBanners: PromotionalBannerItem[] = useMemo(() => {
-    if (!promoBanner || !promoBanner.enabled) return [];
+    // Single source of truth: promotional_banner_enabled must be explicitly true
+    const isGloballyActive = promoBanner?.promotional_banner_enabled === true && promoBanner?.enabled === true;
+    if (!isGloballyActive) return [];
 
-    const hasMedia = (b: PromotionalBannerItem) =>
-      Boolean(b.mediaUrl || b.desktopVideoUrl || b.mobileVideoUrl || b.mediaPosterUrl);
-
-    // If modern banners array is present
-    if (promoBanner.banners && promoBanner.banners.length > 0) {
-      const filtered = promoBanner.banners
+    // Modern banners array saved by Admin in Supabase
+    if (promoBanner.banners && Array.isArray(promoBanner.banners)) {
+      const active = promoBanner.banners
         .filter(isBannerActive)
-        .filter(hasMedia)
         .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
-      if (filtered.length > 0) {
-        return filtered;
-      }
-    }
-
-    // Fallback: convert legacy single config or slides into PromotionalBannerItem format
-    if (promoBanner.slides && promoBanner.slides.length > 0) {
-      return promoBanner.slides.map((s, idx) => ({
-        id: s.id || `legacy-slide-${idx}`,
-        title: s.headline || 'Exclusive Promotion',
-        subtitle: s.subtext || '',
-        description: '',
-        mediaType: s.mediaType === 'video' ? 'video' : 'image',
-        mediaUrl: s.mediaUrl || '',
-        mediaAltText: s.mediaAltText || 'Promotional media',
-        aspectRatio: '1:1',
-        showBadge: !!s.badgeText,
-        badgeType: 'CUSTOM',
-        badgeCustomText: s.badgeText || '',
-        badgeColor: '#ff6452',
-        showCta: !!s.ctaText,
-        ctaText: s.ctaText || 'Shop Now',
-        ctaLink: s.ctaLink || '/search',
-        textPosition: 'beside-split',
-        backgroundColor: s.backgroundColor || promoBanner.backgroundColor || '#eff6ff',
-        textColor: promoBanner.textColor || 'dark',
-        displayOrder: idx + 1,
-        isEnabled: true,
-        isDraft: false,
-        createdAt: new Date().toISOString(),
-      }));
-    }
-
-    // Single legacy banner fallback
-    if (promoBanner.headline || promoBanner.mediaUrl) {
-      return [
-        {
-          id: 'default-legacy-banner',
-          title: promoBanner.headline || 'Special Online Store Deals',
-          subtitle: promoBanner.subtext || '',
-          description: '',
-          mediaType: promoBanner.mediaType === 'video' ? 'video' : 'image',
-          mediaUrl: promoBanner.mediaUrl || '',
-          mediaPosterUrl: promoBanner.mediaPosterUrl,
-          mediaAltText: promoBanner.mediaAltText || 'Store promotion',
-          aspectRatio: '1:1',
-          showBadge: promoBanner.showBadge,
-          badgeType: 'CUSTOM',
-          badgeCustomText: promoBanner.badgeText,
-          badgeColor: promoBanner.accentBadgeColor || '#ff6452',
-          showCta: promoBanner.showCta,
-          ctaText: promoBanner.ctaText || 'Shop Now',
-          ctaLink: promoBanner.ctaLink || '/search',
-          textPosition: promoBanner.layout === 'hero' ? 'overlay-left' : 'beside-split',
-          overlayDimming: promoBanner.overlayDimming || 45,
-          overlayStyle: promoBanner.overlayBackgroundStyle || 'gradient',
-          backgroundColor: promoBanner.backgroundColor || '#eff6ff',
-          textColor: promoBanner.textColor || 'dark',
-          displayOrder: 1,
-          isEnabled: true,
-          isDraft: false,
-          createdAt: new Date().toISOString(),
-        },
-      ];
+      return active;
     }
 
     return [];
@@ -298,12 +242,10 @@ export const PromoBanner: React.FC = () => {
     touchEndXRef.current = null;
   };
 
-  // Video error handler
-  const handleVideoError = (bannerId: string) => {
-    setVideoErrorMap((prev) => ({ ...prev, [bannerId]: true }));
-  };
+  // Single source of truth: promotional_banner_enabled must be explicitly true
+  const isGloballyActive = promoBanner?.promotional_banner_enabled === true && promoBanner?.enabled === true;
 
-  if (!promoBanner || !promoBanner.enabled || activeBanners.length === 0 || !currentBanner) {
+  if (!isGloballyActive || activeBanners.length === 0 || !currentBanner) {
     return null;
   }
 
@@ -311,8 +253,9 @@ export const PromoBanner: React.FC = () => {
   const showArrows = promoBanner.showNavigationArrows !== false && hasMultipleBanners;
   const showIndicators = promoBanner.showIndicators !== false && hasMultipleBanners;
 
-  // Countdown timer hook/ticker
+  // Media validation: strictly ensure media comes from configured Admin data and has not failed
   const isVideoFailed = videoErrorMap[currentBanner.id] === true;
+  const isImageFailed = imageErrorMap[currentBanner.id] === true;
   const isVideoPermitted = !prefersReducedMotion && !isDataSaverMode && !isVideoFailed;
 
   const hasMobileVideo = Boolean(currentBanner.mobileVideoUrl);
@@ -329,7 +272,7 @@ export const PromoBanner: React.FC = () => {
       activeVideoUrl = currentBanner.mobileVideoUrl!;
       isDedicatedMobileVideo = true;
     } else if (hasDesktopVideo) {
-      activeVideoUrl = currentBanner.desktopVideoUrl || currentBanner.mediaUrl || null;
+      activeVideoUrl = currentBanner.desktopVideoUrl || (currentBanner.mediaType === 'video' ? currentBanner.mediaUrl : null);
     } else if (hasMobileVideo) {
       activeVideoUrl = currentBanner.mobileVideoUrl!;
       isDedicatedMobileVideo = true;
@@ -337,7 +280,26 @@ export const PromoBanner: React.FC = () => {
   }
 
   const isVideo = Boolean(activeVideoUrl);
-  const fallbackImageUrl = currentBanner.mediaUrl || currentBanner.mediaPosterUrl || '';
+
+  // Strictly validate that active image URL comes from the configured banner, is not a video file, and has not failed
+  let activeImageUrl: string | null = null;
+  if (!isImageFailed) {
+    if (currentBanner.mediaType === 'image' && currentBanner.mediaUrl) {
+      const url = currentBanner.mediaUrl.trim();
+      const isVideoFile = url.toLowerCase().endsWith('.mp4') || url.toLowerCase().endsWith('.webm');
+      if (url && !isVideoFile) {
+        activeImageUrl = url;
+      }
+    } else if (currentBanner.mediaType === 'video' && currentBanner.mediaPosterUrl) {
+      const url = currentBanner.mediaPosterUrl.trim();
+      const isVideoFile = url.toLowerCase().endsWith('.mp4') || url.toLowerCase().endsWith('.webm');
+      if (url && !isVideoFile) {
+        activeImageUrl = url;
+      }
+    }
+  }
+
+  const hasValidMedia = Boolean((isVideo && activeVideoUrl) || activeImageUrl);
   const showControls = Boolean(currentBanner.showVideoControls || currentBanner.videoControls);
 
   // Object position for responsive cropping without stretching or distortion
@@ -395,7 +357,7 @@ export const PromoBanner: React.FC = () => {
                   ref={videoRef}
                   key={`video-overlay-${currentBanner.id}-${activeVideoUrl}`}
                   src={activeVideoUrl}
-                  poster={currentBanner.mediaPosterUrl || fallbackImageUrl || undefined}
+                  poster={activeImageUrl || undefined}
                   autoPlay={currentBanner.videoAutoplay !== false && isPlayingVideo}
                   muted={isMuted}
                   loop={currentBanner.videoLoop !== false}
@@ -405,16 +367,20 @@ export const PromoBanner: React.FC = () => {
                   style={{ objectPosition: videoObjectPosition }}
                   className="w-full h-full object-cover"
                 />
-              ) : fallbackImageUrl ? (
+              ) : activeImageUrl ? (
                 <img
-                  src={fallbackImageUrl}
+                  src={activeImageUrl}
                   alt={currentBanner.mediaAltText || currentBanner.title}
                   loading={currentIndex === 0 ? 'eager' : 'lazy'}
                   fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
+                  onError={() => handleImageError(currentBanner.id)}
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <div className="w-full h-full bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900" />
+                <div
+                  className="w-full h-full"
+                  style={{ backgroundColor: currentBanner.backgroundColor || '#1e293b' }}
+                />
               )}
             </div>
 
@@ -518,12 +484,14 @@ export const PromoBanner: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-center p-4 sm:p-6 md:p-8 lg:p-10">
             {/* Left Promotional Content & Text */}
             <div
-              className={`space-y-4 sm:space-y-5 order-2 lg:order-1 flex flex-col justify-center ${
-                currentRatio === '16:9'
-                  ? 'lg:col-span-5'
-                  : currentRatio === '4:3'
-                  ? 'lg:col-span-6'
-                  : 'lg:col-span-7'
+              className={`space-y-4 sm:space-y-5 ${
+                hasValidMedia
+                  ? currentRatio === '16:9'
+                    ? 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-5'
+                    : currentRatio === '4:3'
+                    ? 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-6'
+                    : 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-7'
+                  : 'order-1 col-span-12 max-w-4xl mx-auto'
               }`}
             >
               {/* Badges & Flash Tag */}
@@ -583,89 +551,87 @@ export const PromoBanner: React.FC = () => {
               )}
             </div>
 
-            {/* Right Media Showcase with dynamic Aspect Ratio (1:1, 4:3, or 16:9) */}
-            <div
-              className={`order-1 lg:order-2 flex items-center justify-center ${
-                currentRatio === '16:9'
-                  ? 'lg:col-span-7'
-                  : currentRatio === '4:3'
-                  ? 'lg:col-span-6'
-                  : 'lg:col-span-5'
-              }`}
-            >
+            {/* Right Media Showcase with dynamic Aspect Ratio (1:1, 4:3, or 16:9) - only rendered when valid saved media exists */}
+            {hasValidMedia && (
               <div
-                className={`relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-md bg-slate-900 border border-slate-200/60 dark:border-slate-800 group/media transition-all duration-300 ${
-                  isMobileViewport && isDedicatedMobileVideo
-                    ? 'max-w-[320px] aspect-[4/5]'
-                    : currentRatio === '16:9'
-                    ? 'max-w-[460px] sm:max-w-[520px] md:max-w-[580px] lg:max-w-[640px] aspect-[16/9]'
+                className={`order-1 lg:order-2 flex items-center justify-center ${
+                  currentRatio === '16:9'
+                    ? 'lg:col-span-7'
                     : currentRatio === '4:3'
-                    ? 'max-w-[380px] sm:max-w-[440px] md:max-w-[480px] lg:max-w-[520px] aspect-[4/3]'
-                    : 'max-w-[340px] sm:max-w-[380px] md:max-w-[420px] lg:max-w-[460px] aspect-square'
+                    ? 'lg:col-span-6'
+                    : 'lg:col-span-5'
                 }`}
               >
-                {/* Media Container */}
-                {isVideo && activeVideoUrl ? (
-                  <video
-                    ref={videoRef}
-                    key={`video-split-${currentBanner.id}-${activeVideoUrl}`}
-                    src={activeVideoUrl}
-                    poster={currentBanner.mediaPosterUrl || fallbackImageUrl || undefined}
-                    autoPlay={currentBanner.videoAutoplay !== false && isPlayingVideo}
-                    muted={isMuted}
-                    loop={currentBanner.videoLoop !== false}
-                    playsInline
-                    preload="metadata"
-                    onError={() => handleVideoError(currentBanner.id)}
-                    style={{ objectPosition: videoObjectPosition }}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
-                  />
-                ) : fallbackImageUrl ? (
-                  <img
-                    src={fallbackImageUrl}
-                    alt={currentBanner.mediaAltText || currentBanner.title}
-                    loading={currentIndex === 0 ? 'eager' : 'lazy'}
-                    fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-slate-400">
-                    <Sparkles className="w-10 h-10 text-[#ff6452] mb-2" />
-                    <p className="text-xs font-semibold">Special Promotion</p>
-                  </div>
-                )}
+                <div
+                  className={`relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-md bg-slate-900 border border-slate-200/60 dark:border-slate-800 group/media transition-all duration-300 ${
+                    isMobileViewport && isDedicatedMobileVideo
+                      ? 'max-w-[320px] aspect-[4/5]'
+                      : currentRatio === '16:9'
+                      ? 'max-w-[460px] sm:max-w-[520px] md:max-w-[580px] lg:max-w-[640px] aspect-[16/9]'
+                      : currentRatio === '4:3'
+                      ? 'max-w-[380px] sm:max-w-[440px] md:max-w-[480px] lg:max-w-[520px] aspect-[4/3]'
+                      : 'max-w-[340px] sm:max-w-[380px] md:max-w-[420px] lg:max-w-[460px] aspect-square'
+                  }`}
+                >
+                  {/* Media Container */}
+                  {isVideo && activeVideoUrl ? (
+                    <video
+                      ref={videoRef}
+                      key={`video-split-${currentBanner.id}-${activeVideoUrl}`}
+                      src={activeVideoUrl}
+                      poster={activeImageUrl || undefined}
+                      autoPlay={currentBanner.videoAutoplay !== false && isPlayingVideo}
+                      muted={isMuted}
+                      loop={currentBanner.videoLoop !== false}
+                      playsInline
+                      preload="metadata"
+                      onError={() => handleVideoError(currentBanner.id)}
+                      style={{ objectPosition: videoObjectPosition }}
+                      className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
+                    />
+                  ) : activeImageUrl ? (
+                    <img
+                      src={activeImageUrl}
+                      alt={currentBanner.mediaAltText || currentBanner.title}
+                      loading={currentIndex === 0 ? 'eager' : 'lazy'}
+                      fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
+                      onError={() => handleImageError(currentBanner.id)}
+                      className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
+                    />
+                  ) : null}
 
-                {/* Floating Discount Tag on image if applicable */}
-                {currentBanner.showDiscount && currentBanner.discountPercentage && (
-                  <div className="absolute top-3 left-3 bg-[#ff6452] text-white text-xs sm:text-sm font-black px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-1">
-                    <Percent className="w-3.5 h-3.5" />
-                    <span>{currentBanner.discountPercentage}% OFF</span>
-                  </div>
-                )}
+                  {/* Floating Discount Tag on image if applicable */}
+                  {currentBanner.showDiscount && currentBanner.discountPercentage && (
+                    <div className="absolute top-3 left-3 bg-[#ff6452] text-white text-xs sm:text-sm font-black px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-1">
+                      <Percent className="w-3.5 h-3.5" />
+                      <span>{currentBanner.discountPercentage}% OFF</span>
+                    </div>
+                  )}
 
-                {/* Video controls */}
-                {isVideo && showControls && (
-                  <div className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full text-white text-xs border border-white/10 z-10">
-                    <button
-                      type="button"
-                      onClick={() => setIsPlayingVideo(!isPlayingVideo)}
-                      className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
-                      aria-label={isPlayingVideo ? 'Pause video' : 'Play video'}
-                    >
-                      {isPlayingVideo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsMuted(!isMuted)}
-                      className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
-                      aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-                    >
-                      {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                )}
+                  {/* Video controls */}
+                  {isVideo && showControls && (
+                    <div className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full text-white text-xs border border-white/10 z-10">
+                      <button
+                        type="button"
+                        onClick={() => setIsPlayingVideo(!isPlayingVideo)}
+                        className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
+                        aria-label={isPlayingVideo ? 'Pause video' : 'Play video'}
+                      >
+                        {isPlayingVideo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsMuted(!isMuted)}
+                        className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
+                        aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+                      >
+                        {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

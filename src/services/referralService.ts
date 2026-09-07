@@ -108,10 +108,13 @@ export const DEFAULT_INITIAL_USER_REWARDS: Omit<UserReferralRewardsState, 'userI
   pendingReferralsCount: 0,
   vouchers: [],
   history: [],
+  referral_rewards_enabled: false,
+  referralRewardsEnabled: false,
 };
 
 export interface EffectiveCustomerReferralSettings {
   isProgramEnabled: boolean;
+  referral_rewards_enabled: boolean;
   isBanned: boolean;
   banReason?: string;
   isEarningsFrozen: boolean;
@@ -135,24 +138,31 @@ export function getEffectiveCustomerReferralSettings(
   } | null
 ): EffectiveCustomerReferralSettings {
   const isProgramEnabled = globalConfig?.isProgramEnabled ?? true;
+  // Per-customer activation flag: strictly defaults to false unless explicitly activated by Admin
+  const referral_rewards_enabled = Boolean(
+    userRewards?.referral_rewards_enabled ?? userRewards?.referralRewardsEnabled ?? false
+  );
   const isBanned = Boolean(userRewards?.isBanned);
   const banReason = userRewards?.banReason;
   const isEarningsFrozen = Boolean(userRewards?.isEarningsFrozen);
   const frozenReason = userRewards?.frozenReason;
   const frozenAt = userRewards?.frozenAt;
-  const hideEarnings = Boolean(userRewards?.hideReferralEarnings || globalConfig?.hideReferralEarningsGlobally);
-  const hideReferralWallet = Boolean(
+
+  // If referral_rewards_enabled is disabled, completely hide all referral and wallet options
+  const hideEarnings = !referral_rewards_enabled || Boolean(userRewards?.hideReferralEarnings || globalConfig?.hideReferralEarningsGlobally);
+  const hideReferralWallet = !referral_rewards_enabled || Boolean(
     userRewards?.hideReferralWallet || globalConfig?.hideReferralWalletGlobally
   );
-  const hideInvite = Boolean(
+  const hideInvite = !referral_rewards_enabled || Boolean(
     userRewards?.hideInviteOption || globalConfig?.hideInviteOptionGlobally || isBanned || !isProgramEnabled
   );
   const allowLeaderboard = Boolean(
-    (globalConfig?.allowLeaderboardDisplay ?? true) && isProgramEnabled && !hideEarnings && !hideReferralWallet
+    referral_rewards_enabled && (globalConfig?.allowLeaderboardDisplay ?? true) && isProgramEnabled && !hideEarnings && !hideReferralWallet
   );
 
   return {
     isProgramEnabled,
+    referral_rewards_enabled,
     isBanned,
     banReason,
     isEarningsFrozen,
@@ -200,6 +210,12 @@ export const referralService = {
 
         if (profile) {
           const remoteReferralData = (profile as any).referral_rewards || (profile as any).referral_data;
+          const isRefEnabled = (profile as any).referral_rewards_enabled !== undefined
+            ? Boolean((profile as any).referral_rewards_enabled)
+            : (remoteReferralData && typeof remoteReferralData === 'object' && remoteReferralData.referral_rewards_enabled !== undefined
+                ? Boolean(remoteReferralData.referral_rewards_enabled)
+                : false);
+
           if (remoteReferralData && typeof remoteReferralData === 'object') {
             const merged: UserReferralRewardsState = {
               userId,
@@ -217,6 +233,8 @@ export const referralService = {
               frozenAt: remoteReferralData.frozenAt,
               hideReferralEarnings: Boolean(remoteReferralData.hideReferralEarnings),
               hideInviteOption: Boolean(remoteReferralData.hideInviteOption),
+              referral_rewards_enabled: isRefEnabled,
+              referralRewardsEnabled: isRefEnabled,
               adminAdjustments: remoteReferralData.adminAdjustments || [],
               lastUpdated: remoteReferralData.lastUpdated || new Date().toISOString(),
             };
