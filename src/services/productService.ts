@@ -297,7 +297,38 @@ export function mapSupabaseProduct(p: any): Product {
 
 let inflightProductsPromise: Promise<Product[]> | null = null;
 let lastProductsCache: { timestamp: number; data: Product[] } | null = null;
-const CACHE_TTL_MS = 2500; // 2.5s cache prevents duplicate queries during rapid re-renders or Strict Mode
+const CACHE_TTL_MS = 60 * 1000; // 60s memory cache TTL
+const SESSION_PRODUCTS_KEY = 'kud_active_products_storefront_v1';
+
+/**
+ * Load cached products from sessionStorage if available
+ */
+function getSessionProducts(): Product[] | null {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_PRODUCTS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+  } catch {
+    // Non-fatal
+  }
+  return null;
+}
+
+/**
+ * Persist active products in sessionStorage so they remain available across logout & page navigation
+ */
+function saveSessionProducts(products: Product[]): void {
+  if (typeof window === 'undefined' || !window.sessionStorage || !products || products.length === 0) return;
+  try {
+    window.sessionStorage.setItem(SESSION_PRODUCTS_KEY, JSON.stringify(products));
+  } catch {
+    // Quota exceeded or private browsing non-fatal
+  }
+}
 
 export const productService = {
   /**
@@ -309,8 +340,9 @@ export const productService = {
   },
 
   /**
-   * Fetches fresh products directly from Supabase public.products table,
-   * joining public.product_media where available.
+   * Fetches fresh products directly from Supabase public.products table.
+   * Supports both AUTHENTICATED and ANONYMOUS browsing seamlessly:
+   * supabase.from('products').select('*').eq('is_active', true)
    */
   async getAllRawProducts(forceRefresh = false): Promise<Product[]> {
     if (!isSupabaseConfigured() || !supabase) {
@@ -318,10 +350,11 @@ export const productService = {
       console.error(`[ProductService] ${err}`);
       console.log(`[Supabase Storefront] Project URL: ${supabaseUrl || 'NOT_CONFIGURED'}`);
       console.error(`[Supabase Storefront] Error:`, err);
-      return [];
+      return getSessionProducts() || lastProductsCache?.data || [];
     }
 
-    if (!forceRefresh && lastProductsCache && Date.now() - lastProductsCache.timestamp < CACHE_TTL_MS) {
+    const now = Date.now();
+    if (!forceRefresh && lastProductsCache && now - lastProductsCache.timestamp < CACHE_TTL_MS) {
       return lastProductsCache.data;
     }
 
@@ -333,26 +366,20 @@ export const productService = {
       try {
         console.log(`[Supabase Storefront] Project URL: ${supabaseUrl}`);
 
-        // Try primary query with product_media join
+        // Primary storefront query supporting both AUTHENTICATED and ANONYMOUS users:
+        // supabase.from('products').select('*').eq('is_active', true)
         let { data, error } = await supabase
           .from('products')
-          .select('*, product_media(*)')
+          .select('*')
+          .eq('is_active', true)
           .order('created_at', { ascending: false });
 
-        // If join fails due to relationship cache, fallback gracefully to select *
-        if (error) {
-          console.warn('[Supabase Storefront] Fallback query for public.products:', error.message);
-          const fallbackRes = await supabase
-            .from('products')
-            .select('*')
-            .order('created_at', { ascending: false });
-          data = fallbackRes.data;
-          error = fallbackRes.error;
-        }
-
-        // If client query still encounters an error (such as function permission restrictions for logged-out visitors),
-        // seamlessly fallback to the secure server products API
+        // If client query encounters an error (such as function permission restrictions for logged-out visitors),
+        // seamlessly fallback to the public server products API (/api/products)
         if (error || !data || data.length === 0) {
+          if (error) {
+            console.warn('[Supabase Storefront] Client query notice, trying server fallback:', error.message);
+          }
           try {
             const apiRes = await fetch('/api/products');
             if (apiRes.ok) {
@@ -367,25 +394,39 @@ export const productService = {
           }
         }
 
-        if (error) {
-          console.warn('[Supabase Storefront] Supabase query notice:', {
-            message: error.message,
-            code: error.code,
-          });
-          return lastProductsCache?.data || [];
+        // If still empty or errored, fallback to sessionStorage/memory cache so products never disappear on logout
+        if (error || !data || data.length === 0) {
+          const sessionSaved = getSessionProducts();
+          if (sessionSaved && sessionSaved.length > 0) {
+            console.log('[Supabase Storefront] Using session-cached active products:', sessionSaved.length);
+            lastProductsCache = { timestamp: now, data: sessionSaved };
+            return sessionSaved;
+          }
+
+          if (lastProductsCache && lastProductsCache.data.length > 0) {
+            console.log('[Supabase Storefront] Retaining in-memory active products:', lastProductsCache.data.length);
+            return lastProductsCache.data;
+          }
+
+          if (error) {
+            console.warn('[Supabase Storefront] Supabase query notice:', {
+              message: error.message,
+              code: error.code,
+            });
+            return [];
+          }
+
+          const emptyResult: Product[] = [];
+          lastProductsCache = { timestamp: now, data: emptyResult };
+          return emptyResult;
         }
 
         const count = data ? data.length : 0;
         console.log(`[Supabase Storefront] Number of products returned: ${count}`);
 
-        if (!data || data.length === 0) {
-          const emptyResult: Product[] = [];
-          lastProductsCache = { timestamp: Date.now(), data: emptyResult };
-          return emptyResult;
-        }
-
         const mapped = data.map(mapSupabaseProduct);
-        lastProductsCache = { timestamp: Date.now(), data: mapped };
+        lastProductsCache = { timestamp: now, data: mapped };
+        saveSessionProducts(mapped);
         return mapped;
       } finally {
         inflightProductsPromise = null;
@@ -480,23 +521,14 @@ export const productService = {
       return null;
     }
 
-    // Try query with product_media join
+    // Direct query for product by ID supporting both authenticated and anonymous browsing
     let { data, error } = await supabase
       .from('products')
-      .select('*, product_media(*)')
+      .select('*')
       .eq('id', id)
       .maybeSingle();
 
-    if (error) {
-      const fallbackRes = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
-      data = fallbackRes.data;
-    }
-
-    if (!data) {
+    if (error || !data) {
       try {
         const apiRes = await fetch(`/api/products/${encodeURIComponent(id)}`);
         if (apiRes.ok) {
@@ -510,7 +542,16 @@ export const productService = {
       }
     }
 
-    if (!data) return null;
+    if (!data) {
+      // Check session or memory cache
+      const cached = lastProductsCache?.data || getSessionProducts();
+      if (cached) {
+        const found = cached.find((p) => p.id === id);
+        if (found) return found;
+      }
+      return null;
+    }
+
     return mapSupabaseProduct(data);
   },
 
