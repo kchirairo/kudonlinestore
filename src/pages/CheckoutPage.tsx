@@ -30,6 +30,22 @@ export const CheckoutPage: React.FC = () => {
   const [paymentConfig, setPaymentConfig] = useState<PaymentGatewayConfig | null>(null);
   const [isLoadingConfig, setIsLoadingConfig] = useState<boolean>(true);
 
+  // Persistent VAT / TAX settings loaded via RPC get_store_tax_settings
+  const [taxSettings, setTaxSettings] = useState<{
+    tax_enabled: boolean;
+    tax_name: string;
+    tax_rate: number;
+    show_tax_on_receipt: boolean;
+    vat_registration_number?: string | null;
+  }>({
+    tax_enabled: false,
+    tax_name: 'VAT',
+    tax_rate: 15,
+    show_tax_on_receipt: true,
+    vat_registration_number: null,
+  });
+  const [isLoadingTax, setIsLoadingTax] = useState<boolean>(true);
+
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
     fullName: user?.fullName || '',
     email: user?.email || '',
@@ -132,15 +148,52 @@ export const CheckoutPage: React.FC = () => {
     };
   }, [searchParams]);
 
+  // Fetch persistent VAT / TAX settings using customer RPC endpoint
+  useEffect(() => {
+    let isMounted = true;
+    async function loadTax() {
+      setIsLoadingTax(true);
+      try {
+        if (isSupabaseConfigured() && supabase) {
+          const { data, error } = await supabase.rpc('get_store_tax_settings');
+          if (!error && data) {
+            const row = Array.isArray(data) ? data[0] : data;
+            if (row && isMounted) {
+              setTaxSettings({
+                tax_enabled: Boolean(row.tax_enabled),
+                tax_name: row.tax_name || 'VAT',
+                tax_rate: row.tax_rate !== undefined && row.tax_rate !== null ? Number(row.tax_rate) : 15,
+                show_tax_on_receipt: row.show_tax_on_receipt !== false,
+                vat_registration_number: row.vat_registration_number || null,
+              });
+              setIsLoadingTax(false);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Checkout] Notice querying store tax settings:', err);
+      }
+      if (isMounted) {
+        setIsLoadingTax(false);
+      }
+    }
+    loadTax();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Track Initiate Checkout for Marketing Analytics & Meta/TikTok Pixel
   const hasTrackedCheckout = React.useRef(false);
   useEffect(() => {
     if (cart && cart.length > 0 && !hasTrackedCheckout.current) {
       hasTrackedCheckout.current = true;
-      const total = cartSubtotal + deliveryFee;
+      const initialTax = taxSettings.tax_enabled ? cartSubtotal * (taxSettings.tax_rate / 100) : 0;
+      const total = cartSubtotal + deliveryFee + initialTax;
       marketingService.trackInitiateCheckout(cart, total, user);
     }
-  }, [cart, cartSubtotal, deliveryFee, user]);
+  }, [cart, cartSubtotal, deliveryFee, user, taxSettings]);
 
   // Calculate active payment methods visible to customer strictly based on Admin configuration
   const availablePaymentMethods = PAYMENT_METHODS.filter((method) => {
@@ -158,7 +211,11 @@ export const CheckoutPage: React.FC = () => {
   });
 
   const discountAmount = 0; // standard checkout
-  const totalAmount = cartSubtotal + deliveryFee - discountAmount;
+  const taxableAmount = Math.max(0, cartSubtotal - discountAmount);
+  const taxAmount = taxSettings.tax_enabled
+    ? Math.round(taxableAmount * (taxSettings.tax_rate / 100) * 100) / 100
+    : 0;
+  const totalAmount = Math.round((cartSubtotal + deliveryFee + taxAmount - discountAmount) * 100) / 100;
 
   if (isAuthLoading) {
     return (
@@ -290,7 +347,7 @@ export const CheckoutPage: React.FC = () => {
       if (cachedPendingOrderId && paymentMethod === 'yoco') {
         try {
           const existingPending = await orderService.getOrderById(cachedPendingOrderId);
-          const currentTotal = cartSubtotal + deliveryFee - discountAmount;
+          const currentTotal = totalAmount;
           if (
             existingPending &&
             existingPending.payment_status === 'pending' &&
@@ -312,7 +369,15 @@ export const CheckoutPage: React.FC = () => {
           deliveryFee,
           discountAmount,
           finalPaymentMethodName,
-          user?.id
+          user?.id,
+          {
+            tax_enabled: taxSettings.tax_enabled,
+            tax_name: taxSettings.tax_name,
+            tax_rate: taxSettings.tax_rate,
+            tax_amount: taxAmount,
+            show_tax_on_receipt: taxSettings.show_tax_on_receipt,
+            vat_registration_number: taxSettings.vat_registration_number,
+          }
         );
         if (createdOrder?.id) {
           sessionStorage.setItem('kud_pending_checkout_order_id', createdOrder.id);
@@ -768,19 +833,27 @@ export const CheckoutPage: React.FC = () => {
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <span className="font-semibold text-gray-900 dark:text-white">
-                  {STORE_CONFIG.STORE_CURRENCY}{cartSubtotal.toLocaleString()}
+                  {STORE_CONFIG.STORE_CURRENCY}{cartSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
+              {taxSettings.tax_enabled && (
+                <div className="flex justify-between text-amber-700 dark:text-amber-400">
+                  <span>{taxSettings.tax_name} ({taxSettings.tax_rate}%)</span>
+                  <span className="font-semibold">
+                    {STORE_CONFIG.STORE_CURRENCY}{taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Delivery</span>
                 <span className="font-semibold text-gray-900 dark:text-white">
-                  {deliveryFee === 0 ? 'FREE' : `${STORE_CONFIG.STORE_CURRENCY}${deliveryFee}`}
+                  {deliveryFee === 0 ? 'FREE' : `${STORE_CONFIG.STORE_CURRENCY}${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </span>
               </div>
               <div className="border-t border-gray-100 dark:border-slate-800 pt-3 flex justify-between items-baseline">
                 <span className="font-bold text-gray-900 dark:text-white">Total</span>
                 <span className="text-2xl font-black text-gray-900 dark:text-white">
-                  {STORE_CONFIG.STORE_CURRENCY}{totalAmount.toLocaleString()}
+                  {STORE_CONFIG.STORE_CURRENCY}{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>

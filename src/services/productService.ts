@@ -406,7 +406,7 @@ export const productService = {
     let result = raw.filter((p) => p.isActive !== false);
 
     // Apply category filter
-    if (filters?.category && filters.category !== 'All') {
+    if (filters?.category && filters.category !== 'All' && filters.category !== 'All Products') {
       result = result.filter(
         (p) => p.category?.trim().toLowerCase() === filters.category!.trim().toLowerCase()
       );

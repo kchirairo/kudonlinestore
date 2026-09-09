@@ -168,10 +168,12 @@ export const SendInvoiceModal: React.FC<SendInvoiceModalProps> = ({
               <span>Invoice Amount:</span>
               <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(invoice.total_amount)}</span>
             </div>
-            <div className="flex justify-between text-gray-500 dark:text-slate-400">
-              <span>VAT Portion (15%):</span>
-              <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(invoice.vat_amount)}</span>
-            </div>
+            {invoice.vat_amount > 0 && (
+              <div className="flex justify-between text-gray-500 dark:text-slate-400">
+                <span>Tax / VAT Portion:</span>
+                <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(invoice.vat_amount)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-gray-500 dark:text-slate-400">
               <span>Payment Status:</span>
               <span className="font-bold text-emerald-600 dark:text-emerald-400">{invoice.payment_status}</span>

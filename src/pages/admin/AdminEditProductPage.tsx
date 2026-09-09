@@ -10,6 +10,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
+import { categoryService } from '../../services/categoryService';
 import {
   Product,
   ProductCategory,
@@ -19,7 +20,6 @@ import {
   ProductVideoItem,
 } from '../../types';
 import { useShop } from '../../context/ShopContext';
-import { STORE_CONFIG } from '../../constants/config';
 import { generateUniqueSku } from '../../utils/skuGenerator';
 import { convertImageToWebP } from '../../utils/imageUpload';
 
@@ -59,7 +59,8 @@ export const AdminEditProductPage: React.FC = () => {
   // ----------------------------------------------------
   const [name, setName] = useState<string>('');
   const [brand, setBrand] = useState<string>('');
-  const [category, setCategory] = useState<ProductCategory>('Beauty');
+  const [category, setCategory] = useState<ProductCategory>('' as ProductCategory);
+  const [categoryError, setCategoryError] = useState<string>('');
   const [subCategory, setSubCategory] = useState<string>('');
   const [productType, setProductType] = useState<string>('Physical Product');
   const [sku, setSku] = useState<string>('');
@@ -123,23 +124,24 @@ export const AdminEditProductPage: React.FC = () => {
       setErrorMsg('');
 
       try {
-        const [product, cats, allProducts] = await Promise.all([
+        const [product, catsRes, allProducts] = await Promise.all([
           adminService.getProductById(id!),
-          adminService.getCategories(),
+          categoryService.getActiveCategories(),
           adminService.getProducts(),
         ]);
 
-        if (cats && cats.length > 0) {
-          setCategories(cats.map((c) => c.name));
-        } else {
-          setCategories(['Beauty', 'Home', 'Sports & Leisure', 'Technology', 'Books', 'Others']);
+        if (catsRes.data && catsRes.data.length > 0) {
+          setCategories(catsRes.data.map((c) => c.name));
+        } else if (catsRes.error) {
+          console.error('[AdminEditProductPage] Supabase error loading product_categories:', catsRes.error);
+          setErrorMsg(`Failed to load product categories from database: ${catsRes.error}`);
         }
         setExistingProducts(allProducts || []);
 
         if (product) {
           setName(product.name || '');
           setBrand(product.brand || 'KUD Store');
-          setCategory((product.category as ProductCategory) || 'Beauty');
+          setCategory((product.category as ProductCategory) || ('' as ProductCategory));
           setSubCategory(product.subCategory || '');
           setProductType(product.productType || 'Physical Product');
           setSku(product.sku || '');
@@ -401,8 +403,16 @@ export const AdminEditProductPage: React.FC = () => {
     setErrorMsg('');
     setSuccessMsg('');
 
+    setCategoryError('');
     if (!name.trim()) {
       setErrorMsg('Product name is required.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    if (!category || !String(category).trim()) {
+      setCategoryError('Please select a valid product category.');
+      setErrorMsg('Please select a valid product category.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -659,7 +669,11 @@ export const AdminEditProductPage: React.FC = () => {
               brand={brand}
               setBrand={setBrand}
               category={category}
-              setCategory={setCategory}
+              setCategory={(cat) => {
+                setCategory(cat);
+                setCategoryError('');
+              }}
+              categoryError={categoryError}
               subCategory={subCategory}
               setSubCategory={setSubCategory}
               productType={productType}

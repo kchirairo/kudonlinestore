@@ -312,7 +312,7 @@ export const AdminOrderDetailsPage: React.FC = () => {
             return (
               <div className="text-left sm:text-right">
                 <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
-                  Grand Total (Incl. 15% VAT)
+                  {fin.taxEnabled ? `Grand Total (Incl. ${fin.taxName})` : 'Grand Total'}
                 </span>
                 <span className="text-2xl font-black text-gray-900">
                   {formatCurrency(fin.grandTotal)}
@@ -579,10 +579,12 @@ export const AdminOrderDetailsPage: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex justify-between">
-                  <span>VAT ({Math.round(VAT_RATE * 100)}%)</span>
-                  <span className="font-bold text-gray-900">{formatCurrency(fin.vatAmount)}</span>
-                </div>
+                {fin.taxEnabled && (
+                  <div className="flex justify-between">
+                    <span>{fin.taxName} ({fin.taxRate}%)</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(fin.vatAmount)}</span>
+                  </div>
+                )}
 
                 <div className="flex justify-between text-gray-600 pt-1 border-t border-gray-200">
                   <span>Payment Method</span>

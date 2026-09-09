@@ -460,10 +460,12 @@ export const OrderDetailsPage: React.FC = () => {
                       <span>-{formatCurrency(fin.discountAmount)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between">
-                    <span>VAT ({Math.round(VAT_RATE * 100)}%)</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(fin.vatAmount)}</span>
-                  </div>
+                  {fin.taxEnabled && fin.showTaxOnReceipt && (
+                    <div className="flex justify-between">
+                      <span>{fin.taxName} ({fin.taxRate}%)</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(fin.vatAmount)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center py-1">
                     <span>Payment Status</span>
                     <span

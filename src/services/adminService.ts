@@ -38,9 +38,11 @@ import {
   InvoiceMonthlyAnalyticsData,
   InvoiceSettingsConfig,
   InvoiceDeliveryStatus,
+  TaxSettings,
 } from '../types';
 import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
+import { categoryService } from './categoryService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
 import {
   STORE_CONFIG,
@@ -115,12 +117,18 @@ const DEFAULT_PAYMENT_CONFIG: PaymentGatewayConfig = {
 };
 
 const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'cat-1', name: 'Beauty', slug: 'beauty', isActive: true, sortOrder: 1, productCount: 12 },
-  { id: 'cat-2', name: 'Home', slug: 'home', isActive: true, sortOrder: 2, productCount: 8 },
-  { id: 'cat-3', name: 'Sports & Leisure', slug: 'sports-leisure', isActive: true, sortOrder: 3, productCount: 15 },
-  { id: 'cat-4', name: 'Technology', slug: 'technology', isActive: true, sortOrder: 4, productCount: 18 },
-  { id: 'cat-5', name: 'Books', slug: 'books', isActive: true, sortOrder: 5, productCount: 9 },
-  { id: 'cat-6', name: 'Others', slug: 'others', isActive: true, sortOrder: 6, productCount: 4 },
+  { id: 'cat-1', name: 'Technology', slug: 'technology', isActive: true, sortOrder: 1, display_order: 1 },
+  { id: 'cat-2', name: 'Sports & Leisure', slug: 'sports-leisure', isActive: true, sortOrder: 2, display_order: 2 },
+  { id: 'cat-3', name: 'Beauty', slug: 'beauty', isActive: true, sortOrder: 3, display_order: 3 },
+  { id: 'cat-4', name: 'Books', slug: 'books', isActive: true, sortOrder: 4, display_order: 4 },
+  { id: 'cat-5', name: 'Home', slug: 'home', isActive: true, sortOrder: 5, display_order: 5 },
+  { id: 'cat-6', name: 'Automotive', slug: 'automotive', isActive: true, sortOrder: 6, display_order: 6 },
+  { id: 'cat-7', name: 'Industrial & Tools', slug: 'industrial-tools', isActive: true, sortOrder: 7, display_order: 7 },
+  { id: 'cat-8', name: 'Health & Wellness', slug: 'health-wellness', isActive: true, sortOrder: 8, display_order: 8 },
+  { id: 'cat-9', name: 'Garden & Outdoor', slug: 'garden-outdoor', isActive: true, sortOrder: 9, display_order: 9 },
+  { id: 'cat-10', name: 'Office & Business', slug: 'office-business', isActive: true, sortOrder: 10, display_order: 10 },
+  { id: 'cat-11', name: 'Jewelry & Accessories', slug: 'jewelry-accessories', isActive: true, sortOrder: 11, display_order: 11 },
+  { id: 'cat-12', name: 'Fashion & Apparel', slug: 'fashion-apparel', isActive: true, sortOrder: 12, display_order: 12 },
 ];
 
 /**
@@ -1317,6 +1325,190 @@ export const adminService = {
    * Universal Supabase Settings Writer
    */
   writeSupabaseSetting: writeSupabaseSettingHelper,
+
+  /**
+   * Fetch persistent VAT / TAX settings from Supabase public.settings table.
+   * Supabase is the single source of truth.
+   */
+  async getTaxSettings(): Promise<TaxSettings> {
+    // 1. Direct Supabase query to public.settings
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('settings')
+          .select('id, tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          return {
+            id: data.id,
+            tax_enabled: Boolean(data.tax_enabled),
+            tax_name: data.tax_name || 'VAT',
+            tax_rate: data.tax_rate !== null && data.tax_rate !== undefined ? Number(data.tax_rate) : 15,
+            show_tax_on_receipt: data.show_tax_on_receipt !== false,
+            vat_registration_number: data.vat_registration_number || null,
+          };
+        }
+      } catch (err) {
+        console.warn('[adminService] Error querying public.settings for tax:', err);
+      }
+    }
+
+    // 2. RPC fallback
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_store_tax_settings');
+        if (!rpcErr && rpcData) {
+          const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+          if (row) {
+            return {
+              tax_enabled: Boolean(row.tax_enabled),
+              tax_name: row.tax_name || 'VAT',
+              tax_rate: row.tax_rate !== null && row.tax_rate !== undefined ? Number(row.tax_rate) : 15,
+              show_tax_on_receipt: row.show_tax_on_receipt !== false,
+              vat_registration_number: row.vat_registration_number || null,
+            };
+          }
+        }
+      } catch (rpcEx) {
+        console.warn('[adminService] RPC get_store_tax_settings fallback:', rpcEx);
+      }
+    }
+
+    // 3. API endpoint fallback
+    try {
+      const res = await fetch('/api/admin/tax-settings');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          return json.data;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[adminService] API fallback failed:', apiErr);
+    }
+
+    // Default if uninitialized
+    return {
+      tax_enabled: false,
+      tax_name: 'VAT',
+      tax_rate: 15,
+      show_tax_on_receipt: true,
+      vat_registration_number: null,
+    };
+  },
+
+  /**
+   * Save persistent VAT / TAX settings to Supabase public.settings table.
+   * Updates existing row without assuming or hardcoding the ID.
+   * Re-fetches the verified settings from Supabase before returning.
+   */
+  async saveTaxSettings(settings: {
+    tax_enabled: boolean;
+    tax_name: string;
+    tax_rate: number;
+    show_tax_on_receipt: boolean;
+    vat_registration_number?: string | null;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    data?: TaxSettings;
+  }> {
+    // 1. Validation
+    const rateNum = Number(settings.tax_rate);
+    if (isNaN(rateNum) || rateNum < 0 || rateNum > 100) {
+      return { success: false, error: 'Tax rate must be a valid percentage between 0 and 100.' };
+    }
+
+    const cleanTaxName = (settings.tax_name || 'VAT').trim();
+    if (!cleanTaxName) {
+      return { success: false, error: 'Tax name cannot be empty.' };
+    }
+
+    const payloadToUpdate = {
+      tax_enabled: Boolean(settings.tax_enabled),
+      tax_name: cleanTaxName,
+      tax_rate: rateNum,
+      show_tax_on_receipt: Boolean(settings.show_tax_on_receipt),
+      vat_registration_number: settings.vat_registration_number ? settings.vat_registration_number.trim() : null,
+      updated_at: new Date().toISOString(),
+    };
+
+    let directSuccess = false;
+    let directError: string | undefined;
+
+    // 2. Fetch the existing settings row ID first to avoid assuming the ID
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: existingRow, error: findError } = await supabase
+          .from('settings')
+          .select('id')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!findError && existingRow?.id) {
+          const { data: updated, error: updateError } = await supabase
+            .from('settings')
+            .update(payloadToUpdate)
+            .eq('id', existingRow.id)
+            .select('id, tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number')
+            .single();
+
+          if (!updateError && updated) {
+            directSuccess = true;
+          } else if (updateError) {
+            directError = updateError.message;
+            console.warn('[adminService] Direct Supabase update error on settings:', updateError.message);
+          }
+        } else if (findError) {
+          directError = findError.message;
+        }
+      } catch (ex: any) {
+        directError = ex?.message;
+        console.warn('[adminService] Exception during direct Supabase settings update:', ex);
+      }
+    }
+
+    // 3. Fallback via backend endpoint if direct RLS was constrained
+    if (!directSuccess) {
+      try {
+        const res = await fetch('/api/admin/tax-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadToUpdate),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            directSuccess = true;
+            directError = undefined;
+          } else {
+            directError = json.error || directError;
+          }
+        }
+      } catch (apiErr: any) {
+        console.warn('[adminService] API route fallback failed:', apiErr);
+        if (!directError) directError = apiErr?.message;
+      }
+    }
+
+    if (!directSuccess) {
+      return {
+        success: false,
+        error: directError || 'Failed to save VAT/TAX settings to database.',
+      };
+    }
+
+    // 4. Re-fetch verified database values
+    const verified = await this.getTaxSettings();
+    return {
+      success: true,
+      data: verified,
+    };
+  },
 
   /**
    * Fetch general store settings (Store name, currency, delivery fee, free delivery threshold, contact email, contact phone, store description)
@@ -2998,6 +3190,12 @@ export const adminService = {
     imageUrls = imageUrls.filter((url) => typeof url === 'string' && url.trim().length > 0);
     const primaryImageUrl = imageUrls[0] || '';
 
+    // Validate category
+    const categoryName = typeof productData.category === 'string' ? productData.category.trim() : '';
+    if (!categoryName) {
+      return { success: false, error: 'A valid product category is required.' };
+    }
+
     // Determine publish & active state
     const isAct = productData.productStatus ? productData.productStatus === 'active' : productData.isActive !== false;
 
@@ -3008,7 +3206,7 @@ export const adminService = {
       ...(generatedId ? { id: generatedId } : {}),
       name: (productData.name || 'New Product').trim(),
       brand: (productData.brand || 'KUD Store').trim(),
-      category: productData.category || 'Beauty',
+      category: categoryName,
       sub_category: productData.subCategory || null,
       product_type: productData.productType || null,
       short_description: productData.shortDescription || null,
@@ -3474,6 +3672,14 @@ export const adminService = {
     updatedImages = updatedImages.filter((url) => typeof url === 'string' && url.trim().length > 0);
     const primaryImageUrl = updatedImages[0] || '';
 
+    // Validate category if explicitly updated
+    if (productData.category !== undefined) {
+      const cleanCategory = typeof productData.category === 'string' ? productData.category.trim() : '';
+      if (!cleanCategory) {
+        return { success: false, error: 'A valid product category is required.' };
+      }
+    }
+
     const isAct = productData.productStatus !== undefined
       ? productData.productStatus === 'active'
       : productData.isActive !== undefined
@@ -3747,42 +3953,57 @@ export const adminService = {
   },
 
   /**
-   * Categories Management
+   * Categories Management - Supabase public.product_categories single source of truth
    */
   async getCategories(): Promise<Category[]> {
     let categories: Category[] = [];
 
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data, error } = await supabase.from('categories').select('*');
+        const { data, error } = await supabase
+          .from('product_categories')
+          .select('id, name, display_order, is_active, created_at')
+          .order('display_order', { ascending: true });
 
         if (!error && data && data.length > 0) {
           categories = data.map((c: any) => ({
             id: String(c.id),
             name: c.name,
-            slug: c.slug || c.name.toLowerCase().replace(/\s+/g, '-'),
-            isActive: c.isActive ?? c.is_active ?? true,
-            sortOrder: c.sortOrder ?? c.sort_order ?? 0,
-            productCount: c.productCount ?? c.product_count ?? 0,
+            slug: c.name.toLowerCase().replace(/\s+/g, '-'),
+            isActive: Boolean(c.is_active),
+            is_active: Boolean(c.is_active),
+            sortOrder: Number(c.display_order ?? 0),
+            display_order: Number(c.display_order ?? 0),
+            createdAt: c.created_at,
           }));
-
-          categories.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+        } else if (error) {
+          console.error('[AdminService] Supabase product_categories query error:', error);
         }
       } catch (err) {
-        console.warn('Supabase categories fetch error:', err);
+        console.error('[AdminService] Supabase product_categories fetch error:', err);
       }
     }
 
-    if (categories.length === 0) {
-      const stored = localStorage.getItem(LOCAL_CATEGORIES_KEY);
-      if (stored) {
-        try {
-          categories = JSON.parse(stored);
-        } catch {
-          categories = DEFAULT_CATEGORIES;
+    if (categories.length === 0 && typeof fetch !== 'undefined') {
+      try {
+        const resp = await fetch('/api/product-categories');
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            categories = json.data.map((c: any) => ({
+              id: String(c.id),
+              name: c.name,
+              slug: String(c.name).toLowerCase().replace(/\s+/g, '-'),
+              isActive: Boolean(c.is_active),
+              is_active: Boolean(c.is_active),
+              sortOrder: Number(c.display_order ?? 0),
+              display_order: Number(c.display_order ?? 0),
+              createdAt: c.created_at,
+            }));
+          }
         }
-      } else {
-        categories = DEFAULT_CATEGORIES;
+      } catch (e) {
+        console.error('[AdminService] Error querying /api/product-categories fallback:', e);
       }
     }
 
@@ -3796,11 +4017,12 @@ export const adminService = {
     sortOrder?: number;
   }): Promise<{ success: boolean; error?: string }> {
     const newCategory: Category = {
-      id: `cat-${Date.now()}`,
-      name: categoryData.name,
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cat-${Date.now()}`,
+      name: categoryData.name.trim(),
       slug: categoryData.slug || categoryData.name.toLowerCase().replace(/\s+/g, '-'),
       isActive: categoryData.isActive,
       sortOrder: categoryData.sortOrder || 10,
+      display_order: categoryData.sortOrder || 10,
       productCount: 0,
       createdAt: new Date().toISOString(),
     };
@@ -3808,26 +4030,23 @@ export const adminService = {
     if (isSupabaseConfigured() && supabase) {
       try {
         const payload: Record<string, any> = {
-          id: newCategory.id,
           name: newCategory.name,
-          slug: newCategory.slug,
+          display_order: newCategory.display_order,
           is_active: newCategory.isActive,
-          sort_order: newCategory.sortOrder,
-          created_at: newCategory.createdAt,
         };
 
-        const { error } = await executeWithColumnFallback(
-          (p) => supabase.from('categories').insert(p),
-          payload
-        );
+        const { error } = await supabase.from('product_categories').insert(payload);
         if (error) {
-          console.warn('Supabase category insert error:', error.message);
+          console.error('[AdminService] Supabase product_categories insert error:', error.message);
+          return { success: false, error: error.message };
         }
-      } catch (err) {
-        console.warn('Supabase category insert error:', err);
+      } catch (err: any) {
+        console.error('[AdminService] Supabase category insert error:', err);
+        return { success: false, error: err?.message || 'Failed to insert category' };
       }
     }
 
+    categoryService.invalidateCache();
     const categories = await this.getCategories();
     categories.push(newCategory);
     safeSetItem(LOCAL_CATEGORIES_KEY, categories);
@@ -3842,23 +4061,27 @@ export const adminService = {
     if (isSupabaseConfigured() && supabase) {
       try {
         const updatePayload: Record<string, any> = {};
-        if (categoryData.name !== undefined) updatePayload.name = categoryData.name;
-        if (categoryData.slug !== undefined) updatePayload.slug = categoryData.slug;
+        if (categoryData.name !== undefined) updatePayload.name = categoryData.name.trim();
         if (categoryData.isActive !== undefined) updatePayload.is_active = categoryData.isActive;
-        if (categoryData.sortOrder !== undefined) updatePayload.sort_order = categoryData.sortOrder;
+        if (categoryData.sortOrder !== undefined) updatePayload.display_order = categoryData.sortOrder;
+        if (categoryData.display_order !== undefined) updatePayload.display_order = categoryData.display_order;
 
-        const { error } = await executeWithColumnFallback(
-          (p) => supabase.from('categories').update(p).eq('id', id),
-          updatePayload
-        );
+        const { error } = await supabase
+          .from('product_categories')
+          .update(updatePayload)
+          .eq('id', id);
+
         if (error) {
-          console.warn('Supabase category update error:', error.message);
+          console.error('[AdminService] Supabase product_categories update error:', error.message);
+          return { success: false, error: error.message };
         }
-      } catch (err) {
-        console.warn('Supabase category update error:', err);
+      } catch (err: any) {
+        console.error('[AdminService] Supabase category update error:', err);
+        return { success: false, error: err?.message || 'Failed to update category' };
       }
     }
 
+    categoryService.invalidateCache();
     const categories = await this.getCategories();
     const idx = categories.findIndex((c) => c.id === id);
     if (idx > -1) {
@@ -3875,7 +4098,7 @@ export const adminService = {
     const category = (await this.getCategories()).find((c) => c.id === id);
     if (category) {
       const hasProducts = products.some(
-        (p) => p.category.toLowerCase() === category.name.toLowerCase()
+        (p) => p.category && p.category.toLowerCase() === category.name.toLowerCase()
       );
       if (hasProducts) {
         return {
@@ -3887,12 +4110,18 @@ export const adminService = {
 
     if (isSupabaseConfigured() && supabase) {
       try {
-        await supabase.from('categories').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase category delete error:', err);
+        const { error } = await supabase.from('product_categories').delete().eq('id', id);
+        if (error) {
+          console.error('[AdminService] Supabase product_categories delete error:', error.message);
+          return { success: false, error: error.message };
+        }
+      } catch (err: any) {
+        console.error('[AdminService] Supabase category delete error:', err);
+        return { success: false, error: err?.message || 'Failed to delete category' };
       }
     }
 
+    categoryService.invalidateCache();
     const categories = await this.getCategories();
     const filtered = categories.filter((c) => c.id !== id);
     safeSetItem(LOCAL_CATEGORIES_KEY, filtered);

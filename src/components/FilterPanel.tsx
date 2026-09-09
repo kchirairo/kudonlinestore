@@ -1,7 +1,7 @@
 import React from 'react';
-import { X, RotateCcw, Filter } from 'lucide-react';
+import { X, RotateCcw, Filter, AlertCircle, RefreshCw } from 'lucide-react';
 import { FilterOptions, ProductCategory, ProductCondition } from '../types';
-import { STORE_CONFIG } from '../constants/config';
+import { useProductCategories } from '../hooks/useProductCategories';
 
 interface FilterPanelProps {
   isOpen: boolean;
@@ -18,9 +18,10 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
   setFilters,
   resetFilters,
 }) => {
+  const { categoryNames, isLoading, error, refresh } = useProductCategories();
   if (!isOpen) return null;
 
-  const categories = ['All', ...STORE_CONFIG.CATEGORY_LIST] as (ProductCategory | 'All')[];
+  const categories = ['All Products', ...categoryNames];
   const conditions: (ProductCondition | 'All')[] = ['All', 'Brand New', 'Like New', 'Refurbished', 'Vintage'];
 
   return (
@@ -86,24 +87,63 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({
 
           {/* Category */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2.5">
-              Category
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((cat) => (
+            <div className="flex items-center justify-between mb-2.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                Category
+              </label>
+              {error && categoryNames.length === 0 && (
                 <button
-                  key={cat}
-                  onClick={() => setFilters((prev) => ({ ...prev, category: cat }))}
-                  className={`py-1.5 px-3 rounded-full border text-xs font-medium transition-all cursor-pointer ${
-                    (filters.category || 'All') === cat
-                      ? 'bg-gray-900 dark:bg-white border-gray-900 dark:border-white text-white dark:text-gray-900 font-semibold'
-                      : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-600 dark:text-slate-300 bg-white dark:bg-slate-800'
-                  }`}
+                  type="button"
+                  onClick={() => refresh()}
+                  className="text-xs text-rose-500 hover:text-rose-600 flex items-center gap-1 font-semibold cursor-pointer"
                 >
-                  {cat}
+                  <RefreshCw className="w-3 h-3" />
+                  Retry
                 </button>
-              ))}
+              )}
             </div>
+
+            {error && categoryNames.length === 0 ? (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                <span>Unable to load categories from database: {error}</span>
+              </div>
+            ) : isLoading && categoryNames.length === 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {[70, 95, 80, 110, 85].map((w, i) => (
+                  <div key={i} className="h-7 rounded-full bg-gray-100 dark:bg-slate-800 animate-pulse" style={{ width: `${w}px` }} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {categories.map((cat) => {
+                  const isAllOption = cat === 'All Products';
+                  const isSelected = isAllOption
+                    ? !filters.category || filters.category === 'All' || filters.category === 'All Products'
+                    : filters.category === cat;
+
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          category: isAllOption ? 'All' : (cat as ProductCategory),
+                        }))
+                      }
+                      className={`py-1.5 px-3 rounded-full border text-xs font-medium transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-gray-900 dark:bg-white border-gray-900 dark:border-white text-white dark:text-gray-900 font-semibold'
+                          : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-600 dark:text-slate-300 bg-white dark:bg-slate-800'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Condition */}

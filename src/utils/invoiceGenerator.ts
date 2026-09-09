@@ -48,8 +48,10 @@ export const generateOrderInvoicePDF = async (
   const companyEmail = settings?.companyEmail || STORE_CONFIG.CONTACT_EMAIL;
   const companyPhone = settings?.companyPhone || STORE_CONFIG.CONTACT_PHONE;
   const companyWhatsapp = settings?.whatsappSupport || settings?.companyWhatsapp || STORE_CONFIG.WHATSAPP_SUPPORT;
-  const vatNumber = settings?.vatNumber || DEFAULT_INVOICE_SETTINGS.vatNumber || 'ZA4920192837';
-  const invoiceTaxTitle = settings?.taxInvoiceTitle || 'TAX INVOICE / OFFICIAL RECEIPT';
+  const vatNumber = financials.vatRegistrationNumber || settings?.vatNumber || DEFAULT_INVOICE_SETTINGS.vatNumber || 'ZA4920192837';
+  const invoiceTaxTitle = financials.taxEnabled
+    ? (settings?.taxInvoiceTitle || 'TAX INVOICE / OFFICIAL RECEIPT')
+    : 'OFFICIAL RECEIPT / INVOICE';
 
   // 1. Header Section
   // Store Logo Badge
@@ -75,7 +77,7 @@ export const generateOrderInvoicePDF = async (
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-  doc.text('TAX INVOICE', pageWidth - margin, y + 6, { align: 'right' });
+  doc.text(financials.taxEnabled ? 'TAX INVOICE' : 'RECEIPT', pageWidth - margin, y + 6, { align: 'right' });
 
   // Payment Status Pill (Dynamically styled according to confirmed payment status)
   let statusColor = warningAmber;
@@ -110,7 +112,10 @@ export const generateOrderInvoicePDF = async (
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-  doc.text(`${companyAddress}  •  SARS VAT Reg #: ${vatNumber}`, margin, y);
+  const vatSubtitle = financials.showTaxOnReceipt && vatNumber
+    ? `${companyAddress}  •  Tax Reg #: ${vatNumber}`
+    : companyAddress;
+  doc.text(vatSubtitle, margin, y);
 
   y += 4;
 
@@ -316,11 +321,13 @@ export const generateOrderInvoicePDF = async (
     });
   }
 
-  summaryLines.push({
-    label: `VAT (${Math.round(VAT_RATE * 100)}%):`,
-    value: `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.vatAmount)}`,
-    bold: false,
-  });
+  if (financials.taxEnabled && financials.showTaxOnReceipt) {
+    summaryLines.push({
+      label: `${financials.taxName} (${financials.taxRate}%):`,
+      value: `${STORE_CONFIG.STORE_CURRENCY}${formatMoney(financials.vatAmount)}`,
+      bold: false,
+    });
+  }
 
   summaryLines.push({
     label: 'TOTAL:',
@@ -381,7 +388,9 @@ export const generateOrderInvoicePDF = async (
   );
   doc.text(
     settings?.invoiceFooterNote ||
-      'Official Tax Invoice compliant with SARS 15% VAT regulations. Please retain for warranty and tracking.',
+      (financials.taxEnabled
+        ? `Official Tax Invoice compliant with tax regulations. Please retain for warranty and tracking.`
+        : 'Official Sales Receipt. Please retain for warranty and tracking.'),
     margin,
     y + 7.5
   );
@@ -389,8 +398,11 @@ export const generateOrderInvoicePDF = async (
   // Bottom Watermark / Page footer
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
+  const footerWatermark = financials.taxEnabled
+    ? `Generated on ${new Date().toLocaleString('en-ZA')} • Tax Invoice (${financials.taxName} ${financials.taxRate}%) • ${companyName}`
+    : `Generated on ${new Date().toLocaleString('en-ZA')} • Official Receipt • ${companyName}`;
   doc.text(
-    `Generated on ${new Date().toLocaleString('en-ZA')} • Tax Invoice (SARS 15% VAT) • ${companyName}`,
+    footerWatermark,
     pageWidth / 2,
     doc.internal.pageSize.getHeight() - 10,
     { align: 'center' }

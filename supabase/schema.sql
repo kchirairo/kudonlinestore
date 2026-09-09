@@ -85,6 +85,28 @@ CREATE TABLE IF NOT EXISTS public.product_images (
 
 CREATE INDEX IF NOT EXISTS idx_product_images_product_id ON public.product_images (product_id);
 
+-- 2.3 CUSTOMER REVIEWS TABLE (Authoritative reviews.product_id -> products.id relationship)
+CREATE TABLE IF NOT EXISTS public.reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    user_id UUID,
+    customer_name TEXT NOT NULL,
+    customer_email TEXT,
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    title TEXT NOT NULL,
+    comment TEXT NOT NULL,
+    verified_purchase BOOLEAN DEFAULT false,
+    helpful_count INTEGER DEFAULT 0,
+    tags JSONB DEFAULT '[]'::jsonb,
+    is_approved BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_product_id ON public.reviews(product_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_is_approved ON public.reviews(is_approved);
+CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON public.reviews(created_at DESC);
+
 -- 3. CATEGORIES TABLE
 CREATE TABLE IF NOT EXISTS public.categories (
     id TEXT PRIMARY KEY,
@@ -169,78 +191,116 @@ CREATE TABLE IF NOT EXISTS public.settings (
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_media ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
 -- 7. PUBLIC SELECT POLICIES (Allow customers and anonymous visitors to read active products, categories & settings)
+DROP POLICY IF EXISTS "Public can view approved reviews" ON public.reviews;
+CREATE POLICY "Public can view approved reviews"
+    ON public.reviews
+    FOR SELECT
+    TO anon, authenticated
+    USING (is_approved = true);
+
+DROP POLICY IF EXISTS "Customers can insert reviews" ON public.reviews;
+CREATE POLICY "Customers can insert reviews"
+    ON public.reviews
+    FOR INSERT
+    TO anon, authenticated, service_role
+    WITH CHECK (
+        product_id IS NOT NULL AND
+        rating >= 1 AND rating <= 5 AND
+        length(customer_name) > 0 AND
+        length(comment) > 0
+    );
 DROP POLICY IF EXISTS "Public can view active products" ON public.products;
 CREATE POLICY "Public can view active products"
     ON public.products
     FOR SELECT
-    TO anon, authenticated
-    USING (true);
+    TO anon, authenticated, service_role
+    USING (is_active = true OR public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Public can view product media" ON public.product_media;
 CREATE POLICY "Public can view product media"
     ON public.product_media
     FOR SELECT
-    TO anon, authenticated
+    TO anon, authenticated, service_role
     USING (true);
 
 DROP POLICY IF EXISTS "Public can view product images" ON public.product_images;
 CREATE POLICY "Public can view product images"
     ON public.product_images
     FOR SELECT
-    TO anon, authenticated
+    TO anon, authenticated, service_role
     USING (true);
 
 DROP POLICY IF EXISTS "Public can view categories" ON public.categories;
 CREATE POLICY "Public can view categories"
     ON public.categories
     FOR SELECT
-    TO anon, authenticated
-    USING (true);
+    TO anon, authenticated, service_role
+    USING (is_active = true OR public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Public read settings" ON public.settings;
-CREATE POLICY "Public read settings"
+DROP POLICY IF EXISTS "Admins and service role can read settings" ON public.settings;
+CREATE POLICY "Admins and service role can read settings"
     ON public.settings
     FOR SELECT
-    TO anon, authenticated
-    USING (key != 'payment_gateways' OR public.is_admin() OR auth.role() = 'service_role');
+    TO authenticated, service_role
+    USING (public.is_admin() OR auth.role() = 'service_role');
 
--- 8. ADMIN / AUTHENTICATED MUTATION POLICIES
+CREATE OR REPLACE VIEW public.store_settings_public AS
+SELECT 
+    id,
+    store_name,
+    currency_symbol,
+    store_description,
+    delivery_fee,
+    free_shipping_threshold,
+    support_email,
+    support_phone,
+    logo_url,
+    banner_url,
+    created_at,
+    updated_at
+FROM public.settings;
+
+GRANT SELECT ON public.store_settings_public TO anon, authenticated, service_role;
+
+-- 8. ADMIN / AUTHENTICATED MUTATION POLICIES (HARDENED)
 DROP POLICY IF EXISTS "Admins can manage products" ON public.products;
 CREATE POLICY "Admins can manage products"
     ON public.products
     FOR ALL
     TO authenticated, service_role
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin() OR auth.role() = 'service_role')
+    WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Admins can manage product media" ON public.product_media;
 CREATE POLICY "Admins can manage product media"
     ON public.product_media
     FOR ALL
     TO authenticated, service_role
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin() OR auth.role() = 'service_role')
+    WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Admins can manage product images" ON public.product_images;
 CREATE POLICY "Admins can manage product images"
     ON public.product_images
     FOR ALL
     TO authenticated, service_role
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin() OR auth.role() = 'service_role')
+    WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Admins can manage categories" ON public.categories;
 CREATE POLICY "Admins can manage categories"
     ON public.categories
     FOR ALL
     TO authenticated, service_role
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin() OR auth.role() = 'service_role')
+    WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Admins can manage settings" ON public.settings;
 CREATE POLICY "Admins can manage settings"
@@ -250,28 +310,111 @@ CREATE POLICY "Admins can manage settings"
     USING (public.is_admin() OR auth.role() = 'service_role')
     WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
 
--- Orders: public/anon can insert new orders during checkout and select their own orders
+-- Orders: Only own orders for customers, all for admins/service_role
+DROP POLICY IF EXISTS "Public can view orders" ON public.orders;
+DROP POLICY IF EXISTS "Users can view own orders and admins view all" ON public.orders;
+CREATE POLICY "Users can view own orders and admins view all"
+    ON public.orders
+    FOR SELECT
+    TO authenticated, anon, service_role
+    USING (
+      public.is_admin() 
+      OR auth.role() = 'service_role'
+      OR (auth.uid() IS NOT NULL AND user_id = auth.uid())
+    );
+
 DROP POLICY IF EXISTS "Public can insert orders" ON public.orders;
 CREATE POLICY "Public can insert orders"
     ON public.orders
     FOR INSERT
     TO anon, authenticated, service_role
-    WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Public can view orders" ON public.orders;
-CREATE POLICY "Public can view orders"
-    ON public.orders
-    FOR SELECT
-    TO anon, authenticated, service_role
-    USING (true);
+    WITH CHECK (
+      auth.role() = 'service_role'
+      OR public.is_admin()
+      OR (
+        payment_status IN ('pending', 'unpaid')
+        AND status IN ('pending', 'awaiting_payment')
+        AND (user_id IS NULL OR user_id = auth.uid())
+        AND total >= 0
+      )
+    );
 
 DROP POLICY IF EXISTS "Admins can manage orders" ON public.orders;
 CREATE POLICY "Admins can manage orders"
     ON public.orders
-    FOR ALL
+    FOR UPDATE
     TO authenticated, service_role
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin() OR auth.role() = 'service_role')
+    WITH CHECK (public.is_admin() OR auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
+CREATE POLICY "Admins can delete orders"
+    ON public.orders
+    FOR DELETE
+    TO authenticated, service_role
+    USING (public.is_admin() OR auth.role() = 'service_role');
+
+-- Order Payment Tamper Prevention Trigger
+CREATE OR REPLACE FUNCTION public.prevent_order_payment_tampering()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF (NEW.payment_status IN ('paid', 'completed') AND OLD.payment_status NOT IN ('paid', 'completed')) THEN
+    IF NOT public.is_admin() THEN
+      RAISE EXCEPTION 'Security Policy Violation: Orders can only be marked as paid via verified Yoco webhook or server-side payment service.';
+    END IF;
+  END IF;
+
+  IF NEW.total IS DISTINCT FROM OLD.total THEN
+    IF NOT public.is_admin() THEN
+      RAISE EXCEPTION 'Security Policy Violation: Order totals cannot be altered post-checkout.';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_prevent_order_payment_tampering ON public.orders;
+CREATE TRIGGER trg_prevent_order_payment_tampering
+BEFORE UPDATE ON public.orders
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_order_payment_tampering();
+
+-- Profile Role Escalation Prevention Trigger
+CREATE OR REPLACE FUNCTION public.prevent_profile_role_escalation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    IF NOT public.is_admin() THEN
+      RAISE EXCEPTION 'Security Policy Violation: Customers are strictly forbidden from modifying profile roles.';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_prevent_profile_role_escalation ON public.profiles;
+CREATE TRIGGER trg_prevent_profile_role_escalation
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_profile_role_escalation();
 
 -- 9. GRANT APPROPRIATE PRIVILEGES
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;

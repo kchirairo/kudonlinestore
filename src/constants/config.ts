@@ -45,12 +45,18 @@ export const STORE_CONFIG = {
 
   // Main Categories
   CATEGORY_LIST: [
-    'Beauty',
-    'Home',
-    'Sports & Leisure',
     'Technology',
+    'Sports & Leisure',
+    'Beauty',
     'Books',
-    'Others',
+    'Home',
+    'Automotive',
+    'Industrial & Tools',
+    'Health & Wellness',
+    'Garden & Outdoor',
+    'Office & Business',
+    'Jewelry & Accessories',
+    'Fashion & Apparel',
   ] as const,
 };
 

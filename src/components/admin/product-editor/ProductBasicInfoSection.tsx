@@ -39,6 +39,7 @@ interface ProductBasicInfoSectionProps {
   tags: string[];
   setTags: React.Dispatch<React.SetStateAction<string[]>>;
   categories: string[];
+  categoryError?: string;
   existingProducts?: Product[];
   currentProductId?: string;
 }
@@ -67,6 +68,7 @@ export const ProductBasicInfoSection: React.FC<ProductBasicInfoSectionProps> = (
   tags,
   setTags,
   categories,
+  categoryError,
   existingProducts = [],
   currentProductId,
 }) => {
@@ -173,14 +175,30 @@ export const ProductBasicInfoSection: React.FC<ProductBasicInfoSectionProps> = (
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as ProductCategory)}
-            className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-2xl text-xs font-semibold text-gray-900 dark:text-white focus:outline-hidden focus:border-[#ff6452]"
+            className={`w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-800 border rounded-2xl text-xs font-semibold text-gray-900 dark:text-white focus:outline-hidden transition-colors ${
+              categoryError
+                ? 'border-rose-500 focus:border-rose-600 ring-1 ring-rose-500/20'
+                : 'border-gray-200 dark:border-slate-700 focus:border-[#ff6452]'
+            }`}
           >
+            {!category && <option value="">-- Select a Category --</option>}
+            {/* Ensure existing product's category is preserved if not currently in the fetched list */}
+            {category && !categories.includes(category) && (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            )}
             {categories.map((cat) => (
               <option key={cat} value={cat}>
                 {cat}
               </option>
             ))}
           </select>
+          {categoryError && (
+            <p className="text-[11px] font-medium text-rose-500 mt-1 flex items-center gap-1">
+              {categoryError}
+            </p>
+          )}
         </div>
 
         {/* Subcategory */}

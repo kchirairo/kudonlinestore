@@ -442,7 +442,6 @@ async function startServer() {
       const calcSubtotal = Number(subtotal) || 0;
       const calcDelivery = Number(deliveryFee) || 0;
       const calcDiscount = Number(discountAmount) || 0;
-      const calcTotal = totalAmount ? Number(totalAmount) : (calcSubtotal + calcDelivery - calcDiscount);
 
       const orderNumber = `KUD-${Math.floor(100000 + Math.random() * 900000)}`;
 
@@ -459,6 +458,30 @@ async function startServer() {
 
       const supabase = createClient(supabaseUrl, supabaseKey);
 
+      let orderTaxEnabled = Boolean(body.tax_enabled);
+      let orderTaxName = body.tax_name || 'VAT';
+      let orderTaxRate = body.tax_rate !== undefined ? Number(body.tax_rate) : 0;
+      let orderTaxAmount = body.tax_amount !== undefined ? Number(body.tax_amount) : 0;
+
+      if (body.tax_enabled === undefined) {
+        try {
+          const { data: taxSettingsRow } = await supabase
+            .from('settings')
+            .select('tax_enabled, tax_name, tax_rate')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (taxSettingsRow?.tax_enabled) {
+            orderTaxEnabled = true;
+            orderTaxName = taxSettingsRow.tax_name || 'VAT';
+            orderTaxRate = Number(taxSettingsRow.tax_rate) || 15;
+            orderTaxAmount = Math.round(Math.max(0, calcSubtotal - calcDiscount) * (orderTaxRate / 100) * 100) / 100;
+          }
+        } catch {}
+      }
+
+      const calcTotal = totalAmount ? Number(totalAmount) : (calcSubtotal + (orderTaxEnabled ? orderTaxAmount : 0) + calcDelivery - calcDiscount);
+
       // Insert order server-side into public.orders
       const { data: createdOrder, error: insertError } = await supabase
         .from('orders')
@@ -469,6 +492,10 @@ async function startServer() {
           shipping_fee: calcDelivery,
           discount: calcDiscount,
           total: calcTotal,
+          tax_enabled: orderTaxEnabled,
+          tax_name: orderTaxName,
+          tax_rate: orderTaxRate,
+          tax_amount: orderTaxAmount,
           status: 'pending',
           payment_status: 'pending',
           payment_method: paymentMethod,
@@ -1833,6 +1860,33 @@ async function startServer() {
     }
   });
 
+  // --- PUBLIC PRODUCT CATEGORIES ENDPOINT (SINGLE SOURCE OF TRUTH) ---
+  // Public GET active product categories from public.product_categories ordered by display_order ASC
+  app.get('/api/product-categories', async (_req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { data, error } = await supabase
+        .from('product_categories')
+        .select('id, name, display_order, is_active, created_at')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      if (error) {
+        console.error('[CategoriesAPI] Error fetching product_categories from Supabase:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data: data || [] });
+    } catch (err: any) {
+      console.error('[CategoriesAPI] Server exception fetching categories:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch categories.' });
+    }
+  });
+
   // --- PUBLIC PRODUCT STOREFRONT ENDPOINTS ---
   // Public GET all active products (used for guest / logged-out storefront browsing fallback)
   app.get('/api/products', async (_req, res) => {
@@ -2067,6 +2121,125 @@ async function startServer() {
       return res.status(404).json({ success: false, error: `Setting '${key}' not found.` });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch admin setting.' });
+    }
+  });
+
+  // Admin GET VAT / Tax Settings from public.settings
+  app.get('/api/admin/tax-settings', async (_req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database service is unavailable' });
+      }
+
+      const { data, error } = await supabase
+        .from('settings')
+        .select('id, tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error('[API TAX SETTINGS GET] Error querying settings:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({
+        success: true,
+        data: data ? {
+          id: data.id,
+          tax_enabled: Boolean(data.tax_enabled),
+          tax_name: data.tax_name || 'VAT',
+          tax_rate: data.tax_rate !== null && data.tax_rate !== undefined ? Number(data.tax_rate) : 15,
+          show_tax_on_receipt: data.show_tax_on_receipt !== false,
+          vat_registration_number: data.vat_registration_number || null,
+        } : null,
+      });
+    } catch (err: any) {
+      console.error('[API TAX SETTINGS GET] Unexpected error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Server error fetching tax settings' });
+    }
+  });
+
+  // Admin POST save VAT / Tax Settings to public.settings
+  app.post('/api/admin/tax-settings', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database service is unavailable' });
+      }
+
+      const { tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number } = req.body;
+
+      // 1. Fetch the existing settings row so we never assume or hardcode the row ID
+      const { data: existingRow, error: findError } = await supabase
+        .from('settings')
+        .select('id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (findError) {
+        console.error('[API TAX SETTINGS POST] Error finding settings row:', findError);
+        return res.status(500).json({ success: false, error: findError.message });
+      }
+
+      let settingsId = existingRow?.id;
+      const payloadToUpdate = {
+        tax_enabled: Boolean(tax_enabled),
+        tax_name: (typeof tax_name === 'string' && tax_name.trim().length > 0) ? tax_name.trim() : 'VAT',
+        tax_rate: typeof tax_rate === 'number' ? tax_rate : (Number(tax_rate) || 0),
+        show_tax_on_receipt: Boolean(show_tax_on_receipt),
+        vat_registration_number: vat_registration_number ? String(vat_registration_number).trim() : null,
+        updated_at: new Date().toISOString(),
+      };
+
+      let resultRow = null;
+
+      if (settingsId) {
+        const { data: updated, error: updateError } = await supabase
+          .from('settings')
+          .update(payloadToUpdate)
+          .eq('id', settingsId)
+          .select('id, tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number')
+          .single();
+
+        if (updateError) {
+          console.error('[API TAX SETTINGS POST] Error updating existing settings row:', updateError);
+          return res.status(500).json({ success: false, error: updateError.message });
+        }
+        resultRow = updated;
+      } else {
+        const { data: inserted, error: insertError } = await supabase
+          .from('settings')
+          .insert(payloadToUpdate)
+          .select('id, tax_enabled, tax_name, tax_rate, show_tax_on_receipt, vat_registration_number')
+          .single();
+
+        if (insertError) {
+          console.error('[API TAX SETTINGS POST] Error inserting settings row:', insertError);
+          return res.status(500).json({ success: false, error: insertError.message });
+        }
+        resultRow = inserted;
+      }
+
+      console.log('[API TAX SETTINGS POST] Saved successfully to public.settings:', resultRow);
+
+      return res.json({
+        success: true,
+        message: 'VAT/TAX settings saved successfully.',
+        data: {
+          id: resultRow.id,
+          tax_enabled: Boolean(resultRow.tax_enabled),
+          tax_name: resultRow.tax_name || 'VAT',
+          tax_rate: Number(resultRow.tax_rate) || 0,
+          show_tax_on_receipt: Boolean(resultRow.show_tax_on_receipt),
+          vat_registration_number: resultRow.vat_registration_number || null,
+        },
+      });
+    } catch (err: any) {
+      console.error('[API TAX SETTINGS POST] Unexpected error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Server error saving tax settings' });
     }
   });
 

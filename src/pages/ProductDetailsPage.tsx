@@ -27,6 +27,7 @@ import { generateProductJsonLd, categoryToSlug, getSiteUrl } from '../utils/seo'
 import { marketingService } from '../services/marketingService';
 import { getCurrentAttribution } from '../utils/utmTracker';
 import { ProductSocialPromoModal } from '../components/social/ProductSocialPromoModal';
+import { ProductReviewsSection } from '../components/ProductReviewsSection';
 
 export const ProductDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -342,13 +343,16 @@ export const ProductDetailsPage: React.FC = () => {
                   <span>{product.inStock ? 'In Stock & Ready to Dispatch' : 'Out of Stock'}</span>
                 </div>
                 {product.rating && (
-                  <div className="flex items-center gap-1 text-gray-700 dark:text-slate-300">
+                  <a
+                    href={`#reviews-section-${product.id}`}
+                    className="flex items-center gap-1 text-gray-700 dark:text-slate-300 hover:text-[#ff6452] transition-colors cursor-pointer"
+                  >
                     <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                     <span className="font-bold">{product.rating}</span>
                     {product.reviewCount && (
                       <span className="text-gray-400 dark:text-slate-500">({product.reviewCount} customer reviews)</span>
                     )}
-                  </div>
+                  </a>
                 )}
               </div>
 
@@ -482,6 +486,14 @@ export const ProductDetailsPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Customer Reviews Section with Strict product_id Relationship */}
+        <ProductReviewsSection
+          product={product}
+          onReviewAdded={(newCount, newRating) => {
+            setProduct((prev) => (prev ? { ...prev, reviewCount: newCount, rating: newRating } : prev));
+          }}
+        />
 
         {/* SEO Internal Linking: Related Products in this Category */}
         {relatedProducts.length > 0 && (

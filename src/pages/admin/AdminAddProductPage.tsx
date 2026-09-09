@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
+import { categoryService } from '../../services/categoryService';
 import {
   ProductCategory,
   ProductCondition,
@@ -22,7 +23,6 @@ import {
   Product,
 } from '../../types';
 import { useShop } from '../../context/ShopContext';
-import { STORE_CONFIG } from '../../constants/config';
 import { generateUniqueSku } from '../../utils/skuGenerator';
 import { convertImageToWebP } from '../../utils/imageUpload';
 
@@ -66,7 +66,8 @@ export const AdminAddProductPage: React.FC = () => {
   // ----------------------------------------------------
   const [name, setName] = useState<string>('');
   const [brand, setBrand] = useState<string>('KUD Store');
-  const [category, setCategory] = useState<ProductCategory>('Beauty');
+  const [category, setCategory] = useState<ProductCategory>('' as ProductCategory);
+  const [categoryError, setCategoryError] = useState<string>('');
   const [subCategory, setSubCategory] = useState<string>('');
   const [productType, setProductType] = useState<string>('Physical Product');
   const [sku, setSku] = useState<string>('');
@@ -122,11 +123,14 @@ export const AdminAddProductPage: React.FC = () => {
   // INITIAL DATA FETCH
   // ----------------------------------------------------
   useEffect(() => {
-    adminService.getCategories().then((res) => {
-      if (res && res.length > 0) {
-        setCategories(res.map((c) => c.name));
-      } else {
-        setCategories(['Beauty', 'Home', 'Sports & Leisure', 'Technology', 'Books', 'Others']);
+    categoryService.getActiveCategories().then((res) => {
+      if (res.data && res.data.length > 0) {
+        const names = res.data.map((c) => c.name);
+        setCategories(names);
+        setCategory((prev) => (prev ? prev : (names[0] as ProductCategory)));
+      } else if (res.error) {
+        console.error('[AdminAddProductPage] Supabase error loading product_categories:', res.error);
+        setErrorMsg(`Failed to load product categories from database: ${res.error}`);
       }
     });
 
@@ -430,8 +434,16 @@ export const AdminAddProductPage: React.FC = () => {
     setSuccessMsg('');
 
     // Validation
+    setCategoryError('');
     if (!name.trim()) {
       setErrorMsg('Product name is required.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    if (!category || !String(category).trim()) {
+      setCategoryError('Please select a valid product category.');
+      setErrorMsg('Please select a valid product category.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -695,7 +707,11 @@ export const AdminAddProductPage: React.FC = () => {
               brand={brand}
               setBrand={setBrand}
               category={category}
-              setCategory={setCategory}
+              setCategory={(cat) => {
+                setCategory(cat);
+                setCategoryError('');
+              }}
+              categoryError={categoryError}
               subCategory={subCategory}
               setSubCategory={setSubCategory}
               productType={productType}

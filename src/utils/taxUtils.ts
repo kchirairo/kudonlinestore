@@ -39,6 +39,11 @@ export interface OrderFinancials {
   deliveryFee: number;
   discountAmount: number;
   vatAmount: number;
+  taxEnabled: boolean;
+  taxName: string;
+  taxRate: number;
+  showTaxOnReceipt: boolean;
+  vatRegistrationNumber?: string | null;
   grandTotal: number;
   paymentStatus: 'paid' | 'pending' | 'failed' | 'refunded';
   isPaid: boolean;
@@ -52,11 +57,12 @@ export interface OrderFinancials {
 }
 
 /**
- * Dynamically computes item subtotal, delivery fee, 15% VAT, and grand total from order data.
+ * Dynamically computes item subtotal, delivery fee, tax/VAT, and grand total from order data.
+ * Supports dynamic tax rates, enable/disable toggle, tax name, and historical snapshots.
  * Adheres strictly to:
  * - Subtotal = sum of (quantity * unit_price)
- * - VAT = subtotal * 15%
- * - Grand Total = subtotal + delivery fee + VAT - discount
+ * - Tax/VAT = taxableSubtotal * (taxRate / 100) if taxEnabled, else 0
+ * - Grand Total = subtotal + delivery fee + tax/VAT - discount
  */
 export function calculateOrderFinancials(order: Partial<Order> | any): OrderFinancials {
   // 1. Calculate items subtotal from line items if present, fallback to order.subtotal_amount
@@ -80,11 +86,65 @@ export function calculateOrderFinancials(order: Partial<Order> | any): OrderFina
   // 3. Subtotal after discount for tax calculation
   const taxableSubtotal = Math.max(0, subtotal - discountAmount);
 
-  // 4. Exact 15% VAT calculation
-  const vatAmount = roundMoney(taxableSubtotal * VAT_RATE);
+  // 4. Determine tax configuration from order snapshot or legacy fields
+  let taxEnabled = false;
+  let taxName = 'VAT';
+  let taxRate = 15;
+  let vatAmount = 0;
+  let showTaxOnReceipt = true;
+  const vatRegistrationNumber = order?.vat_registration_number || order?.vat_number || null;
 
-  // 5. Grand total: Subtotal + Delivery + VAT - Discount
-  const grandTotal = roundMoney(taxableSubtotal + vatAmount + deliveryFee);
+  if (order?.tax_enabled !== undefined && order?.tax_enabled !== null) {
+    taxEnabled = Boolean(order.tax_enabled);
+    taxName = order.tax_name || 'VAT';
+    taxRate = order.tax_rate !== undefined && order.tax_rate !== null ? Number(order.tax_rate) : 15;
+    showTaxOnReceipt = order.show_tax_on_receipt !== false;
+
+    if (taxEnabled) {
+      if (order.tax_amount !== undefined && order.tax_amount !== null && !isNaN(Number(order.tax_amount))) {
+        vatAmount = roundMoney(Number(order.tax_amount));
+      } else {
+        vatAmount = roundMoney(taxableSubtotal * (taxRate / 100));
+      }
+    } else {
+      vatAmount = 0;
+    }
+  } else if (order?.vat_amount !== undefined && order?.vat_amount !== null) {
+    vatAmount = roundMoney(Number(order.vat_amount));
+    taxEnabled = vatAmount > 0;
+    taxRate = 15;
+    taxName = 'VAT';
+  } else if (order?.total_amount !== undefined || order?.total !== undefined) {
+    const savedTotal = Number(order.total_amount ?? order.total);
+    const diffWithoutTax = Math.abs(savedTotal - (taxableSubtotal + deliveryFee));
+    const diffWith15Tax = Math.abs(savedTotal - (taxableSubtotal * 1.15 + deliveryFee));
+
+    if (diffWithoutTax < 0.05 && diffWith15Tax > 0.05) {
+      taxEnabled = false;
+      vatAmount = 0;
+      taxRate = 0;
+    } else {
+      taxEnabled = true;
+      taxRate = 15;
+      vatAmount = roundMoney(taxableSubtotal * VAT_RATE);
+    }
+  } else {
+    // Default fallback
+    taxEnabled = false;
+    vatAmount = 0;
+    taxRate = 0;
+  }
+
+  // 5. Grand total: Subtotal + Delivery + Tax - Discount
+  // If order has an explicit total that closely matches, prioritize it to prevent any rounding mismatches
+  const calculatedGrandTotal = roundMoney(taxableSubtotal + vatAmount + deliveryFee);
+  let grandTotal = calculatedGrandTotal;
+  if (order?.total_amount !== undefined || order?.total !== undefined) {
+    const rawTotal = roundMoney(Number(order.total_amount ?? order.total));
+    if (Math.abs(rawTotal - calculatedGrandTotal) <= 0.05) {
+      grandTotal = rawTotal;
+    }
+  }
 
   // 6. Payment Status normalization
   const rawStatus = (order?.payment_status || 'pending').toString().toLowerCase().trim();
@@ -129,6 +189,11 @@ export function calculateOrderFinancials(order: Partial<Order> | any): OrderFina
     deliveryFee,
     discountAmount,
     vatAmount,
+    taxEnabled,
+    taxName,
+    taxRate,
+    showTaxOnReceipt,
+    vatRegistrationNumber,
     grandTotal,
     paymentStatus,
     isPaid,

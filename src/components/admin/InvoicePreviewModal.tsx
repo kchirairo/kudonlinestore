@@ -386,10 +386,12 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                   <span className="font-bold text-gray-900">{formatCurrency(invoice.subtotal_amount)}</span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-gray-100 text-gray-600">
-                  <span>Standard VAT (15%):</span>
-                  <span className="font-bold text-gray-900">{formatCurrency(invoice.vat_amount)}</span>
-                </div>
+                {invoice.vat_amount > 0 && (
+                  <div className="flex justify-between py-1 border-b border-gray-100 text-gray-600">
+                    <span>Tax / VAT:</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(invoice.vat_amount)}</span>
+                  </div>
+                )}
 
                 {invoice.delivery_fee > 0 && (
                   <div className="flex justify-between py-1 border-b border-gray-100 text-gray-600">

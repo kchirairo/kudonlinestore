@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { productService } from '../services/productService';
 import { Product, ProductCategory, FilterOptions } from '../types';
-import { STORE_CONFIG } from '../constants/config';
 import { ProductGrid } from '../components/ProductGrid';
 import { ProductGridSkeleton } from '../components/LoadingSkeleton';
 import { EmptyState } from '../components/EmptyState';
@@ -10,6 +9,7 @@ import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SEOHead } from '../components/SEOHead';
 import { FilterPanel } from '../components/FilterPanel';
+import { useProductCategories } from '../hooks/useProductCategories';
 import {
   getCategorySeoMeta,
   slugToCategory,
@@ -30,9 +30,12 @@ import {
 
 export const CategoryDetailsPage: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
+  const { categoryNames, isLoading: isCatsLoading, error: catsError } = useProductCategories();
+
+  const activeCategoryList = categoryNames;
 
   // Resolve category name from slug
-  const resolvedCategory: ProductCategory = (slug && slugToCategory(slug)) || 'Others';
+  const resolvedCategory: ProductCategory = (slug && slugToCategory(slug, activeCategoryList)) || 'Others';
   const categoryMeta = getCategorySeoMeta(slug || resolvedCategory);
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -140,7 +143,7 @@ export const CategoryDetailsPage: React.FC = () => {
           {/* Quick Subcategory Pills / Sibling Category Links for deep internal linking */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-5 mt-5 border-t border-gray-200/60 dark:border-slate-800">
             <span className="text-xs font-bold text-gray-400 dark:text-slate-400 whitespace-nowrap mr-1">Other Categories:</span>
-            {STORE_CONFIG.CATEGORY_LIST.filter((c) => c !== categoryMeta.name).map((c) => (
+            {activeCategoryList.filter((c) => c !== categoryMeta.name).map((c) => (
               <Link
                 key={c}
                 to={`/category/${categoryToSlug(c)}`}

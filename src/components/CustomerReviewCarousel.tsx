@@ -13,52 +13,68 @@ import {
   CheckCircle2,
   Filter,
 } from 'lucide-react';
-import { CustomerReview, TOP_RATED_TESTIMONIALS } from '../data/testimonialsData';
+import { CustomerReview } from '../data/testimonialsData';
 import { Product } from '../types';
 import { STORE_CONFIG } from '../constants/config';
+import { reviewService } from '../services/reviewService';
+import { useProductCategories } from '../hooks/useProductCategories';
 
 interface CustomerReviewCarouselProps {
   products?: Product[];
 }
 
 export const CustomerReviewCarousel: React.FC<CustomerReviewCarouselProps> = ({ products = [] }) => {
+  const [reviewsList, setReviewsList] = useState<CustomerReview[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [helpfulLikes, setHelpfulLikes] = useState<Record<string, boolean>>({});
-  const [helpfulCounts, setHelpfulCounts] = useState<Record<string, number>>(() => {
-    const initial: Record<string, number> = {};
-    TOP_RATED_TESTIMONIALS.forEach((t) => {
-      initial[t.id] = t.helpfulCount;
-    });
-    return initial;
-  });
+  const [helpfulCounts, setHelpfulCounts] = useState<Record<string, number>>({});
+  const { categoryNames } = useProductCategories();
 
   const carouselRef = useRef<HTMLDivElement>(null);
 
-  // Map dynamic products if available to connect with testimonials
-  const enrichedReviews = useMemo(() => {
-    return TOP_RATED_TESTIMONIALS.map((review) => {
-      // Find matching product by name/category if exists
-      const match = products.find(
-        (p) =>
-          p.category.toLowerCase() === review.productCategory.toLowerCase() ||
-          p.name.toLowerCase().includes(review.productBrand.toLowerCase()) ||
-          p.brand.toLowerCase().includes(review.productBrand.toLowerCase())
-      );
+  // Load reviews from reviewService on mount and when products update
+  useEffect(() => {
+    let isMounted = true;
+    reviewService.getAllApprovedReviews(products).then((loaded) => {
+      if (isMounted) {
+        setReviewsList(loaded);
+        const counts: Record<string, number> = {};
+        loaded.forEach((r) => {
+          counts[r.id] = r.helpfulCount;
+        });
+        setHelpfulCounts(counts);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [products]);
 
+  // Map dynamic products if available strictly via reviews.productId === products.id
+  // NEVER use fuzzy matching by category, name, or brand!
+  const enrichedReviews = useMemo(() => {
+    return reviewsList.map((review) => {
+      if (!review.productId) {
+        return review;
+      }
+      // Exact match by immutable product database ID only
+      const match = products.find((p) => p.id === review.productId);
       if (match) {
         return {
           ...review,
           productId: match.id,
-          productName: review.productName || match.name,
-          productPrice: match.price || review.productPrice,
+          productName: match.name,
+          productBrand: match.brand,
+          productCategory: match.category,
+          productPrice: match.price,
           productImage: (match.images && match.images[0]) || review.productImage,
         };
       }
       return review;
     });
-  }, [products]);
+  }, [reviewsList, products]);
 
   // Filter reviews by category
   const filteredReviews = useMemo(() => {
@@ -106,7 +122,7 @@ export const CustomerReviewCarousel: React.FC<CustomerReviewCarouselProps> = ({ 
     }));
   };
 
-  const categories = ['All', 'Technology', 'Beauty', 'Home', 'Sports & Leisure'];
+  const categories = useMemo(() => ['All', ...categoryNames], [categoryNames]);
 
   if (totalReviews === 0) return null;
 

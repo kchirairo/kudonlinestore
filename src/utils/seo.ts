@@ -67,6 +67,83 @@ export const CATEGORY_SEO_DATA: Record<ProductCategory, CategorySeoMeta> = {
       'From inspiring non-fiction and productivity planners to relaxation reads, explore reading materials and stationery curated for learners, professionals, and book lovers nationwide.',
     keywords: ['books online south africa', 'stationery za', 'journals south africa'],
   },
+  Automotive: {
+    name: 'Automotive',
+    slug: 'automotive',
+    title: 'Automotive Parts & Accessories | Shop Online South Africa | KUD Store',
+    metaDescription:
+      'Shop car care, automotive electronics, detailing supplies, and vehicle accessories with fast nationwide delivery across South Africa.',
+    heading: 'Automotive Parts, Care & Accessories',
+    description:
+      'Keep your vehicle running smoothly with quality automotive supplies, car care kits, and interior accessories built for South African roads.',
+    keywords: ['automotive accessories south africa', 'car care online za', 'auto spares'],
+  },
+  'Industrial & Tools': {
+    name: 'Industrial & Tools',
+    slug: 'industrial-tools',
+    title: 'Industrial Equipment & Hand Tools | Buy Online South Africa | KUD Store',
+    metaDescription:
+      'Shop power tools, hand tools, hardware, and safety equipment in South Africa. Quality engineering tools delivered to your workshop or home.',
+    heading: 'Industrial Equipment, Hardware & Tools',
+    description:
+      'Reliable workshop tools, hardware, measuring instruments, and DIY essentials designed for craftsmen, technicians, and South African homeowners.',
+    keywords: ['tools south africa', 'hardware online za', 'power tools south africa'],
+  },
+  'Health & Wellness': {
+    name: 'Health & Wellness',
+    slug: 'health-wellness',
+    title: 'Health, Wellness & Personal Care | Shop Online South Africa | KUD Store',
+    metaDescription:
+      'Discover vitamins, wellness equipment, recovery gear, and personal hygiene essentials in South Africa with door-to-door courier delivery.',
+    heading: 'Health, Wellness & Vitality',
+    description:
+      'Support your daily well-being with quality wellness devices, recovery items, and nutrition essentials curated for South African families.',
+    keywords: ['health wellness south africa', 'wellness products za', 'health supplements online'],
+  },
+  'Garden & Outdoor': {
+    name: 'Garden & Outdoor',
+    slug: 'garden-outdoor',
+    title: 'Garden Tools & Outdoor Living | Shop Online South Africa | KUD Store',
+    metaDescription:
+      'Shop garden equipment, outdoor lighting, patio accessories, and braai essentials in South Africa with fast door-to-door shipping.',
+    heading: 'Garden Care & Outdoor Living',
+    description:
+      'Elevate your garden, patio, and outdoor entertaining spaces with durable gardening tools, planters, and braai accessories designed for South African sunshine.',
+    keywords: ['garden tools south africa', 'outdoor living za', 'patio accessories online'],
+  },
+  'Office & Business': {
+    name: 'Office & Business',
+    slug: 'office-business',
+    title: 'Office Supplies & Business Equipment | Buy in South Africa | KUD Store',
+    metaDescription:
+      'Shop workspace furniture, office organization, stationery, and business technology in South Africa with tax invoices and reliable courier delivery.',
+    heading: 'Office Supplies & Business Solutions',
+    description:
+      'Upgrade your home office or corporate workspace with ergonomic accessories, desktop organizers, and premium stationery delivered nationwide.',
+    keywords: ['office supplies south africa', 'business equipment za', 'stationery online za'],
+  },
+  'Jewelry & Accessories': {
+    name: 'Jewelry & Accessories',
+    slug: 'jewelry-accessories',
+    title: 'Jewelry, Watches & Fashion Accessories | Shop Online South Africa | KUD Store',
+    metaDescription:
+      'Browse handcrafted jewelry, elegant timepieces, and fashion accessories in South Africa. Safe online shopping and fast nationwide delivery.',
+    heading: 'Fine Jewelry, Watches & Accessories',
+    description:
+      'Discover exquisite necklaces, bracelets, earrings, and statement accessories that complement your personal style, delivered safely across South Africa.',
+    keywords: ['jewelry south africa', 'watches online za', 'fashion accessories south africa'],
+  },
+  'Fashion & Apparel': {
+    name: 'Fashion & Apparel',
+    slug: 'fashion-apparel',
+    title: 'Fashion & Apparel | Shop Clothing Online South Africa | KUD Store',
+    metaDescription:
+      'Discover quality fashion, apparel, footwear, and wardrobe essentials in South Africa with secure checkout and hassle-free returns.',
+    heading: 'Contemporary Fashion & Everyday Apparel',
+    description:
+      'Refresh your wardrobe with curated apparel, seasonal collections, and comfortable basics tailored for South African lifestyles.',
+    keywords: ['clothing online south africa', 'fashion apparel za', 'buy clothes south africa'],
+  },
   Others: {
     name: 'Others',
     slug: 'others',
@@ -97,11 +174,18 @@ export function categoryToSlug(category: string): string {
 /**
  * Maps a URL slug back to the official ProductCategory
  */
-export function slugToCategory(slug: string): ProductCategory | null {
+export function slugToCategory(slug: string, dynamicCategories?: string[] | readonly string[]): ProductCategory | null {
   const cleanSlug = slug.trim().toLowerCase();
   for (const [catName, meta] of Object.entries(CATEGORY_SEO_DATA)) {
     if (meta.slug === cleanSlug || categoryToSlug(catName) === cleanSlug) {
       return catName as ProductCategory;
+    }
+  }
+  if (dynamicCategories && Array.isArray(dynamicCategories)) {
+    for (const cat of dynamicCategories) {
+      if (categoryToSlug(cat) === cleanSlug) {
+        return cat as ProductCategory;
+      }
     }
   }
   return null;

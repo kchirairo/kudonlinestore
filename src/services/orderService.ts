@@ -48,6 +48,13 @@ export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Ord
     delivery_fee: rawDelivery,
     discount_amount: rawDiscount,
     payment_status: row.payment_status,
+    tax_enabled: row.tax_enabled,
+    tax_name: row.tax_name,
+    tax_rate: row.tax_rate,
+    tax_amount: row.tax_amount,
+    show_tax_on_receipt: row.show_tax_on_receipt,
+    vat_registration_number: row.vat_registration_number,
+    total_amount: rawTotal,
   });
 
   const finalTotal = rawTotal > 0 && Math.abs(rawTotal - financials.grandTotal) < 0.05
@@ -66,6 +73,12 @@ export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Ord
     delivery_fee: financials.deliveryFee,
     discount_amount: financials.discountAmount,
     vat_amount: financials.vatAmount,
+    tax_enabled: row.tax_enabled !== undefined ? Boolean(row.tax_enabled) : financials.taxEnabled,
+    tax_name: row.tax_name || financials.taxName,
+    tax_rate: row.tax_rate !== undefined ? Number(row.tax_rate) : financials.taxRate,
+    tax_amount: row.tax_amount !== undefined ? Number(row.tax_amount) : financials.vatAmount,
+    show_tax_on_receipt: row.show_tax_on_receipt !== undefined ? Boolean(row.show_tax_on_receipt) : financials.showTaxOnReceipt,
+    vat_registration_number: row.vat_registration_number || financials.vatRegistrationNumber || null,
     amount_paid: financials.amountPaid,
     status: (row.status || 'pending') as OrderStatus,
     payment_status: (row.payment_status || 'pending') as PaymentStatus,
@@ -93,7 +106,15 @@ export const orderService = {
     deliveryFee: number,
     discountAmount: number,
     paymentMethod: string,
-    userId?: string
+    userId?: string,
+    taxConfig?: {
+      tax_enabled?: boolean;
+      tax_name?: string;
+      tax_rate?: number;
+      tax_amount?: number;
+      show_tax_on_receipt?: boolean;
+      vat_registration_number?: string | null;
+    }
   ): Promise<{ redirectUrl: string; orderId: string }> {
     if (!isSupabaseConfigured() || !supabase) {
       throw new Error('Supabase client is not configured.');
@@ -107,7 +128,8 @@ export const orderService = {
       deliveryFee,
       discountAmount,
       paymentMethod,
-      userId
+      userId,
+      taxConfig
     );
 
     if (!createdOrder || !createdOrder.id) {
@@ -189,13 +211,51 @@ export const orderService = {
     deliveryFee: number,
     discountAmount: number,
     paymentMethod: string,
-    userId?: string
+    userId?: string,
+    taxConfig?: {
+      tax_enabled?: boolean;
+      tax_name?: string;
+      tax_rate?: number;
+      tax_amount?: number;
+      show_tax_on_receipt?: boolean;
+      vat_registration_number?: string | null;
+    }
   ): Promise<Order> {
-    // 1. Calculate dynamic financial values accurately using standard 15% VAT
+    // 1. Determine tax configuration from passed config or RPC fallback
+    let orderTaxEnabled = taxConfig?.tax_enabled;
+    let orderTaxName = taxConfig?.tax_name;
+    let orderTaxRate = taxConfig?.tax_rate;
+    let orderTaxAmount = taxConfig?.tax_amount;
+    let orderShowTaxOnReceipt = taxConfig?.show_tax_on_receipt;
+    let orderVatReg = taxConfig?.vat_registration_number;
+
+    if (orderTaxEnabled === undefined && isSupabaseConfigured() && supabase) {
+      try {
+        const { data: rpcTax } = await supabase.rpc('get_store_tax_settings');
+        const row = Array.isArray(rpcTax) ? rpcTax[0] : rpcTax;
+        if (row) {
+          orderTaxEnabled = Boolean(row.tax_enabled);
+          orderTaxName = row.tax_name || 'VAT';
+          orderTaxRate = Number(row.tax_rate) || 0;
+          orderShowTaxOnReceipt = row.show_tax_on_receipt !== false;
+          orderVatReg = row.vat_registration_number || null;
+        }
+      } catch (rpcErr) {
+        console.warn('[orderService] Could not fetch tax settings via RPC:', rpcErr);
+      }
+    }
+
+    // Calculate dynamic financial values accurately using persistent tax settings
     const financials = calculateOrderFinancials({
       subtotal_amount: Number(subtotal) || 0,
       delivery_fee: Number(deliveryFee) || 0,
       discount_amount: Number(discountAmount) || 0,
+      tax_enabled: orderTaxEnabled,
+      tax_name: orderTaxName,
+      tax_rate: orderTaxRate,
+      tax_amount: orderTaxAmount,
+      show_tax_on_receipt: orderShowTaxOnReceipt,
+      vat_registration_number: orderVatReg,
       items,
       payment_status: 'pending',
     });
@@ -248,6 +308,12 @@ export const orderService = {
         delivery_fee: calcShippingFee,
         discount_amount: calcDiscount,
         vat_amount: calcVat,
+        tax_enabled: Boolean(financials.taxEnabled),
+        tax_name: financials.taxName,
+        tax_rate: financials.taxRate,
+        tax_amount: financials.vatAmount,
+        show_tax_on_receipt: financials.showTaxOnReceipt,
+        vat_registration_number: financials.vatRegistrationNumber,
         total_amount: calcTotal,
         status: 'pending',
         payment_status: 'pending',
@@ -280,6 +346,12 @@ export const orderService = {
       subtotal: calcSubtotal,
       shipping_fee: calcShippingFee,
       discount: calcDiscount,
+      tax_enabled: Boolean(financials.taxEnabled),
+      tax_name: financials.taxName,
+      tax_rate: financials.taxRate,
+      tax_amount: financials.vatAmount,
+      show_tax_on_receipt: financials.showTaxOnReceipt,
+      vat_registration_number: financials.vatRegistrationNumber,
       total: calcTotal,
       customer_name: shippingAddress.fullName || 'Valued Customer',
       customer_email: shippingAddress.email || '',

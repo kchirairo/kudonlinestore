@@ -45,6 +45,7 @@ import { CouponsManagementSettings } from '../../components/admin/CouponsManagem
 import { PaymentGatewaysSettings } from '../../components/admin/PaymentGatewaysSettings';
 import { ReferralsManagementSettings } from '../../components/admin/ReferralsManagementSettings';
 import { InvoiceSettingsConfigCard } from '../../components/admin/InvoiceSettingsConfigCard';
+import { StoreTaxSettingsCard } from '../../components/admin/StoreTaxSettingsCard';
 
 /**
  * Authentic Google "G" Brand Icon for Admin UI
@@ -428,7 +429,11 @@ export const AdminSettingsPage: React.FC = () => {
       {/* TAB 1: GENERAL STORE CONFIGURATION & LOGISTICS (GROUPED IN LOGICAL CARDS) */}
       {/* ========================================================================= */}
       {activeTab === 'general' && (
-        <form onSubmit={handleSaveGeneralSettings} className="space-y-6">
+        <div className="space-y-6">
+          {/* VAT & SALES TAX CONFIGURATION (DIRECT SUPABASE PERSISTENCE) */}
+          <StoreTaxSettingsCard />
+
+          <form onSubmit={handleSaveGeneralSettings} className="space-y-6">
           {/* CARD 1: STORE IDENTITY & PROFILE */}
           <div className="bg-white rounded-3xl p-6 sm:p-7 border border-gray-200/80 shadow-xs space-y-5">
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
@@ -1260,12 +1265,18 @@ export const AdminSettingsPage: React.FC = () => {
             </button>
           </div>
         </form>
+        </div>
       )}
 
       {/* ========================================================================= */}
       {/* TAB 1B: TAX INVOICES & RECEIPT AUTOMATION */}
       {/* ========================================================================= */}
-      {activeTab === 'invoices' && <InvoiceSettingsConfigCard />}
+      {activeTab === 'invoices' && (
+        <div className="space-y-6">
+          <StoreTaxSettingsCard />
+          <InvoiceSettingsConfigCard />
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* TAB 2: COUPONS & DISCOUNTS MANAGEMENT */}

@@ -28,12 +28,15 @@ export const HomePage: React.FC = () => {
 
   const { category: filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly } = filters;
 
+  const isAllCategory = selectedCategory === 'All' || selectedCategory === 'All Products';
+  const effectiveCategory = !isAllCategory ? selectedCategory : (filterCategory !== 'All' && filterCategory !== 'All Products' ? filterCategory : 'All');
+
   const fetchProducts = useCallback(() => {
     setIsLoading(true);
     setDbError(null);
 
     const activeFilters = {
-      category: selectedCategory !== 'All' ? selectedCategory : filterCategory,
+      category: effectiveCategory,
       sortBy,
       minPrice,
       maxPrice,
@@ -56,17 +59,17 @@ export const HomePage: React.FC = () => {
       .finally(() => {
         isFetchingRef.current = false;
       });
-  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
+  }, [effectiveCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   useEffect(() => {
     fetchProducts();
-  }, [selectedCategory, filterCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
+  }, [effectiveCategory, sortBy, minPrice, maxPrice, condition, inStockOnly]);
 
   const storeJsonLd = generateStoreJsonLd();
 
   // Check how many active filters are currently applied
   const activeFilterCount =
-    (selectedCategory !== 'All' ? 1 : 0) +
+    (!isAllCategory ? 1 : 0) +
     (filters.minPrice ? 1 : 0) +
     (filters.maxPrice ? 1 : 0) +
     (filters.condition && filters.condition !== 'All' ? 1 : 0) +
@@ -100,7 +103,7 @@ export const HomePage: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-                {selectedCategory === 'All' ? 'Recently Added' : selectedCategory}
+                {isAllCategory ? 'Recently Added' : selectedCategory}
               </h2>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100/70 dark:bg-rose-950/60 text-[#ff6452]">
                 {products.length} {products.length === 1 ? 'item' : 'items'}
@@ -155,7 +158,7 @@ export const HomePage: React.FC = () => {
               Active Filters:
             </span>
 
-            {selectedCategory !== 'All' && (
+            {!isAllCategory && (
               <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-full border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-200 font-medium shadow-2xs">
                 Category: <strong>{selectedCategory}</strong>
                 <button

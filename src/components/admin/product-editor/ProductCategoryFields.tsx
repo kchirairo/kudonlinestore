@@ -59,7 +59,9 @@ export const ProductCategoryFields: React.FC<ProductCategoryFieldsProps> = ({
             {category === 'Sports & Leisure' && <Activity className="w-5 h-5" />}
             {category === 'Technology' && <Cpu className="w-5 h-5" />}
             {category === 'Books' && <BookOpen className="w-5 h-5" />}
-            {category === 'Others' && <HelpCircle className="w-5 h-5" />}
+            {!['Beauty', 'Home', 'Sports & Leisure', 'Technology', 'Books'].includes(category) && (
+              <Sparkles className="w-5 h-5" />
+            )}
           </div>
           <div>
             <div className="flex items-center gap-2">

@@ -5,26 +5,37 @@ import { ProductCategory } from '../types';
 import { SEOHead } from '../components/SEOHead';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { categoryToSlug, getCategorySeoMeta, getSiteUrl } from '../utils/seo';
-import { ArrowRight, Grid, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Grid, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
+import { useProductCategories } from '../hooks/useProductCategories';
 
 const CATEGORY_IMAGES: Record<string, string> = {
-  Beauty: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
-  Home: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=800&q=80',
-  'Sports & Leisure': 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80',
   Technology: 'https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80',
+  'Sports & Leisure': 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80',
+  Beauty: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80',
   Books: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=800&q=80',
+  Home: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=800&q=80',
+  Automotive: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=800&q=80',
+  'Industrial & Tools': 'https://images.unsplash.com/photo-1581783342308-f792dbdd27c5?auto=format&fit=crop&w=800&q=80',
+  'Health & Wellness': 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&w=800&q=80',
+  'Garden & Outdoor': 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=800&q=80',
+  'Office & Business': 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80',
+  'Jewelry & Accessories': 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80',
+  'Fashion & Apparel': 'https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=800&q=80',
   Others: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80',
 };
 
 export const CategoriesPage: React.FC = () => {
   const siteUrl = getSiteUrl();
+  const { categoryNames, isLoading, error, refresh } = useProductCategories();
+
+  const activeCategories = categoryNames;
 
   const categoriesJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'ItemList',
     name: `Product Categories at ${STORE_CONFIG.STORE_NAME}`,
     description: 'Explore verified authentic categories with fast delivery in South Africa.',
-    itemListElement: STORE_CONFIG.CATEGORY_LIST.map((cat, idx) => ({
+    itemListElement: activeCategories.map((cat, idx) => ({
       '@type': 'SiteNavigationElement',
       position: idx + 1,
       name: cat,
@@ -36,7 +47,7 @@ export const CategoriesPage: React.FC = () => {
     <>
       <SEOHead
         title={`All Product Categories | ${STORE_CONFIG.STORE_NAME} South Africa`}
-        description="Browse all product categories at KUD Store South Africa. Shop Beauty, Home, Sports & Leisure, Technology, and Books with secure Yoco checkout and courier delivery."
+        description="Browse all product categories at KUD Store South Africa. Shop Technology, Sports & Leisure, Beauty, Books, Home, and more with secure Yoco checkout and courier delivery."
         canonicalPath="/categories"
         jsonLd={categoriesJsonLd}
       />
@@ -60,45 +71,69 @@ export const CategoriesPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-          {STORE_CONFIG.CATEGORY_LIST.map((cat) => {
-            const meta = getCategorySeoMeta(cat);
-            const slug = categoryToSlug(cat);
-            const imageUrl = CATEGORY_IMAGES[cat] || CATEGORY_IMAGES.Others;
+        {error && (
+          <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 flex items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-200">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>Could not load product categories from database: {error}.</span>
+            </div>
+            <button
+              onClick={() => refresh()}
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
 
-            return (
-              <Link
-                key={cat}
-                to={`/category/${slug}`}
-                className="group relative h-52 sm:h-64 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-800 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-end text-white"
-                aria-label={`Explore ${cat} category in South Africa`}
-              >
-                <img
-                  src={imageUrl}
-                  alt={`${cat} collection at ${STORE_CONFIG.STORE_NAME} South Africa`}
-                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-gray-950/40 to-transparent p-6 flex items-end">
-                  <div className="w-full flex items-center justify-between">
-                    <div>
-                      <h2 className="text-xl font-extrabold tracking-tight text-white">
-                        {cat}
-                      </h2>
-                      <p className="text-xs text-gray-200 mt-1 line-clamp-1">
-                        {meta.heading}
-                      </p>
-                    </div>
-                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center group-hover:bg-[#ff6452] group-hover:text-white transition-colors shrink-0 ml-3">
-                      <ArrowRight className="w-4 h-4" />
+        {isLoading && activeCategories.length === 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6 animate-pulse">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="h-52 sm:h-64 rounded-3xl bg-gray-200 dark:bg-slate-800" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+            {activeCategories.map((cat) => {
+              const meta = getCategorySeoMeta(cat);
+              const slug = categoryToSlug(cat);
+              const imageUrl = CATEGORY_IMAGES[cat] || CATEGORY_IMAGES.Others;
+
+              return (
+                <Link
+                  key={cat}
+                  to={`/category/${slug}`}
+                  className="group relative h-52 sm:h-64 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-800 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-end text-white"
+                  aria-label={`Explore ${cat} category in South Africa`}
+                >
+                  <img
+                    src={imageUrl}
+                    alt={`${cat} collection at ${STORE_CONFIG.STORE_NAME} South Africa`}
+                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-gray-950/40 to-transparent p-6 flex items-end">
+                    <div className="w-full flex items-center justify-between">
+                      <div>
+                        <h2 className="text-xl font-extrabold tracking-tight text-white">
+                          {cat}
+                        </h2>
+                        <p className="text-xs text-gray-200 mt-1 line-clamp-1">
+                          {meta.heading}
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center group-hover:bg-[#ff6452] group-hover:text-white transition-colors shrink-0 ml-3">
+                        <ArrowRight className="w-4 h-4" />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
     </>
   );

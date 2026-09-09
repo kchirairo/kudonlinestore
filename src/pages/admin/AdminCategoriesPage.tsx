@@ -48,9 +48,9 @@ export const AdminCategoriesPage: React.FC = () => {
   const handleOpenEditModal = (cat: Category) => {
     setEditingCategoryId(cat.id);
     setCategoryName(cat.name);
-    setCategorySlug(cat.slug);
-    setCategorySortOrder(String(cat.sortOrder || 1));
-    setCategoryIsActive(cat.isActive);
+    setCategorySlug(cat.slug || '');
+    setCategorySortOrder(String(cat.sortOrder ?? cat.display_order ?? 1));
+    setCategoryIsActive(cat.isActive ?? cat.is_active ?? true);
     setIsFormOpen(true);
   };
 
@@ -182,7 +182,7 @@ export const AdminCategoriesPage: React.FC = () => {
                     <td className="py-4 px-6 font-bold text-gray-700">
                       {cat.productCount ?? 0} products
                     </td>
-                    <td className="py-4 px-6 font-semibold text-gray-600">#{cat.sortOrder || 1}</td>
+                    <td className="py-4 px-6 font-semibold text-gray-600">#{cat.sortOrder ?? cat.display_order ?? 1}</td>
                     <td className="py-4 px-6">
                       <button
                         onClick={() => handleToggleActive(cat)}

@@ -1,10 +1,26 @@
 export type ProductCategory = 
-  | 'Beauty'
-  | 'Home'
-  | 'Sports & Leisure'
   | 'Technology'
+  | 'Sports & Leisure'
+  | 'Beauty'
   | 'Books'
-  | 'Others';
+  | 'Home'
+  | 'Automotive'
+  | 'Industrial & Tools'
+  | 'Health & Wellness'
+  | 'Garden & Outdoor'
+  | 'Office & Business'
+  | 'Jewelry & Accessories'
+  | 'Fashion & Apparel'
+  | 'Others'
+  | (string & {});
+
+export interface ProductCategoryRow {
+  id: string;
+  name: string;
+  display_order: number;
+  is_active: boolean;
+  created_at?: string;
+}
 
 export type ProductCondition =
   | 'Brand New'
@@ -185,6 +201,12 @@ export interface Order {
   delivery_fee: number;
   discount_amount: number;
   vat_amount?: number;
+  tax_enabled?: boolean;
+  tax_name?: string;
+  tax_rate?: number;
+  tax_amount?: number;
+  show_tax_on_receipt?: boolean;
+  vat_registration_number?: string | null;
   amount_paid?: number;
   status: OrderStatus;
   payment_status: PaymentStatus;
@@ -227,11 +249,14 @@ export interface UserProfile {
 export interface Category {
   id: string;
   name: string;
-  slug: string;
+  slug?: string;
   productCount?: number;
   isActive: boolean;
+  is_active?: boolean;
   sortOrder?: number;
+  display_order?: number;
   createdAt?: string;
+  created_at?: string;
 }
 
 export interface Customer {
@@ -1023,8 +1048,13 @@ export interface MarketingAnalyticsSummary {
     facebookRevenue: number;
     tiktokRevenue: number;
   }>;
+}export interface TaxSettings {
+  id?: string;
+  tax_enabled: boolean;
+  tax_name: string;
+  tax_rate: number;
+  show_tax_on_receipt: boolean;
+  vat_registration_number: string | null;
 }
-
-
 
 

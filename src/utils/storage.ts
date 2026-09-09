@@ -29,42 +29,59 @@ export function sanitizeDataForStorage<T>(data: T): T {
   return data;
 }
 
+const memoryStorage: Record<string, string> = {};
+
 /**
- * Safely sets an item in localStorage, handling quota errors cleanly.
+ * Safely sets an item in localStorage, handling quota errors and Node environments cleanly.
  */
 export function safeSetItem(key: string, value: any): boolean {
   try {
     const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-    localStorage.setItem(key, serialized);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, serialized);
+    } else {
+      memoryStorage[key] = serialized;
+    }
     return true;
   } catch (err: any) {
     console.warn(`[Storage] Quota or access issue setting key "${key}":`, err?.message || err);
 
     // Attempt recovery by purging old cache items if quota exceeded
     try {
-      const nonEssentialKeys = ['kud_store_orders_history'];
-      for (const k of nonEssentialKeys) {
-        if (k !== key) {
-          localStorage.removeItem(k);
+      if (typeof localStorage !== 'undefined') {
+        const nonEssentialKeys = ['kud_store_orders_history'];
+        for (const k of nonEssentialKeys) {
+          if (k !== key) {
+            localStorage.removeItem(k);
+          }
         }
+        const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+        localStorage.setItem(key, serialized);
+        return true;
       }
-
       const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-      localStorage.setItem(key, serialized);
+      memoryStorage[key] = serialized;
       return true;
     } catch (retryErr) {
       console.warn(`[Storage] Storage recovery failed for "${key}". Continuing in-memory.`);
-      return false;
+      const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+      memoryStorage[key] = serialized;
+      return true;
     }
   }
 }
 
 /**
- * Safely gets and parses a JSON item from localStorage.
+ * Safely gets and parses a JSON item from localStorage or memory store.
  */
 export function safeGetItem<T>(key: string, defaultValue: T): T {
   try {
-    const item = localStorage.getItem(key);
+    let item: string | null = null;
+    if (typeof localStorage !== 'undefined') {
+      item = localStorage.getItem(key);
+    } else {
+      item = memoryStorage[key] || null;
+    }
     if (!item) return defaultValue;
     return JSON.parse(item) as T;
   } catch {
