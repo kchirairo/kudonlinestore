@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, ShoppingBag, Heart, User, Sparkles } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
@@ -11,6 +11,26 @@ export const Header: React.FC = () => {
   const location = useLocation();
   const { searchQuery, setSearchQuery, cartCount, favourites, user, storeBranding } = useShop();
   const { saveRecentSearch } = useRecentSearches();
+
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+
+  const brandName = storeBranding?.storeName || STORE_CONFIG.STORE_NAME;
+  const brandTagline = storeBranding?.tagline || 'Store';
+  const logoText = storeBranding?.logoText || 'K';
+  const logoImage = storeBranding?.logoImageUrl;
+  const accentColor = storeBranding?.accentColor || '#ff6452';
+
+  // Reset error flag whenever the logo URL changes
+  useEffect(() => {
+    setLogoLoadFailed(false);
+  }, [logoImage]);
+
+  const hasValidLogo = Boolean(
+    !logoLoadFailed &&
+    logoImage &&
+    typeof logoImage === 'string' &&
+    logoImage.trim().length > 0
+  );
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,13 +47,6 @@ export const Header: React.FC = () => {
     }
   };
 
-  const brandName = storeBranding?.storeName || STORE_CONFIG.STORE_NAME;
-  const brandTagline = storeBranding?.tagline || 'Store';
-  const logoText = storeBranding?.logoText || 'K';
-  const logoImage = storeBranding?.logoImageUrl;
-  const logoType = storeBranding?.logoType || 'badge';
-  const accentColor = storeBranding?.accentColor || '#ff6452';
-
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 px-4 py-3 sm:px-6 lg:px-8 transition-colors duration-200">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-6">
@@ -42,37 +55,35 @@ export const Header: React.FC = () => {
           onClick={() => navigate('/')}
           className="cursor-pointer flex items-center gap-2.5 group flex-shrink-0"
         >
-          {logoImage && (logoType === 'image' || logoType === 'both') ? (
-            <img
-              src={logoImage}
-              alt={brandName}
-              style={{ maxHeight: `${storeBranding?.logoHeight || 36}px` }}
-              className="object-contain max-w-[140px] sm:max-w-[180px] rounded-lg transition-transform group-hover:scale-105"
-            />
-          ) : null}
-
-          {(!logoImage || logoType === 'badge' || logoType === 'both') && (
+          {hasValidLogo ? (
+            <div className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center bg-white dark:bg-slate-800 shadow-xs group-hover:scale-105 transition-transform flex-shrink-0 border border-gray-100 dark:border-slate-700/60 p-0.5">
+              <img
+                src={logoImage!}
+                alt={brandName}
+                onError={() => setLogoLoadFailed(true)}
+                className="w-full h-full object-contain"
+              />
+            </div>
+          ) : (
             <div
               style={{ backgroundColor: accentColor }}
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm group-hover:scale-105 transition-transform flex-shrink-0"
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-xs group-hover:scale-105 transition-transform flex-shrink-0"
             >
               {logoText}
             </div>
           )}
 
-          {logoType !== 'image' && (
-            <div className="hidden sm:flex flex-col">
-              <span className="font-black text-xl tracking-tight text-gray-900 dark:text-white leading-none">
-                {brandName.split(' ')[0]}
-                <span style={{ color: accentColor }}>.</span>
+          <div className="hidden sm:flex flex-col">
+            <span className="font-black text-xl tracking-tight text-gray-900 dark:text-white leading-none">
+              {brandName.split(' ')[0]}
+              <span style={{ color: accentColor }}>.</span>
+            </span>
+            {storeBranding?.showTagline && (
+              <span className="text-[10px] font-medium text-gray-400 dark:text-slate-400 tracking-wider uppercase truncate max-w-[120px]">
+                {brandTagline}
               </span>
-              {storeBranding?.showTagline && (
-                <span className="text-[10px] font-medium text-gray-400 dark:text-slate-400 tracking-wider uppercase truncate max-w-[120px]">
-                  {brandTagline}
-                </span>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Large Pill Search Bar */}

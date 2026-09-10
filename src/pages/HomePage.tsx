@@ -10,7 +10,7 @@ import { EmptyState } from '../components/EmptyState';
 import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
 import { CustomerReviewCarousel } from '../components/CustomerReviewCarousel';
 import { SEOHead } from '../components/SEOHead';
-import { productService } from '../services/productService';
+import { productService, loadProducts } from '../services/productService';
 import { useShop } from '../context/ShopContext';
 import { Product } from '../types';
 import { STORE_CONFIG } from '../constants/config';
@@ -45,8 +45,7 @@ export const HomePage: React.FC = () => {
     };
 
     isFetchingRef.current = true;
-    productService
-      .getProducts(activeFilters)
+    loadProducts(activeFilters)
       .then((res) => {
         setProducts(res);
         setIsLoading(false);

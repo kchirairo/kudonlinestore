@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -31,6 +31,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 }) => {
   const navigate = useNavigate();
   const { signOut, storeBranding } = useShop();
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -40,8 +41,13 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   const brandName = storeBranding?.storeName || STORE_CONFIG.STORE_NAME;
   const logoText = storeBranding?.logoText || 'K';
   const logoImage = storeBranding?.logoImageUrl;
-  const logoType = storeBranding?.logoType || 'badge';
   const accentColor = storeBranding?.accentColor || '#ff6452';
+
+  useEffect(() => {
+    setLogoLoadFailed(false);
+  }, [logoImage]);
+
+  const hasValidLogo = Boolean(!logoLoadFailed && logoImage && typeof logoImage === 'string' && logoImage.trim().length > 0);
 
   const navItems = [
     { label: 'Dashboard', path: '/admin', icon: LayoutDashboard },
@@ -65,16 +71,16 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       {/* Brand Header */}
       <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {logoImage && (logoType === 'image' || logoType === 'both') ? (
-            <img
-              src={logoImage}
-              alt={brandName}
-              style={{ maxHeight: `${Math.min(storeBranding?.logoHeight || 36, 40)}px` }}
-              className="object-contain max-w-[120px] rounded-lg shadow-xs"
-            />
-          ) : null}
-
-          {(!logoImage || logoType === 'badge' || logoType === 'both') && (
+          {hasValidLogo ? (
+            <div className="w-10 h-10 rounded-2xl overflow-hidden flex items-center justify-center bg-white dark:bg-slate-800 shadow-xs border border-gray-100 dark:border-slate-700/60 p-0.5 flex-shrink-0">
+              <img
+                src={logoImage!}
+                alt={brandName}
+                onError={() => setLogoLoadFailed(true)}
+                className="w-full h-full object-contain"
+              />
+            </div>
+          ) : (
             <div
               style={{ backgroundColor: accentColor }}
               className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-xs flex-shrink-0"

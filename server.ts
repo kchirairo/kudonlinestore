@@ -152,6 +152,17 @@ async function startServer() {
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
+  // Enable CORS for storefront cross-origin access (e.g. Netlify)
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   const PORT = 3000;
 
   // Initialize storage bucket asynchronously on server start
@@ -174,10 +185,10 @@ async function startServer() {
     res.json(result);
   });
 
-  // Server-side image upload endpoint to 'product-images' bucket
+  // Server-side image upload endpoint (supports 'product-images' and 'store-branding')
   app.post('/api/admin/storage/upload', async (req, res) => {
     try {
-      const { fileName, base64Data, contentType = 'image/jpeg', folder = 'products' } = req.body || {};
+      const { fileName, base64Data, contentType = 'image/jpeg', folder = 'products', bucket = 'product-images' } = req.body || {};
 
       if (!fileName || !base64Data) {
         return res.status(400).json({ success: false, error: 'fileName and base64Data are required.' });
@@ -188,14 +199,18 @@ async function startServer() {
         return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
       }
 
-      // Ensure bucket exists first
-      await ensureProductImagesBucket();
+      const targetBucket = bucket === 'store-branding' ? 'store-branding' : 'product-images';
+
+      // Ensure bucket exists first for product-images
+      if (targetBucket === 'product-images') {
+        await ensureProductImagesBucket();
+      }
 
       const buffer = Buffer.from(base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, ''), 'base64');
       const cleanPath = folder ? `${folder}/${fileName}` : fileName;
 
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('product-images')
+        .from(targetBucket)
         .upload(cleanPath, buffer, {
           contentType,
           cacheControl: '3600',
@@ -206,23 +221,66 @@ async function startServer() {
         console.error('[Storage] Server upload failed:', uploadError);
         return res.status(400).json({
           success: false,
-          error: uploadError?.message || 'Failed to upload image to product-images storage.',
+          error: uploadError?.message || `Failed to upload image to ${targetBucket} storage.`,
         });
       }
 
-      const { data: publicUrlData } = supabase.storage.from('product-images').getPublicUrl(cleanPath);
+      const { data: publicUrlData } = supabase.storage.from(targetBucket).getPublicUrl(cleanPath);
       const publicUrl = publicUrlData?.publicUrl || '';
 
       return res.json({
         success: true,
         url: publicUrl,
         fileName,
-        bucket: 'product-images',
+        bucket: targetBucket,
         isRemote: true,
       });
     } catch (err: any) {
       console.error('[Storage] Error in /api/admin/storage/upload:', err);
       return res.status(500).json({ success: false, error: err?.message || 'Internal upload error' });
+    }
+  });
+
+  // Dedicated endpoint to update ONLY public.settings.logo_url
+  app.post(['/api/admin/settings/logo_url', '/api/settings/logo_url'], async (req, res) => {
+    try {
+      const { logo_url } = req.body || {};
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
+      }
+
+      const now = new Date().toISOString();
+      const { data: current, error: fetchErr } = await supabase
+        .from('settings')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+
+      if (fetchErr) {
+        return res.status(500).json({ success: false, error: fetchErr.message });
+      }
+
+      const settingsId = current?.id || '5411b2f4-8189-4a14-882d-b3c280aeaba4';
+      const cleanLogoUrl = typeof logo_url === 'string' && logo_url.trim().length > 0 ? logo_url.trim() : null;
+
+      const { error: updateErr } = await supabase
+        .from('settings')
+        .update({
+          logo_url: cleanLogoUrl,
+          updated_at: now,
+        })
+        .eq('id', settingsId);
+
+      if (updateErr) {
+        console.error('[Settings] Error updating logo_url:', updateErr);
+        return res.status(500).json({ success: false, error: updateErr.message });
+      }
+
+      return res.json({ success: true, logo_url: cleanLogoUrl });
+    } catch (err: any) {
+      console.error('[Settings] Error in /api/admin/settings/logo_url:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to update logo_url.' });
     }
   });
 
@@ -1888,19 +1946,25 @@ async function startServer() {
   });
 
   // --- PUBLIC PRODUCT STOREFRONT ENDPOINTS ---
-  // Public GET all active products (used for guest / logged-out storefront browsing fallback)
-  app.get('/api/products', async (_req, res) => {
+  // Public GET all active products (supports optional ?include_inactive=true or ?all=true)
+  app.get('/api/products', async (req, res) => {
     try {
       const supabase = getServerSupabase();
       if (!supabase) {
         return res.status(500).json({ success: false, error: 'Database not configured.' });
       }
 
-      const { data, error } = await supabase
+      const includeInactive = req.query.include_inactive === 'true' || req.query.all === 'true';
+
+      let query = supabase
         .from('products')
-        .select('*')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
+        .select('*');
+
+      if (!includeInactive) {
+        query = query.eq('is_active', true);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
         console.error('[ProductsAPI] Error fetching products:', error);
@@ -1938,6 +2002,86 @@ async function startServer() {
     } catch (err: any) {
       console.error('[ProductsAPI] Server exception:', err);
       return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch product.' });
+    }
+  });
+
+  // Admin POST create product (using service role)
+  app.post('/api/admin/products', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const payload = req.body;
+      const { data, error } = await supabase
+        .from('products')
+        .insert(payload)
+        .select('*');
+
+      if (error) {
+        console.error('[AdminProductsAPI] Error inserting product:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data: data?.[0] || data });
+    } catch (err: any) {
+      console.error('[AdminProductsAPI] Server exception:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to create product.' });
+    }
+  });
+
+  // Admin PUT update product (using service role)
+  app.put('/api/admin/products/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const payload = req.body;
+      const { data, error } = await supabase
+        .from('products')
+        .update(payload)
+        .eq('id', id)
+        .select('*');
+
+      if (error) {
+        console.error('[AdminProductsAPI] Error updating product:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data: data?.[0] || data });
+    } catch (err: any) {
+      console.error('[AdminProductsAPI] Server exception:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to update product.' });
+    }
+  });
+
+  // Admin DELETE product (using service role)
+  app.delete('/api/admin/products/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('[AdminProductsAPI] Error deleting product:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[AdminProductsAPI] Server exception:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to delete product.' });
     }
   });
 

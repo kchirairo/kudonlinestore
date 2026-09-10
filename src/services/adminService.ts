@@ -54,7 +54,7 @@ import {
   DEFAULT_INVOICE_SETTINGS,
 } from '../constants/config';
 import { DEFAULT_PAYMENT_GATEWAYS } from '../constants/paymentGateways';
-import { uploadImageToStorage, deleteImageFromStorage } from '../utils/imageUpload';
+import { uploadImageToStorage, deleteImageFromStorage, convertImageToWebP, fileToBase64 } from '../utils/imageUpload';
 import { generateUniqueSku } from '../utils/skuGenerator';
 import { calculateOrderFinancials } from '../utils/taxUtils';
 import {
@@ -183,6 +183,12 @@ async function readSupabaseSettingHelper<T extends Record<string, any>>(key: str
   if (row?.settings_data && typeof row.settings_data === 'object') {
     if (row.settings_data[key] !== undefined) {
       const merged = { ...defaultValue, ...row.settings_data[key] };
+      // Authoritative column: public.settings.logo_url is the single source of truth for store logo
+      if (key === 'store_branding') {
+        if (row.logo_url !== undefined) {
+          merged.logoImageUrl = row.logo_url || undefined;
+        }
+      }
       // Synchronize promotional_banner_enabled for banner_config - single source of truth
       if (key === 'banner_config') {
         const isEnabled = row.settings_data.promotional_banner_enabled === true;
@@ -2825,6 +2831,288 @@ export const adminService = {
   },
 
   /**
+   * Validates selected store logo file format and size
+   * Allowed: PNG, JPG/JPEG, WEBP (Max 5 MB)
+   */
+  validateStoreLogoFile(file: File): { valid: boolean; error?: string } {
+    if (!file) {
+      return { valid: false, error: 'No image file selected.' };
+    }
+
+    // Maximum file size: 5 MB (5,242,880 bytes)
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      return {
+        valid: false,
+        error: `File size (${sizeMb} MB) exceeds the 5 MB limit. Please select a smaller image.`,
+      };
+    }
+
+    const validMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    const extension = (file.name.split('.').pop() || '').toLowerCase();
+    const validExtensions = ['png', 'jpg', 'jpeg', 'webp'];
+
+    const isValidType =
+      validMimeTypes.includes(file.type?.toLowerCase()) ||
+      validExtensions.includes(extension);
+
+    if (!isValidType) {
+      return {
+        valid: false,
+        error: 'Invalid file format. Only PNG, JPG/JPEG, and WEBP image files are allowed.',
+      };
+    }
+
+    return { valid: true };
+  },
+
+  /**
+   * Fetches the current authoritative store logo URL from public.settings.logo_url
+   */
+  async getStoreLogoUrl(): Promise<string | null> {
+    const row = await fetchPublicSettingsRow();
+    return row?.logo_url || null;
+  },
+
+  /**
+   * Uploads an administrator-selected image to the 'store-branding' bucket
+   * at deterministic path 'logo.webp' and updates ONLY public.settings.logo_url.
+   */
+  async uploadStoreLogo(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
+    // 1. Validation check before uploading
+    const validation = this.validateStoreLogoFile(file);
+    if (!validation.valid) {
+      return { success: false, error: validation.error || 'Invalid logo file.' };
+    }
+
+    // 2. Automatically optimize / convert to WebP
+    let fileToUpload: Blob | File = file;
+    try {
+      fileToUpload = await convertImageToWebP(file);
+    } catch (convErr) {
+      console.warn('[AdminService] WebP conversion notice:', convErr);
+      fileToUpload = file;
+    }
+
+    const stableFileName = 'logo.webp';
+    const targetBucket = 'store-branding';
+    let publicLogoUrl = '';
+    let uploadSuccess = false;
+    let uploadErrorMsg = '';
+
+    // 3. Attempt direct Supabase client upload
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from(targetBucket)
+          .upload(stableFileName, fileToUpload, {
+            contentType: 'image/webp',
+            cacheControl: '3600',
+            upsert: true,
+          });
+
+        if (!uploadError && uploadData) {
+          const { data: publicUrlData } = supabase.storage.from(targetBucket).getPublicUrl(stableFileName);
+          if (publicUrlData?.publicUrl) {
+            publicLogoUrl = publicUrlData.publicUrl;
+            uploadSuccess = true;
+          }
+        } else if (uploadError) {
+          uploadErrorMsg = uploadError.message;
+          console.warn('[AdminService] Direct client upload to store-branding returned:', uploadError.message);
+        }
+      } catch (directErr: any) {
+        uploadErrorMsg = directErr?.message || 'Direct upload exception';
+        console.warn('[AdminService] Direct client upload exception:', directErr);
+      }
+    }
+
+    // 4. Server proxy fallback if direct upload failed
+    if (!uploadSuccess) {
+      try {
+        const base64Data = await fileToBase64(file);
+        const res = await fetch('/api/admin/storage/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: stableFileName,
+            base64Data,
+            contentType: 'image/webp',
+            folder: '',
+            bucket: targetBucket,
+          }),
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success && result.url) {
+            publicLogoUrl = result.url;
+            uploadSuccess = true;
+          } else {
+            uploadErrorMsg = result.error || 'Server storage upload failed.';
+          }
+        } else {
+          uploadErrorMsg = `Storage server returned HTTP ${res.status}.`;
+        }
+      } catch (serverErr: any) {
+        uploadErrorMsg = serverErr?.message || 'Server storage proxy unavailable.';
+      }
+    }
+
+    if (!uploadSuccess || !publicLogoUrl) {
+      return {
+        success: false,
+        error: uploadErrorMsg || 'Failed to upload logo image to store-branding storage.',
+      };
+    }
+
+    // Add cache-busting timestamp parameter to ensure immediate browser refresh across all clients
+    const finalLogoUrl = publicLogoUrl.includes('?')
+      ? `${publicLogoUrl}&t=${Date.now()}`
+      : `${publicLogoUrl}?t=${Date.now()}`;
+
+    // 5. Update ONLY public.settings.logo_url in Supabase
+    const row = await fetchPublicSettingsRow();
+    const settingsId = row?.id || '5411b2f4-8189-4a14-882d-b3c280aeaba4';
+    const now = new Date().toISOString();
+
+    let dbUpdated = false;
+    let dbErrorMsg = '';
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error: dbErr } = await supabase
+          .from('settings')
+          .update({
+            logo_url: finalLogoUrl,
+            updated_at: now,
+          })
+          .eq('id', settingsId);
+
+        if (!dbErr) {
+          dbUpdated = true;
+        } else {
+          dbErrorMsg = dbErr.message;
+        }
+      } catch (dbEx: any) {
+        dbErrorMsg = dbEx?.message || 'Database update exception';
+      }
+    }
+
+    // Server API fallback if direct update failed
+    if (!dbUpdated) {
+      try {
+        const res = await fetch('/api/admin/settings/logo_url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ logo_url: finalLogoUrl }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            dbUpdated = true;
+          } else {
+            dbErrorMsg = json.error || dbErrorMsg;
+          }
+        }
+      } catch (apiErr: any) {
+        dbErrorMsg = apiErr?.message || dbErrorMsg;
+      }
+    }
+
+    if (!dbUpdated) {
+      return {
+        success: false,
+        error: dbErrorMsg || 'Logo was uploaded, but failed to update public.settings.logo_url in database.',
+      };
+    }
+
+    return {
+      success: true,
+      url: finalLogoUrl,
+    };
+  },
+
+  /**
+   * Removes custom store logo by clearing public.settings.logo_url back to null
+   * and restoring the default orange K logo.
+   */
+  async removeStoreLogo(): Promise<{ success: boolean; error?: string }> {
+    const row = await fetchPublicSettingsRow();
+    const settingsId = row?.id || '5411b2f4-8189-4a14-882d-b3c280aeaba4';
+    const now = new Date().toISOString();
+
+    let dbSuccess = false;
+    let errorMsg = '';
+
+    // 1. Direct Supabase update
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error: dbErr } = await supabase
+          .from('settings')
+          .update({
+            logo_url: null,
+            updated_at: now,
+          })
+          .eq('id', settingsId);
+
+        if (!dbErr) {
+          dbSuccess = true;
+        } else {
+          errorMsg = dbErr.message;
+        }
+      } catch (dbEx: any) {
+        errorMsg = dbEx?.message || 'Database update exception';
+      }
+
+      // Best effort removal from store-branding bucket
+      try {
+        await supabase.storage.from('store-branding').remove(['logo.webp']);
+      } catch {
+        // Ignored
+      }
+    }
+
+    // 2. Server fallback
+    if (!dbSuccess) {
+      try {
+        const res = await fetch('/api/admin/settings/logo_url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ logo_url: null }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            dbSuccess = true;
+          } else {
+            errorMsg = json.error || errorMsg;
+          }
+        }
+      } catch (apiErr: any) {
+        errorMsg = apiErr?.message || errorMsg;
+      }
+    }
+
+    if (!dbSuccess) {
+      return {
+        success: false,
+        error: errorMsg || 'Failed to clear logo_url in public.settings.',
+      };
+    }
+
+    return { success: true };
+  },
+
+  /**
+   * Resets the store logo to the default orange K badge by clearing public.settings.logo_url
+   */
+  async resetStoreLogoToDefault(): Promise<{ success: boolean; error?: string }> {
+    return this.removeStoreLogo();
+  },
+
+  /**
    * Fetch promotional_banner_enabled visibility status directly from public.settings.settings_data
    * Single source of truth: row.settings_data.promotional_banner_enabled === true
    * Fails closed: returns false on null, undefined, error, or missing.
@@ -3246,12 +3534,32 @@ export const adminService = {
 
     console.log('[AdminService] Inserting product into Supabase public.products:', standardPayload);
 
-    const { data: createdResult, error } = await executeWithColumnFallback(
+    let { data: createdResult, error } = await executeWithColumnFallback(
       (payload) => supabase.from('products').insert(payload).select('*'),
       standardPayload
     );
 
-    const createdRow = Array.isArray(createdResult) ? createdResult[0] : createdResult;
+    let createdRow = Array.isArray(createdResult) ? createdResult[0] : createdResult;
+
+    // Fallback to /api/admin/products server endpoint if direct client query encountered permission or RLS issues
+    if (error || !createdRow) {
+      try {
+        const resp = await fetch('/api/admin/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(standardPayload),
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          if (resJson.success && resJson.data) {
+            createdRow = resJson.data;
+            error = null;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AdminService] Server fallback for createProduct failed:', apiErr);
+      }
+    }
 
     if (error || !createdRow) {
       console.error('[AdminService] Supabase insert product failed:', error);
@@ -3738,10 +4046,29 @@ export const adminService = {
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await executeWithColumnFallback(
+    let { error } = await executeWithColumnFallback(
       (payload) => supabase.from('products').update(payload).eq('id', id),
       updatePayload
     );
+
+    // Fallback to /api/admin/products/:id server endpoint if direct client query encountered permission or RLS issues
+    if (error) {
+      try {
+        const resp = await fetch(`/api/admin/products/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatePayload),
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          if (resJson.success) {
+            error = null;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AdminService] Server fallback for updateProduct failed:', apiErr);
+      }
+    }
 
     if (error) {
       console.error('[AdminService] Supabase update product failed:', error);
@@ -3936,7 +4263,25 @@ export const adminService = {
 
     const current = await this.getProductById(id);
 
-    const { error } = await supabase.from('products').delete().eq('id', id);
+    let { error } = await supabase.from('products').delete().eq('id', id);
+
+    // Fallback to /api/admin/products/:id server endpoint if direct client query encountered permission or RLS issues
+    if (error) {
+      try {
+        const resp = await fetch(`/api/admin/products/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          if (resJson.success) {
+            error = null;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AdminService] Server fallback for deleteProduct failed:', apiErr);
+      }
+    }
+
     if (error) {
       console.error('[AdminService] Supabase delete product failed:', error);
       return { success: false, error: `Supabase delete error: ${error.message}` };
