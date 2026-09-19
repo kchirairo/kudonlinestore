@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -96,6 +97,191 @@ function getServerSupabase() {
     return null;
   }
   return createClient(supabaseUrl, supabaseKey);
+}
+
+/**
+ * Generates an RFC 4122 v5 deterministic UUID from a unique event fingerprint.
+ * Guarantees that the exact same logical event always generates the same UUID,
+ * allowing PostgreSQL's atomic primary key constraint (ON CONFLICT (id) DO NOTHING)
+ * to enforce database-level idempotency without race conditions.
+ */
+function fingerprintToDeterministicUuid(fingerprint: string): string {
+  const hash = crypto.createHash('sha1').update(fingerprint.trim()).digest('hex');
+  const p1 = hash.substring(0, 8);
+  const p2 = hash.substring(8, 12);
+  const p3 = '5' + hash.substring(13, 16);
+  const p4 = ((parseInt(hash.substring(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, '0') + hash.substring(18, 20);
+  const p5 = hash.substring(20, 32);
+  return `${p1}-${p2}-${p3}-${p4}-${p5}`;
+}
+
+/**
+ * Safe server-side helper to create admin notifications with true database-backed idempotency.
+ * - For events with a fingerprint: Uses atomic PostgreSQL INSERT ... ON CONFLICT (id) DO NOTHING
+ *   with a deterministic UUID derived from the event fingerprint.
+ * - Handles concurrent requests safely; duplicate calls return the existing notification ID.
+ * - Non-blocking: failures never throw or disrupt transactional checkout, payment, or order flows.
+ * - Never exposes service_role to browser.
+ */
+async function createAdminNotificationSafe({
+  type,
+  severity,
+  title,
+  message,
+  userId = null,
+  orderId = null,
+  productId = null,
+  metadata = {},
+  fingerprint = null,
+}: {
+  type: 'order' | 'payment' | 'inventory' | 'security' | 'system';
+  severity: 'info' | 'warning' | 'critical' | 'success' | 'error';
+  title: string;
+  message: string;
+  userId?: string | null;
+  orderId?: string | null;
+  productId?: string | null;
+  metadata?: Record<string, any>;
+  fingerprint?: string | null;
+}): Promise<string | null> {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return null;
+
+    const cleanFingerprint = fingerprint && typeof fingerprint === 'string' ? fingerprint.trim() : null;
+
+    // 1. Explicit atomic database-backed idempotency via deterministic primary key
+    if (cleanFingerprint) {
+      const deterministicId = fingerprintToDeterministicUuid(cleanFingerprint);
+      const nowIso = new Date().toISOString();
+
+      const { data: upsertData, error: upsertError } = await supabase
+        .from('admin_notifications')
+        .upsert(
+          {
+            id: deterministicId,
+            type,
+            severity,
+            title,
+            message,
+            user_id: userId || null,
+            order_id: orderId || null,
+            product_id: productId || null,
+            metadata: metadata || {},
+            fingerprint: cleanFingerprint,
+            is_read: false,
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+          {
+            onConflict: 'id',
+            ignoreDuplicates: true,
+          }
+        )
+        .select('id');
+
+      if (!upsertError) {
+        // Successfully inserted new notification OR ignored duplicate atomically
+        return deterministicId;
+      }
+
+      console.warn('[AdminNotifications] Atomic upsert notice, falling back to RPC:', upsertError.message);
+    }
+
+    // 2. Compatibility fallback: invoke public.create_admin_notification RPC
+    const { data: rpcData, error: rpcError } = await supabase.rpc('create_admin_notification', {
+      p_type: type,
+      p_severity: severity,
+      p_title: title,
+      p_message: message,
+      p_user_id: userId || null,
+      p_order_id: orderId || null,
+      p_product_id: productId || null,
+      p_metadata: metadata || {},
+      p_fingerprint: cleanFingerprint || null,
+    });
+
+    if (rpcError) {
+      console.warn('[AdminNotifications] Server RPC notice:', rpcError.message);
+      return null;
+    }
+
+    return rpcData || null;
+  } catch (err: any) {
+    console.warn('[AdminNotifications] Safe notification caught error:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Checks product stock against thresholds and dispatches inventory notifications safely.
+ * - stock <= 0 => critical / "Out of Stock" (fingerprint: inventory:<productId>:out-of-stock)
+ * - stock <= threshold => warning / "Low Stock" (fingerprint: inventory:<productId>:low-stock)
+ */
+async function checkAndNotifyProductStock(
+  productId: string,
+  stockValue?: number | null,
+  productName?: string | null,
+  lowStockThreshold: number = 5
+) {
+  try {
+    if (!productId) return;
+    const supabase = getServerSupabase();
+    if (!supabase) return;
+
+    let currentStock = stockValue !== undefined && stockValue !== null ? Number(stockValue) : NaN;
+    let name = productName;
+
+    if (isNaN(currentStock) || !name) {
+      const { data: prod } = await supabase
+        .from('products')
+        .select('name, stock')
+        .eq('id', productId)
+        .single();
+
+      if (prod) {
+        if (isNaN(currentStock)) currentStock = Number(prod.stock) || 0;
+        if (!name) name = prod.name;
+      }
+    }
+
+    if (isNaN(currentStock)) return;
+    const threshold = Number(lowStockThreshold) || 5;
+
+    if (currentStock <= 0) {
+      await createAdminNotificationSafe({
+        type: 'inventory',
+        severity: 'critical',
+        title: `Out of Stock: ${name || 'Product'}`,
+        message: `Product "${name || 'Product'}" has reached 0 units in stock. Replenishment required immediately.`,
+        productId,
+        metadata: {
+          product_id: productId,
+          product_name: name || 'Product',
+          current_stock: currentStock,
+          threshold,
+        },
+        fingerprint: `inventory:${productId}:out`,
+      });
+    } else if (currentStock <= threshold) {
+      await createAdminNotificationSafe({
+        type: 'inventory',
+        severity: 'warning',
+        title: `Low Stock Alert: ${name || 'Product'}`,
+        message: `Product "${name || 'Product'}" stock has dropped to ${currentStock} remaining (threshold: ${threshold}).`,
+        productId,
+        metadata: {
+          product_id: productId,
+          product_name: name || 'Product',
+          current_stock: currentStock,
+          threshold,
+        },
+        fingerprint: `inventory:${productId}:low`,
+      });
+    }
+  } catch (err: any) {
+    console.warn('[AdminNotifications] Stock check caught error:', err?.message);
+  }
 }
 
 /**
@@ -592,6 +778,25 @@ async function startServer() {
         console.warn('Server order_items insert warning:', itemsError.message);
       }
 
+      // Safe server-side admin notification for newly created order
+      createAdminNotificationSafe({
+        type: 'order',
+        severity: 'info',
+        title: `New Order: #${createdOrder.order_number}`,
+        message: `Order #${createdOrder.order_number} for R${Number(calcTotal).toFixed(2)} placed by ${shippingAddress.fullName || 'Customer'}.`,
+        userId: userId && userId !== 'guest' ? userId : null,
+        orderId: realOrderId,
+        metadata: {
+          order_id: realOrderId,
+          user_id: userId && userId !== 'guest' ? userId : null,
+          order_number: createdOrder.order_number,
+          total: calcTotal,
+          currency: 'ZAR',
+          customer_name: shippingAddress.fullName || 'Customer',
+        },
+        fingerprint: `order:${realOrderId}:created`,
+      }).catch((err) => console.warn('[create-yoco-checkout] Order notification caught:', err));
+
       // Attempt Supabase Edge Function if provisioned (safely wrapped)
       try {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-yoco-checkout', {
@@ -710,7 +915,7 @@ async function startServer() {
 
       const { data: existingOrder, error: fetchError } = await supabase
         .from('orders')
-        .select('id, status, payment_status')
+        .select('id, status, payment_status, total, order_number, user_id, customer_name')
         .eq('id', orderId)
         .single();
 
@@ -755,6 +960,27 @@ async function startServer() {
           .eq('id', orderId);
 
         console.log(`Order ${orderId} updated to paid via webhook.`);
+
+        // Dispatch authoritative payment notification safely
+        const orderNum = existingOrder.order_number || `KUD-${orderId.slice(0, 6).toUpperCase()}`;
+        const orderTotal = Number(existingOrder.total || 0);
+        createAdminNotificationSafe({
+          type: 'payment',
+          severity: 'success',
+          title: `Payment Received: #${orderNum}`,
+          message: `Verified Yoco payment of R${orderTotal.toFixed(2)} received for order #${orderNum}.`,
+          userId: existingOrder.user_id || null,
+          orderId,
+          metadata: {
+            order_id: orderId,
+            order_number: orderNum,
+            payment_reference: payload.id || payload.checkoutId || `yoco_${Date.now()}`,
+            amount: orderTotal,
+            payment_provider: 'yoco',
+            status: 'paid',
+          },
+          fingerprint: `payment:${orderId}:success`,
+        }).catch((notifErr) => console.warn('[AdminNotifications] Yoco payment success notification notice:', notifErr));
 
         // Trigger order confirmation email dispatch
         let emailResult = null;
@@ -815,10 +1041,147 @@ async function startServer() {
         });
       }
 
+      // Handle non-successful/failed/cancelled payment webhook
+      if (
+        eventType.includes('fail') ||
+        eventType.includes('cancel') ||
+        paymentStatus === 'failed' ||
+        paymentStatus === 'cancelled'
+      ) {
+        const targetStatus = paymentStatus === 'cancelled' || eventType.includes('cancel') ? 'cancelled' : 'failed';
+        const orderNum = existingOrder.order_number || `KUD-${orderId.slice(0, 6).toUpperCase()}`;
+        createAdminNotificationSafe({
+          type: 'payment',
+          severity: 'warning',
+          title: `Payment ${targetStatus === 'cancelled' ? 'Cancelled' : 'Failed'}: #${orderNum}`,
+          message: `Yoco payment for order #${orderNum} was ${targetStatus} (event: ${eventType}).`,
+          userId: existingOrder.user_id || null,
+          orderId,
+          metadata: {
+            order_id: orderId,
+            order_number: orderNum,
+            payment_reference: payload.id || null,
+            status: targetStatus,
+            event: eventType,
+          },
+          fingerprint: `payment:${orderId}:failed`,
+        }).catch((notifErr) => console.warn('[AdminNotifications] Yoco payment warning notification notice:', notifErr));
+      }
+
       return res.json({ received: true, status: paymentStatus });
     } catch (err: any) {
       console.error('Yoco webhook processing error:', err);
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Secure Server-Side Order Notification & Inventory Stock Evaluation Endpoint
+  app.post('/api/notifications/notify-order-created', async (req, res) => {
+    try {
+      const { orderId } = req.body || {};
+      if (!orderId) {
+        return res.status(400).json({ success: false, error: 'orderId is required' });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database service unavailable' });
+      }
+
+      const { data: order, error: orderErr } = await supabase
+        .from('orders')
+        .select('id, order_number, total, subtotal, user_id, customer_name, customer_email, created_at')
+        .eq('id', orderId)
+        .single();
+
+      if (orderErr || !order) {
+        return res.status(404).json({ success: false, error: 'Order not found' });
+      }
+
+      const orderNumber = order.order_number || `KUD-${order.id.slice(0, 6).toUpperCase()}`;
+      const totalAmount = Number(order.total ?? order.subtotal ?? 0);
+      const customerName = order.customer_name || 'Valued Customer';
+
+      // 1. Create order notification
+      const notifId = await createAdminNotificationSafe({
+        type: 'order',
+        severity: 'info',
+        title: `New Order: #${orderNumber}`,
+        message: `Order #${orderNumber} for R${totalAmount.toFixed(2)} placed by ${customerName}.`,
+        userId: order.user_id || null,
+        orderId: order.id,
+        metadata: {
+          order_id: order.id,
+          user_id: order.user_id || null,
+          order_number: orderNumber,
+          total: totalAmount,
+          currency: 'ZAR',
+          customer_name: customerName,
+        },
+        fingerprint: `order:${order.id}:created`,
+      });
+
+      // 2. Safely inspect order_items, decrement inventory, and check low/out-of-stock thresholds
+      try {
+        const { data: orderItems } = await supabase
+          .from('order_items')
+          .select('product_id, product_name, quantity')
+          .eq('order_id', order.id);
+
+        if (orderItems && orderItems.length > 0) {
+          for (const item of orderItems) {
+            if (item.product_id) {
+              const { data: prod } = await supabase
+                .from('products')
+                .select('id, name, stock')
+                .eq('id', item.product_id)
+                .single();
+
+              if (prod && typeof prod.stock === 'number') {
+                const updatedStock = Math.max(0, prod.stock - (Number(item.quantity) || 1));
+                await supabase
+                  .from('products')
+                  .update({
+                    stock: updatedStock,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', item.product_id);
+
+                // Check inventory thresholds (warning at <= 5, critical at <= 0)
+                await checkAndNotifyProductStock(
+                  item.product_id,
+                  updatedStock,
+                  prod.name || item.product_name,
+                  5
+                );
+              }
+            }
+          }
+        }
+      } catch (stockErr: any) {
+        console.warn('[AdminNotifications] Stock check caught notice:', stockErr?.message);
+      }
+
+      return res.json({ success: true, notificationId: notifId });
+    } catch (err: any) {
+      console.warn('[AdminNotifications] Exception in /api/notifications/notify-order-created:', err?.message);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to process order notification' });
+    }
+  });
+
+  // Secure Server-Side Inventory Check Notification Endpoint
+  app.post('/api/notifications/notify-inventory-check', async (req, res) => {
+    try {
+      const { productId, stock, productName, threshold = 5 } = req.body || {};
+      if (!productId) {
+        return res.status(400).json({ success: false, error: 'productId is required' });
+      }
+
+      await checkAndNotifyProductStock(productId, stock, productName, threshold);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.warn('[AdminNotifications] Exception in /api/notifications/notify-inventory-check:', err?.message);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to check inventory notification' });
     }
   });
 
@@ -2024,6 +2387,10 @@ async function startServer() {
         return res.status(500).json({ success: false, error: error.message });
       }
 
+      if (payload.stock !== undefined && data?.[0]?.id) {
+        checkAndNotifyProductStock(data[0].id, Number(payload.stock), payload.name, payload.low_stock_threshold || 5);
+      }
+
       return res.json({ success: true, data: data?.[0] || data });
     } catch (err: any) {
       console.error('[AdminProductsAPI] Server exception:', err);
@@ -2050,6 +2417,10 @@ async function startServer() {
       if (error) {
         console.error('[AdminProductsAPI] Error updating product:', error);
         return res.status(500).json({ success: false, error: error.message });
+      }
+
+      if (payload.stock !== undefined) {
+        checkAndNotifyProductStock(id, Number(payload.stock), payload.name, payload.low_stock_threshold || 5);
       }
 
       return res.json({ success: true, data: data?.[0] || data });

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Star, Flame, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Star, Flame, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { Product } from '../types';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
@@ -90,9 +90,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       }
     }
 
-    return list.length > 0
-      ? list
-      : ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
+    // Filter out empty strings and embedded base64 data URIs
+    list = list.filter(
+      (img) => typeof img === 'string' && img.trim().length > 0 && !img.trim().startsWith('data:image')
+    );
+
+    return list;
   }, [product.images, (product as any).image_url, (product as any).image]);
 
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -409,14 +412,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                   loading={idx === 0 ? 'lazy' : 'lazy'}
                   decoding="async"
                   onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80';
+                    const el = e.currentTarget;
+                    el.style.display = 'none';
+                    if (el.parentElement) {
+                      el.parentElement.classList.add('flex', 'items-center', 'justify-center', 'bg-gray-100', 'dark:bg-slate-800');
+                    }
                   }}
                 />
               </div>
             ))}
           </div>
-        ) : (
+        ) : validImages.length === 1 ? (
           /* Single Image (no swipe/carousel track needed) */
           <div className="w-full h-full">
             <img
@@ -426,10 +432,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               loading="lazy"
               decoding="async"
               onError={(e) => {
-                (e.target as HTMLImageElement).src =
-                  'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80';
+                const el = e.currentTarget;
+                el.style.display = 'none';
+                if (el.parentElement) {
+                  el.parentElement.classList.add('flex', 'flex-col', 'items-center', 'justify-center', 'bg-gray-100', 'dark:bg-slate-800');
+                  el.parentElement.innerHTML = '<div class="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-4"><svg class="w-8 h-8 stroke-[1.5] mb-1 text-gray-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"></line><path d="M10.41 10.41a2 2 0 1 0-2.83-2.83"></path><line x1="13.5" y1="13.5" x2="6" y2="21"></line><line x1="18" y1="12" x2="21" y2="15"></line><path d="m3.59 3.59 16.82 16.82"></path><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg><span class="text-xs font-medium">Image unavailable</span></div>';
+                }
               }}
             />
+          </div>
+        ) : (
+          /* Neutral Display-Only Placeholder when product has no images */
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500 p-4 select-none">
+            <ImageOff className="w-8 h-8 stroke-[1.5] mb-1.5 text-gray-300 dark:text-slate-600" />
+            <span className="text-xs font-medium tracking-tight">Image unavailable</span>
           </div>
         )}
 

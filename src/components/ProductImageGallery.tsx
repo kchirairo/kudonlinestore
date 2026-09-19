@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Star, Maximize2, X, ZoomIn } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Star, Maximize2, X, ZoomIn, ImageOff } from 'lucide-react';
 
 interface ProductImageGalleryProps {
   images: string[];
@@ -61,9 +61,10 @@ export const ProductImageGallery: React.FC<ProductImageGalleryProps> = ({
         }
       }
     }
-    return list.length > 0
-      ? list
-      : ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
+    // Filter out empty strings and embedded data:image base64 URLs
+    return list.filter(
+      (img) => typeof img === 'string' && img.trim().length > 0 && !img.trim().startsWith('data:image')
+    );
   }, [images]);
 
   const [internalIndex, setInternalIndex] = useState(0);
@@ -435,36 +436,46 @@ export const ProductImageGallery: React.FC<ProductImageGalleryProps> = ({
         aria-roledescription="carousel"
         style={{ touchAction: 'pan-y' }}
       >
-        {/* Sliding Track for all Images */}
-        <div
-          className="flex h-full w-full select-none"
-          style={{
-            transform: `translateX(calc(-${safeActiveIndex * 100}% + ${dragOffset}px))`,
-            transition: isSwiping ? 'none' : 'transform 320ms cubic-bezier(0.25, 1, 0.5, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {validImages.map((img, idx) => (
-            <div
-              key={`gallery-slide-${idx}`}
-              className="relative w-full h-full shrink-0 aspect-square overflow-hidden flex items-center justify-center bg-[#f7f7f7] dark:bg-slate-800"
-              aria-hidden={idx !== safeActiveIndex}
-            >
-              <img
-                src={img}
-                alt={`${productName} - ${brand} ${category} (Photo ${idx + 1} of ${validImages.length})`}
-                className="w-full h-full object-contain pointer-events-none select-none"
-                draggable={false}
-                decoding="async"
-                fetchPriority={idx === 0 ? 'high' : 'auto'}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src =
-                    'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80';
-                }}
-              />
-            </div>
-          ))}
-        </div>
+        {/* Sliding Track for all Images, or Neutral Display Placeholder if no images */}
+        {validImages.length > 0 ? (
+          <div
+            className="flex h-full w-full select-none"
+            style={{
+              transform: `translateX(calc(-${safeActiveIndex * 100}% + ${dragOffset}px))`,
+              transition: isSwiping ? 'none' : 'transform 320ms cubic-bezier(0.25, 1, 0.5, 1)',
+              willChange: 'transform',
+            }}
+          >
+            {validImages.map((img, idx) => (
+              <div
+                key={`gallery-slide-${idx}`}
+                className="relative w-full h-full shrink-0 aspect-square overflow-hidden flex items-center justify-center bg-[#f7f7f7] dark:bg-slate-800"
+                aria-hidden={idx !== safeActiveIndex}
+              >
+                <img
+                  src={img}
+                  alt={`${productName} - ${brand} ${category} (Photo ${idx + 1} of ${validImages.length})`}
+                  className="w-full h-full object-contain pointer-events-none select-none"
+                  draggable={false}
+                  decoding="async"
+                  fetchPriority={idx === 0 ? 'high' : 'auto'}
+                  onError={(e) => {
+                    const el = e.currentTarget;
+                    el.style.display = 'none';
+                    if (el.parentElement) {
+                      el.parentElement.innerHTML = '<div class="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-8 select-none"><svg class="w-12 h-12 stroke-[1.5] mb-2 text-gray-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"></line><path d="M10.41 10.41a2 2 0 1 0-2.83-2.83"></path><line x1="13.5" y1="13.5" x2="6" y2="21"></line><line x1="18" y1="12" x2="21" y2="15"></line><path d="m3.59 3.59 16.82 16.82"></path><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg><span class="text-sm font-medium">Image unavailable</span></div>';
+                    }
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-[#f7f7f7] dark:bg-slate-800 text-gray-400 dark:text-slate-500 p-8 select-none">
+            <ImageOff className="w-16 h-16 stroke-[1.5] mb-3 text-gray-300 dark:text-slate-600" />
+            <span className="text-sm font-medium tracking-tight">Image unavailable</span>
+          </div>
+        )}
 
         {/* Badges Overlay */}
         <div className="absolute top-4 left-4 flex flex-col gap-2 pointer-events-none z-10">
@@ -502,20 +513,22 @@ export const ProductImageGallery: React.FC<ProductImageGalleryProps> = ({
         )}
 
         {/* Zoom / Lightbox Trigger Button (Bottom Right) */}
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setLightboxOpen(true);
-          }}
-          className="zoom-button absolute right-3.5 bottom-3.5 z-20 w-10 h-10 rounded-full bg-white/90 dark:bg-slate-900/90 text-gray-800 dark:text-white flex items-center justify-center shadow-lg backdrop-blur-md hover:bg-white dark:hover:bg-slate-800 active:scale-90 transition-all cursor-pointer border border-gray-100 dark:border-slate-700 opacity-90 hover:opacity-100"
-          aria-label="View full size image"
-          title="Zoom image / Fullscreen view"
-        >
-          <Maximize2 className="w-4 h-4" />
-        </button>
+        {validImages.length > 0 && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightboxOpen(true);
+            }}
+            className="zoom-button absolute right-3.5 bottom-3.5 z-20 w-10 h-10 rounded-full bg-white/90 dark:bg-slate-900/90 text-gray-800 dark:text-white flex items-center justify-center shadow-lg backdrop-blur-md hover:bg-white dark:hover:bg-slate-800 active:scale-90 transition-all cursor-pointer border border-gray-100 dark:border-slate-700 opacity-90 hover:opacity-100"
+            aria-label="View full size image"
+            title="Zoom image / Fullscreen view"
+          >
+            <Maximize2 className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Navigation Arrows (Shown when more than 1 image) */}
         {validImages.length > 1 && (
@@ -623,6 +636,14 @@ export const ProductImageGallery: React.FC<ProductImageGalleryProps> = ({
                 draggable={false}
                 loading="lazy"
                 decoding="async"
+                onError={(e) => {
+                  const el = e.currentTarget;
+                  el.style.display = 'none';
+                  if (el.parentElement) {
+                    el.parentElement.classList.add('flex', 'flex-col', 'items-center', 'justify-center');
+                    el.parentElement.innerHTML = '<span class="text-[9px] font-medium text-center p-1 leading-tight text-gray-400 dark:text-slate-500 select-none">Image unavailable</span>';
+                  }
+                }}
               />
             </button>
           ))}

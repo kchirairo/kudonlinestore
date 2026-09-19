@@ -14,9 +14,11 @@ import {
   FileText,
   TrendingUp,
   Megaphone,
+  Bell,
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import { STORE_CONFIG } from '../../constants/config';
+import { adminNotificationService } from '../../services/adminNotificationService';
 
 interface AdminSidebarProps {
   isOpen?: boolean;
@@ -32,6 +34,29 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   const navigate = useNavigate();
   const { signOut, storeBranding } = useShop();
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const count = await adminNotificationService.getUnreadCount();
+        setUnreadNotificationsCount(count);
+      } catch {
+        // Ignored
+      }
+    };
+    fetchUnread();
+
+    const unsubscribe = adminNotificationService.subscribeToChanges(() => {
+      fetchUnread();
+    });
+
+    const interval = setInterval(fetchUnread, 30000);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -51,6 +76,12 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
   const navItems = [
     { label: 'Dashboard', path: '/admin', icon: LayoutDashboard },
+    {
+      label: 'Notifications',
+      path: '/admin/notifications',
+      icon: Bell,
+      badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined,
+    },
     {
       label: 'Orders',
       path: '/admin/orders',

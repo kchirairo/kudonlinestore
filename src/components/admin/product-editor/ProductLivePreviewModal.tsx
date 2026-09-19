@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Layers,
   Sparkles,
+  ImageOff,
 } from 'lucide-react';
 import { ProductCategory, ProductCondition, ProductVariantItem } from '../../../types';
 import { STORE_CONFIG } from '../../../constants/config';
@@ -69,9 +70,9 @@ export const ProductLivePreviewModal: React.FC<ProductLivePreviewModalProps> = (
   const discountPercent = hasDiscount ? Math.round(((numOrig - numPrice) / numOrig) * 100) : 0;
   const numStock = parseInt(stock, 10) || 0;
 
-  const displayImages = images.length > 0
-    ? images
-    : ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
+  const displayImages = (images || []).filter(
+    (img) => typeof img === 'string' && img.trim().length > 0 && !img.trim().startsWith('data:image')
+  );
 
   return (
     <div
@@ -142,11 +143,18 @@ export const ProductLivePreviewModal: React.FC<ProductLivePreviewModalProps> = (
               <div className="space-y-3">
                 {/* Main Large Image */}
                 <div className="relative aspect-square rounded-2xl overflow-hidden bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-slate-700 flex items-center justify-center">
-                  <img
-                    src={displayImages[activeImageIndex] || displayImages[0]}
-                    alt={name || 'Product preview'}
-                    className="w-full h-full object-cover"
-                  />
+                  {displayImages.length > 0 ? (
+                    <img
+                      src={displayImages[activeImageIndex] || displayImages[0]}
+                      alt={name || 'Product preview'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-6">
+                      <ImageOff className="w-10 h-10 stroke-[1.5] mb-2 text-gray-300 dark:text-slate-600" />
+                      <span className="text-xs font-medium">Image unavailable</span>
+                    </div>
+                  )}
 
                   {/* Discount Badge */}
                   {hasDiscount && (

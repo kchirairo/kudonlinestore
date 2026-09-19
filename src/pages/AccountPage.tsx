@@ -85,7 +85,7 @@ const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
 export const AccountPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, signOut, showToast, generalSettings, isAccountDisabled, accountStatus, disabledReason } = useShop();
+  const { user, profile, signOut, showToast, generalSettings, isAccountDisabled, accountStatus, disabledReason } = useShop();
   const { loading: isAuthLoading, role, refetchProfile, isGoogleAuthEnabled: authGoogleAuthEnabled } = useAuth();
 
   // Check if admin has enabled or disabled Google social authentication (from AuthContext or ShopContext)
@@ -729,11 +729,11 @@ export const AccountPage: React.FC = () => {
         <div className="space-y-6">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-gray-100 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
             <div className="w-20 h-20 rounded-full bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] flex items-center justify-center font-black text-2xl border-2 border-white dark:border-slate-800 shadow-sm">
-              {user.fullName ? user.fullName[0].toUpperCase() : 'K'}
+              {((profile?.full_name || user.fullName || 'K')[0] || 'K').toUpperCase()}
             </div>
             <div className="flex-1 space-y-1">
               <h1 className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white">
-                {user.fullName || 'KUD Shopper'}
+                {profile?.full_name || user.fullName || 'KUD Shopper'}
               </h1>
               <p className="text-sm font-medium text-gray-500 dark:text-slate-400">{user.email}</p>
             </div>

@@ -43,9 +43,9 @@ export const CustomerStatusModal: React.FC<CustomerStatusModalProps> = ({
 
   useEffect(() => {
     if (customer) {
-      const defaultStatus = initialStatus || customer.accountStatus || 'on_hold';
+      const defaultStatus = initialStatus || customer.account_status || 'on_hold';
       setSelectedStatus(defaultStatus);
-      setReason(customer.disabledReason || PRESET_REASONS[defaultStatus]?.[0] || '');
+      setReason(customer.disabled_reason || PRESET_REASONS[defaultStatus]?.[0] || '');
     }
   }, [customer, initialStatus, isOpen]);
 

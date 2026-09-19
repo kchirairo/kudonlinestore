@@ -14,8 +14,10 @@ import {
   Eye,
   ShieldCheck,
   Share2,
+  Bell,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
+import { adminNotificationService } from '../../services/adminNotificationService';
 import { AdminStats, Order, SalesDataPoint } from '../../types';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
@@ -32,20 +34,23 @@ export const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
-      const [statsRes, ordersRes, salesRes] = await Promise.all([
+      const [statsRes, ordersRes, salesRes, unreadRes] = await Promise.all([
         adminService.getAdminStats(),
         adminService.getOrders({ sortBy: 'newest' }),
         adminService.getSalesOverview(7),
+        adminNotificationService.getUnreadCount(),
       ]);
 
       setStats(statsRes);
       setRecentOrders(ordersRes.slice(0, 6));
       setSalesData(salesRes);
+      setUnreadCount(unreadRes);
     } catch (err) {
       console.error('Failed to load admin dashboard data:', err);
     } finally {
@@ -55,6 +60,14 @@ export const AdminDashboardPage: React.FC = () => {
 
   useEffect(() => {
     loadDashboardData();
+
+    const unsubscribe = adminNotificationService.subscribeToChanges(() => {
+      adminNotificationService.getUnreadCount().then(setUnreadCount).catch(() => {});
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   if (isLoading) {
@@ -147,6 +160,18 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          <button
+            onClick={() => navigate('/admin/notifications')}
+            className="relative flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-2xl text-xs font-bold transition-colors cursor-pointer"
+          >
+            <Bell className="w-4 h-4 text-[#ff6452]" />
+            <span>Notifications</span>
+            {unreadCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-[#ff6452] text-white">
+                {unreadCount}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => navigate('/admin/marketing')}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-2xl text-xs font-bold transition-colors cursor-pointer"

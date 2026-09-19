@@ -151,6 +151,108 @@ async function verifyCheckoutWithYocoApi(
   }
 }
 
+/**
+ * Generates an RFC 4122 v5 deterministic UUID from a unique event fingerprint in Deno/Edge Functions.
+ * Guarantees that the exact same logical event always produces the exact same UUID,
+ * enabling atomic PostgreSQL ON CONFLICT (id) DO NOTHING deduplication across all webhooks.
+ */
+async function fingerprintToDeterministicUuid(fingerprint: string): Promise<string> {
+  const msgUint8 = new TextEncoder().encode(fingerprint.trim());
+  const hashBuffer = await crypto.subtle.digest('SHA-1', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const p1 = hashHex.substring(0, 8);
+  const p2 = hashHex.substring(8, 12);
+  const p3 = '5' + hashHex.substring(13, 16);
+  const p4 = ((parseInt(hashHex.substring(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, '0') + hashHex.substring(18, 20);
+  const p5 = hashHex.substring(20, 32);
+  return `${p1}-${p2}-${p3}-${p4}-${p5}`;
+}
+
+/**
+ * Idempotently dispatches an admin notification to public.admin_notifications with atomic conflict handling.
+ */
+async function dispatchIdempotentAdminNotification({
+  supabase,
+  type,
+  severity,
+  title,
+  message,
+  userId = null,
+  orderId = null,
+  productId = null,
+  metadata = {},
+  fingerprint,
+}: {
+  supabase: any;
+  type: string;
+  severity: string;
+  title: string;
+  message: string;
+  userId?: string | null;
+  orderId?: string | null;
+  productId?: string | null;
+  metadata?: Record<string, any>;
+  fingerprint: string;
+}) {
+  try {
+    const cleanFp = fingerprint.trim();
+    const deterministicId = await fingerprintToDeterministicUuid(cleanFp);
+    const nowIso = new Date().toISOString();
+
+    const { error: upsertErr } = await supabase
+      .from('admin_notifications')
+      .upsert(
+        {
+          id: deterministicId,
+          type,
+          severity,
+          title,
+          message,
+          user_id: userId || null,
+          order_id: orderId || null,
+          product_id: productId || null,
+          metadata: metadata || {},
+          fingerprint: cleanFp,
+          is_read: false,
+          created_at: nowIso,
+          updated_at: nowIso,
+        },
+        {
+          onConflict: 'id',
+          ignoreDuplicates: true,
+        }
+      );
+
+    if (!upsertErr) {
+      console.log(`[YOCO WEBHOOK] Atomic idempotent notification stored (${deterministicId}) for ${cleanFp}`);
+      return deterministicId;
+    }
+    console.warn('[YOCO WEBHOOK] Atomic upsert notice, falling back to RPC:', upsertErr.message);
+  } catch (upsertCatch: any) {
+    console.warn('[YOCO WEBHOOK] Deterministic upsert notice:', upsertCatch?.message);
+  }
+
+  // Fallback to RPC
+  try {
+    const { data: rpcData } = await supabase.rpc('create_admin_notification', {
+      p_type: type,
+      p_severity: severity,
+      p_title: title,
+      p_message: message,
+      p_user_id: userId || null,
+      p_order_id: orderId || null,
+      p_product_id: productId || null,
+      p_metadata: metadata || {},
+      p_fingerprint: fingerprint.trim(),
+    });
+    return rpcData;
+  } catch (rpcErr: any) {
+    console.warn('[YOCO WEBHOOK] Non-blocking admin notification error:', rpcErr?.message);
+    return null;
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -479,6 +581,33 @@ serve(async (req) => {
 
       console.log(`[YOCO WEBHOOK] Successfully updated order ${orderId} (${orderNumber}): payment_status='paid', paid_at=${nowIso}, ref=${verifiedPaymentReference}`);
 
+      // Create authoritative idempotent payment notification in public.admin_notifications
+      try {
+        const paymentTotal = Number(existingOrder.total || 0);
+        await dispatchIdempotentAdminNotification({
+          supabase,
+          type: 'payment',
+          severity: 'success',
+          title: `Payment Received: #${orderNumber}`,
+          message: `Verified Yoco payment of R${paymentTotal.toFixed(2)} received for order #${orderNumber}.`,
+          userId: existingOrder.user_id || null,
+          orderId: orderId,
+          productId: null,
+          metadata: {
+            order_id: orderId,
+            order_number: orderNumber,
+            payment_reference: verifiedPaymentReference,
+            amount: paymentTotal,
+            payment_provider: 'yoco',
+            status: 'paid',
+          },
+          fingerprint: `payment:${orderId}:success`,
+        });
+        console.log(`[YOCO WEBHOOK] Admin notification dispatched for successful payment on order ${orderId}`);
+      } catch (notifErr: any) {
+        console.warn('[YOCO WEBHOOK] Non-blocking admin notification error:', notifErr?.message);
+      }
+
       // 10. Asynchronously trigger purchase confirmation email if not yet sent
       if (!existingOrder.confirmation_email_sent) {
         try {
@@ -533,6 +662,31 @@ serve(async (req) => {
 
       await supabase.from('orders').update(nonSuccessUpdate).eq('id', orderId);
       console.log(`[YOCO WEBHOOK] Order ${orderId} updated to payment_status='${targetPaymentStatus}' based on event '${eventType}'.`);
+
+      // Create authoritative idempotent warning notification in public.admin_notifications
+      try {
+        await dispatchIdempotentAdminNotification({
+          supabase,
+          type: 'payment',
+          severity: 'warning',
+          title: `Payment ${isCancelledEvent ? 'Cancelled' : 'Failed'}: #${orderNumber}`,
+          message: `Yoco payment for order #${orderNumber} was marked as ${targetPaymentStatus} (event: ${eventType}).`,
+          userId: existingOrder.user_id || null,
+          orderId: orderId,
+          productId: null,
+          metadata: {
+            order_id: orderId,
+            order_number: orderNumber,
+            payment_reference: verifiedPaymentReference || checkoutId || null,
+            status: targetPaymentStatus,
+            event: eventType,
+          },
+          fingerprint: `payment:${orderId}:failed`,
+        });
+        console.log(`[YOCO WEBHOOK] Admin warning notification dispatched for ${targetPaymentStatus} payment on order ${orderId}`);
+      } catch (notifErr: any) {
+        console.warn('[YOCO WEBHOOK] Non-blocking admin notification warning error:', notifErr?.message);
+      }
 
       return new Response(
         JSON.stringify({

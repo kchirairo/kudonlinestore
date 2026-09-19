@@ -36,6 +36,7 @@ import { AdminSettingsPage } from './pages/admin/AdminSettingsPage';
 import { AdminInvoicesPage } from './pages/admin/AdminInvoicesPage';
 import { AdminMarketingAnalyticsPage } from './pages/admin/AdminMarketingAnalyticsPage';
 import { AdminBannersPage } from './pages/admin/AdminBannersPage';
+import { AdminNotificationsPage } from './pages/admin/AdminNotificationsPage';
 import { marketingService } from './services/marketingService';
 
 function AppContent() {
@@ -86,6 +87,7 @@ function AppContent() {
             }
           >
             <Route index element={<AdminDashboardPage />} />
+            <Route path="notifications" element={<AdminNotificationsPage />} />
             <Route path="orders" element={<AdminOrdersPage />} />
             <Route path="orders/:id" element={<AdminOrderDetailsPage />} />
             <Route path="invoices" element={<AdminInvoicesPage />} />

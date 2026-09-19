@@ -302,32 +302,21 @@ export async function uploadImageToStorage(
             isRemote: true,
           };
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server storage proxy upload failed with status ${res.status}`);
       }
-    } catch (serverErr) {
-      console.warn('[Storage] Server storage proxy upload failed:', serverErr);
+    } catch (serverErr: any) {
+      console.error('[Storage] Server storage proxy upload failed:', serverErr);
+      throw new Error(
+        serverErr?.message || `Failed to upload image to Supabase Storage bucket "${bucketName}".`
+      );
     }
 
-    // 4. Fallback: If both direct and server upload were unavailable (e.g. static Netlify hosting or bucket policy),
-    // gracefully fallback to the optimized WebP base64 data URI so product creation/updating continues smoothly.
-    console.info(`[Storage] Remote storage upload to "${bucketName}" unavailable. Using optimized WebP image payload.`);
-    const dataUrl = await fileToBase64(file);
-    return {
-      url: dataUrl,
-      fileName: uniqueFileName,
-      bucket: 'local-fallback',
-      isRemote: false,
-    };
+    throw new Error(`Failed to upload image to Supabase Storage bucket "${bucketName}".`);
   }
 
-  // 5. Fallback for unconfigured mode:
-  const dataUrl = await fileToBase64(file);
-
-  return {
-    url: dataUrl,
-    fileName: uniqueFileName,
-    bucket: 'local-preview',
-    isRemote: false,
-  };
+  throw new Error('Supabase Storage is not configured. Cannot upload product image.');
 }
 
 /**

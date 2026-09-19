@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle, RefreshCw, AlertTriangle, Ban, PauseCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Lock, CreditCard, Landmark, Truck, AlertCircle, RefreshCw, AlertTriangle, Ban, PauseCircle, ImageOff } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG, PAYMENT_METHODS } from '../constants/config';
 import { orderService } from '../services/orderService';
@@ -801,18 +801,45 @@ export const CheckoutPage: React.FC = () => {
             </h2>
 
             <div className="space-y-3 max-h-60 overflow-y-auto no-scrollbar pr-1">
-              {cart.map((item, idx) => (
-                <div key={`${item.product.id}-${item.selectedSizeOrVariant || ''}-${idx}`} className="flex items-center gap-3 text-sm">
-                  <img
-                    src={
-                      (Array.isArray(item.product.images) && item.product.images.find((u) => typeof u === 'string' && u.trim().length > 0)) ||
-                      (typeof (item.product as any).image_url === 'string' && (item.product as any).image_url.trim()) ||
-                      (typeof (item.product as any).image === 'string' && (item.product as any).image.trim()) ||
-                      'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80'
-                    }
-                    alt={item.product.name}
-                    className="w-12 h-12 rounded-xl object-cover bg-gray-50 dark:bg-slate-800 shrink-0 border border-gray-100 dark:border-slate-800"
-                  />
+              {cart.map((item, idx) => {
+                const checkoutImg =
+                  (Array.isArray(item.product.images) &&
+                    item.product.images.find(
+                      (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                    )) ||
+                  (typeof (item.product as any).image_url === 'string' &&
+                    !(item.product as any).image_url.trim().startsWith('data:image') &&
+                    (item.product as any).image_url.trim()) ||
+                  (typeof (item.product as any).image === 'string' &&
+                    !(item.product as any).image.trim().startsWith('data:image') &&
+                    (item.product as any).image.trim()) ||
+                  null;
+
+                return (
+                  <div key={`${item.product.id}-${item.selectedSizeOrVariant || ''}-${idx}`} className="flex items-center gap-3 text-sm">
+                    {checkoutImg ? (
+                      <img
+                        src={checkoutImg}
+                        alt={item.product.name}
+                        className="w-12 h-12 rounded-xl object-cover bg-gray-50 dark:bg-slate-800 shrink-0 border border-gray-100 dark:border-slate-800"
+                        onError={(e) => {
+                          const el = e.currentTarget;
+                          el.style.display = 'none';
+                          if (el.parentElement) {
+                            const placeholder = document.createElement('div');
+                            placeholder.className = 'w-12 h-12 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 shrink-0 border border-gray-100 dark:border-slate-800 select-none p-1';
+                            placeholder.title = 'Image unavailable';
+                            placeholder.innerHTML = '<span class="text-[7px] font-medium text-center leading-none">Image unavailable</span>';
+                            el.parentElement.appendChild(placeholder);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 shrink-0 border border-gray-100 dark:border-slate-800 select-none p-1" title="Image unavailable">
+                        <ImageOff className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+                        <span className="text-[7px] font-medium text-center leading-none mt-0.5">Image unavailable</span>
+                      </div>
+                    )}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white truncate">
                       {item.product.name}
@@ -826,8 +853,9 @@ export const CheckoutPage: React.FC = () => {
                     {(item.product.price * item.quantity).toLocaleString()}
                   </span>
                 </div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
 
             <div className="border-t border-gray-100 dark:border-slate-800 pt-3 space-y-2 text-sm text-gray-600 dark:text-slate-300">
               <div className="flex justify-between">

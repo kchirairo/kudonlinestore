@@ -5,6 +5,7 @@ import {
   ProductCategory,
   FilterOptions,
   UserProfile,
+  CustomerAccountStatus,
   StoreBrandingConfig,
   PromoBannerConfig,
   GeneralStoreSettings,
@@ -130,6 +131,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const isSyncingRef = useRef<boolean>(false);
+  const lastProfileMutationTimeRef = useRef<number>(0);
+  const isUpdatingProfileRef = useRef<boolean>(false);
 
   // Toast System State
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -165,6 +168,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
+    const fetchStartTime = Date.now();
 
     try {
       setAuthError(null);
@@ -225,7 +229,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('Authenticated user ID:', authUser.id);
 
-      // 2. Query the user's profile: public.profiles where id = authenticatedUser.id select role
+      // 2. Query the user's profile: public.profiles where id = authenticatedUser.id
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
@@ -235,6 +239,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (profileError) {
         console.error('Error fetching profile from public.profiles:', profileError);
         setAuthError(`Profile error: ${profileError.message}`);
+      }
+
+      // Race condition guard: If a newer profile mutation was committed while this fetch was in flight, discard stale fetch
+      if (lastProfileMutationTimeRef.current > fetchStartTime) {
+        console.log('[ShopContext] Discarding stale profile fetch because a newer profile mutation occurred.');
+        return;
       }
 
       let fetchedRole: 'customer' | 'admin' = profileData?.role;
@@ -258,56 +268,44 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const localCacheKey = `kud_store_user_profile_${authUser.id}`;
       const localCache = safeGetItem<any>(localCacheKey, null);
 
-      let fullName =
-        profileData?.full_name ||
-        profileData?.fullName ||
-        authUser.user_metadata?.full_name ||
-        localCache?.fullName ||
-        authUser.email?.split('@')[0];
+      // CRITICAL ARCHITECTURE RULE: public.profiles.full_name is the SINGLE SOURCE OF TRUTH.
+      // Do NOT overwrite profiles.full_name from auth.user.user_metadata.full_name.
+      // Do NOT synchronize an old Auth metadata name back into profiles.full_name.
+      let fullName = '';
+      if (profileData && profileData.full_name !== undefined && profileData.full_name !== null) {
+        fullName = profileData.full_name;
+      } else if (!profileData) {
+        // Fallback ONLY if profile record does NOT exist in the database at all yet
+        fullName = authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User';
+      }
+
       let phone =
-        profileData?.phone ||
-        authUser.user_metadata?.phone ||
-        localCache?.phone ||
-        authUser.phone ||
-        '';
+        profileData?.phone !== undefined && profileData?.phone !== null && profileData?.phone !== ''
+          ? profileData.phone
+          : (localCache?.phone || '');
+
       let addressLine =
-        profileData?.address_line ||
-        profileData?.addressLine ||
-        profileData?.address ||
         localCache?.addressLine ||
         localCache?.address ||
         '';
-      let city = profileData?.city || localCache?.city || '';
-      let province = profileData?.province || localCache?.province || 'Gauteng';
-      let postalCode =
-        profileData?.postal_code ||
-        profileData?.postalCode ||
-        localCache?.postalCode ||
-        '';
+      let city = localCache?.city || '';
+      let province = localCache?.province || 'Gauteng';
+      let postalCode = localCache?.postalCode || '';
 
       const avatarUrl =
-        profileData?.avatar_url ||
-        profileData?.avatarUrl ||
         authUser.user_metadata?.avatar_url ||
         authUser.user_metadata?.avatarUrl ||
         localStorage.getItem('kud_store_admin_avatar') ||
         undefined;
 
-      const rawAccountStatus =
-        profileData?.account_status ||
-        profileData?.accountStatus ||
-        profileData?.status ||
-        (profileData?.is_disabled || profileData?.isDisabled ? 'disabled' : 'active');
-      const isAccountHeld = rawAccountStatus === 'on_hold';
-      const isAccountSuspended =
-        rawAccountStatus === 'disabled' ||
-        profileData?.is_disabled === true ||
-        profileData?.isDisabled === true;
-      const computedAccountStatus: 'active' | 'on_hold' | 'disabled' = isAccountHeld
-        ? 'on_hold'
-        : isAccountSuspended
-        ? 'disabled'
-        : 'active';
+      const computedAccountStatus: CustomerAccountStatus =
+        profileData?.account_status === 'on_hold'
+          ? 'on_hold'
+          : profileData?.account_status === 'disabled'
+          ? 'disabled'
+          : 'active';
+      const disabledReasonVal = profileData?.disabled_reason || null;
+      const disabledAtVal = profileData?.disabled_at || null;
 
       const fullProfile = profileData
         ? {
@@ -325,9 +323,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             avatar_url: avatarUrl,
             avatarUrl,
             account_status: computedAccountStatus,
-            accountStatus: computedAccountStatus,
-            is_disabled: computedAccountStatus !== 'active',
-            isDisabled: computedAccountStatus !== 'active',
+            disabled_reason: disabledReasonVal,
+            disabled_at: disabledAtVal,
           }
         : {
             id: authUser.id,
@@ -344,15 +341,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             postalCode,
             avatar_url: avatarUrl,
             avatarUrl,
-            accountStatus: computedAccountStatus,
             account_status: computedAccountStatus,
-            isDisabled: computedAccountStatus !== 'active',
-            is_disabled: computedAccountStatus !== 'active',
+            disabled_reason: disabledReasonVal,
+            disabled_at: disabledAtVal,
           };
 
       setProfile(fullProfile);
       setRole(fetchedRole);
-      setUser({
+      const userProfileObj: UserProfile = {
         id: authUser.id,
         email: authUser.email || '',
         fullName,
@@ -364,11 +360,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         province,
         postalCode,
         role: fetchedRole,
-        accountStatus: computedAccountStatus,
-        isDisabled: computedAccountStatus !== 'active',
-        disabledReason: profileData?.disabled_reason || profileData?.disabledReason,
-        disabledAt: profileData?.disabled_at || profileData?.disabledAt,
-      });
+        account_status: computedAccountStatus,
+        disabled_reason: disabledReasonVal,
+        disabled_at: disabledAtVal,
+      };
+      setUser(userProfileObj);
+
+      // Keep local cache in sync with the database verified name
+      safeSetItem(localCacheKey, userProfileObj);
 
       // 3. Fetch user's saved favourites
       const { data: favs, error: favError } = await supabase
@@ -441,32 +440,20 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Account Restriction Flags
   const isAccountDisabled = useMemo<boolean>(() => {
     if (!user) return false;
-    return Boolean(
-      user.isDisabled === true ||
-      user.accountStatus === 'disabled' ||
-      user.accountStatus === 'on_hold' ||
-      profile?.accountStatus === 'disabled' ||
-      profile?.accountStatus === 'on_hold' ||
-      profile?.is_disabled === true
-    );
+    const status = user.account_status || profile?.account_status;
+    return status === 'disabled' || status === 'on_hold';
   }, [user, profile]);
 
   const accountStatus = useMemo<'active' | 'on_hold' | 'disabled'>(() => {
     if (!user) return 'active';
-    if (user.accountStatus === 'on_hold' || profile?.accountStatus === 'on_hold') return 'on_hold';
-    if (
-      user.accountStatus === 'disabled' ||
-      user.isDisabled === true ||
-      profile?.accountStatus === 'disabled' ||
-      profile?.is_disabled === true
-    ) {
-      return 'disabled';
-    }
+    const status = user.account_status || profile?.account_status;
+    if (status === 'on_hold') return 'on_hold';
+    if (status === 'disabled') return 'disabled';
     return 'active';
   }, [user, profile]);
 
   const disabledReason = useMemo<string | null>(() => {
-    return user?.disabledReason || profile?.disabledReason || profile?.disabled_reason || null;
+    return user?.disabled_reason || profile?.disabled_reason || null;
   }, [user, profile]);
 
   // Cart Functions
@@ -730,89 +717,140 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserProfile = useCallback(
     async (details: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> => {
+      if (isUpdatingProfileRef.current) {
+        return { success: false, error: 'A profile update is already in progress. Please wait.' };
+      }
+
+      if (!user) {
+        return { success: false, error: 'No active user session found.' };
+      }
+
+      isUpdatingProfileRef.current = true;
+
       try {
-        if (!user) {
-          return { success: false, error: 'No active user session found.' };
-        }
+        const updatedFullName = details.fullName !== undefined ? details.fullName.trim() : (user.fullName || '');
+        const updatedPhone = details.phone !== undefined ? details.phone.trim() : (user.phone || '');
+        const updatedAddressLine = details.addressLine !== undefined ? details.addressLine.trim() : (user.addressLine || '');
+        const updatedCity = details.city !== undefined ? details.city.trim() : (user.city || '');
+        const updatedProvince = details.province !== undefined ? details.province.trim() : (user.province || 'Gauteng');
+        const updatedPostalCode = details.postalCode !== undefined ? details.postalCode.trim() : (user.postalCode || '');
 
-        const updatedFullName = details.fullName !== undefined ? details.fullName : user.fullName;
-        const updatedPhone = details.phone !== undefined ? details.phone : user.phone;
-        const updatedAddressLine = details.addressLine !== undefined ? details.addressLine : user.addressLine;
-        const updatedCity = details.city !== undefined ? details.city : user.city;
-        const updatedProvince = details.province !== undefined ? details.province : user.province;
-        const updatedPostalCode = details.postalCode !== undefined ? details.postalCode : user.postalCode;
-
-        const updatedUser: UserProfile = {
-          ...user,
-          ...details,
-          fullName: updatedFullName,
-          phone: updatedPhone,
-          addressLine: updatedAddressLine,
-          address: updatedAddressLine,
-          city: updatedCity,
-          province: updatedProvince,
-          postalCode: updatedPostalCode,
-        };
-
-        setUser(updatedUser);
-        setProfile((prev: any) => ({
-          ...(prev || {}),
-          ...details,
-          full_name: updatedFullName,
-          fullName: updatedFullName,
-          phone: updatedPhone,
-          address_line: updatedAddressLine,
-          addressLine: updatedAddressLine,
-          address: updatedAddressLine,
-          city: updatedCity,
-          province: updatedProvince,
-          postal_code: updatedPostalCode,
-          postalCode: updatedPostalCode,
-        }));
-
-        // Persist locally for instant availability across page loads
-        safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
-        safeSetItem('kud_store_user_profile', updatedUser);
-
-        // Update in Supabase profiles & auth metadata if real user
+        // If real user in Supabase
         if (isSupabaseConfigured() && supabase && user.id && !user.id.startsWith('demo-')) {
-          try {
-            await supabase.from('profiles').upsert(
-              {
-                id: user.id,
-                email: user.email,
-                full_name: updatedFullName,
-                phone: updatedPhone,
-                address_line: updatedAddressLine,
-                city: updatedCity,
-                province: updatedProvince,
-                postal_code: updatedPostalCode,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: 'id' }
-            );
-          } catch (e: any) {
-            console.warn('[ShopContext] Error updating profiles table:', e?.message);
+          // 1. UPDATE public.profiles:
+          // Update full_name and phone using authenticated user's ID
+          // STRICT RULE: Only update valid columns (full_name, phone, updated_at).
+          // Do NOT touch role, id, created_at, or non-existent columns (email, address_line, city, etc.)
+          const updatePayload: { full_name: string; phone: string; updated_at: string } = {
+            full_name: updatedFullName,
+            phone: updatedPhone,
+            updated_at: new Date().toISOString(),
+          };
+
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update(updatePayload)
+            .eq('id', user.id);
+
+          if (updateError) {
+            console.error('[ShopContext] Supabase profile UPDATE failed:', updateError);
+            throw new Error(updateError.message || 'Failed to update profile in database.');
           }
 
-          try {
-            await supabase.auth.updateUser({
-              data: {
-                full_name: updatedFullName,
-                phone: updatedPhone,
-              },
-            });
-          } catch (e: any) {
-            console.warn('[ShopContext] Error updating auth user metadata:', e?.message);
+          // 2. IMMEDIATELY fetch the saved profile from Supabase (SELECT the profile again)
+          const { data: refreshedProfile, error: fetchError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+
+          if (fetchError || !refreshedProfile) {
+            console.error('[ShopContext] Failed to retrieve refreshed profile:', fetchError);
+            throw new Error(fetchError?.message || 'Profile saved, but failed to reload verified profile.');
           }
+
+          // Mark mutation timestamp so any concurrent in-flight syncs are ignored
+          lastProfileMutationTimeRef.current = Date.now();
+
+          // 3. Use the returned database value to update application state
+          const verifiedDbFullName =
+            refreshedProfile.full_name !== undefined && refreshedProfile.full_name !== null
+              ? refreshedProfile.full_name
+              : updatedFullName;
+          const verifiedDbPhone =
+            refreshedProfile.phone !== undefined && refreshedProfile.phone !== null
+              ? refreshedProfile.phone
+              : updatedPhone;
+
+          const updatedUser: UserProfile = {
+            ...user,
+            fullName: verifiedDbFullName,
+            phone: verifiedDbPhone,
+            addressLine: updatedAddressLine,
+            address: updatedAddressLine,
+            city: updatedCity,
+            province: updatedProvince,
+            postalCode: updatedPostalCode,
+          };
+
+          setUser(updatedUser);
+          setProfile((prev: any) => ({
+            ...(prev || {}),
+            ...refreshedProfile,
+            full_name: verifiedDbFullName,
+            fullName: verifiedDbFullName,
+            phone: verifiedDbPhone,
+            address_line: updatedAddressLine,
+            addressLine: updatedAddressLine,
+            address: updatedAddressLine,
+            city: updatedCity,
+            province: updatedProvince,
+            postal_code: updatedPostalCode,
+            postalCode: updatedPostalCode,
+          }));
+
+          // Persist address preferences and verified name locally
+          safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
+          safeSetItem('kud_store_user_profile', updatedUser);
+
+          showToast('Personal details updated successfully!', 'success');
+          return { success: true };
+        } else {
+          // Demo user fallback
+          const updatedUser: UserProfile = {
+            ...user,
+            ...details,
+            fullName: updatedFullName,
+            phone: updatedPhone,
+            addressLine: updatedAddressLine,
+            address: updatedAddressLine,
+            city: updatedCity,
+            province: updatedProvince,
+            postalCode: updatedPostalCode,
+          };
+
+          setUser(updatedUser);
+          setProfile((prev: any) => ({
+            ...(prev || {}),
+            ...details,
+            full_name: updatedFullName,
+            fullName: updatedFullName,
+            phone: updatedPhone,
+          }));
+
+          safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
+          safeSetItem('kud_store_user_profile', updatedUser);
+
+          showToast('Personal details updated successfully!', 'success');
+          return { success: true };
         }
-
-        showToast('Personal details updated successfully!', 'success');
-        return { success: true };
       } catch (err: any) {
         console.error('[ShopContext] Failed to update profile:', err);
-        showToast(err?.message || 'Failed to update personal details', 'error');
-        return { success: false, error: err?.message || 'Failed to update profile' };
+        const errorMsg = err?.message || 'Failed to update personal details';
+        showToast(errorMsg, 'error');
+        return { success: false, error: errorMsg };
+      } finally {
+        isUpdatingProfileRef.current = false;
       }
     },
     [user, showToast]

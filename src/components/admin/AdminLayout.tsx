@@ -40,9 +40,11 @@ export const AdminLayout: React.FC = () => {
   const getPageTitle = () => {
     const path = location.pathname;
     if (path === '/admin') return 'Dashboard Overview';
+    if (path.startsWith('/admin/notifications')) return 'Notification Center';
     if (path.startsWith('/admin/orders')) return 'Order Management';
     if (path.startsWith('/admin/invoices')) return 'Invoices & Receipts';
     if (path.startsWith('/admin/marketing')) return 'Marketing & Social Commerce Analytics';
+    if (path.startsWith('/admin/banners')) return 'Promotional Banners';
     if (path.startsWith('/admin/products/new')) return 'Add New Product';
     if (path.includes('/edit')) return 'Edit Product';
     if (path.startsWith('/admin/products')) return 'Product Inventory';

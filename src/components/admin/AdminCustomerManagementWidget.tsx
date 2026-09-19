@@ -39,7 +39,15 @@ export const AdminCustomerManagementWidget: React.FC = () => {
     setIsLoading(true);
     try {
       const data = await adminService.getCustomers();
-      setCustomers(data);
+      // Ensure admin accounts are never displayed under customer directory widget
+      const onlyCustomers = data.filter(
+        (c) =>
+          c.role !== 'admin' &&
+          String(c.role || '').toLowerCase() !== 'admin' &&
+          c.id !== 'demo-admin-id' &&
+          c.email?.toLowerCase() !== 'admin@kudstore.com'
+      );
+      setCustomers(onlyCustomers);
     } catch (err) {
       console.warn('Failed to load customers for dashboard widget:', err);
     } finally {
@@ -62,23 +70,9 @@ export const AdminCustomerManagementWidget: React.FC = () => {
 
   // Stats calculation
   const totalCount = customers.length;
-  const onHoldCount = customers.filter(
-    (c) => c.accountStatus === 'on_hold' || c.status === 'on_hold'
-  ).length;
-  const disabledCount = customers.filter(
-    (c) =>
-      c.accountStatus === 'disabled' ||
-      c.status === 'disabled' ||
-      (c.isDisabled && c.accountStatus !== 'on_hold')
-  ).length;
-  const activeCount = customers.filter(
-    (c) =>
-      !c.isDisabled &&
-      c.accountStatus !== 'disabled' &&
-      c.accountStatus !== 'on_hold' &&
-      c.status !== 'disabled' &&
-      c.status !== 'on_hold'
-  ).length;
+  const onHoldCount = customers.filter((c) => c.account_status === 'on_hold').length;
+  const disabledCount = customers.filter((c) => c.account_status === 'disabled').length;
+  const activeCount = customers.filter((c) => c.account_status === 'active').length;
 
   const handleOpenStatusModal = (customer: Customer, targetStatus: CustomerAccountStatus) => {
     setSelectedCustomer(customer);
@@ -228,11 +222,8 @@ export const AdminCustomerManagementWidget: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800 font-medium text-gray-800 dark:text-slate-200">
               {recentCustomers.map((cust) => {
-                const isHeld = cust.accountStatus === 'on_hold' || cust.status === 'on_hold';
-                const isDisabled =
-                  cust.accountStatus === 'disabled' ||
-                  cust.status === 'disabled' ||
-                  (cust.isDisabled && !isHeld);
+                const isHeld = cust.account_status === 'on_hold';
+                const isDisabled = cust.account_status === 'disabled';
 
                 return (
                   <tr

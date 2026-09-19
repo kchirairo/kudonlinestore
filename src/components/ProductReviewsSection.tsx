@@ -23,7 +23,7 @@ export const ProductReviewsSection: React.FC<ProductReviewsSectionProps> = ({
   product,
   onReviewAdded,
 }) => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [reviews, setReviews] = useState<CustomerReview[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -41,17 +41,17 @@ export const ProductReviewsSection: React.FC<ProductReviewsSectionProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<boolean>(false);
 
-  // Pre-fill user details if logged in
+  // Pre-fill user details if logged in - single source of truth is profile.full_name
   useEffect(() => {
-    if (user) {
-      if (user.user_metadata?.full_name) {
-        setCustomerName(user.user_metadata.full_name);
-      }
-      if (user.email) {
-        setCustomerEmail(user.email);
-      }
+    if (profile?.full_name) {
+      setCustomerName(profile.full_name);
+    } else if (user?.email) {
+      setCustomerName(user.email.split('@')[0]);
     }
-  }, [user]);
+    if (user?.email) {
+      setCustomerEmail(user.email);
+    }
+  }, [user, profile]);
 
   // Load reviews strictly for this product ID
   const loadProductReviews = useCallback(async () => {

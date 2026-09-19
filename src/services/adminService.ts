@@ -9,6 +9,7 @@ import {
   ProductMediaItem,
   Category,
   Customer,
+  AdminCustomerAccountInfo,
   CustomerAccountStatus,
   SalesDataPoint,
   PaymentGatewayConfig,
@@ -3445,7 +3446,11 @@ export const adminService = {
               imageUrls.push(uploadedUrl);
             }
           } catch (uploadErr: any) {
-            console.warn('Image upload notice:', uploadErr);
+            console.error('Image upload failed during product creation:', uploadErr);
+            return {
+              success: false,
+              error: `Failed to upload product image to storage: ${uploadErr?.message || 'Storage error'}. Product creation aborted.`,
+            };
           }
         }
       }
@@ -3474,8 +3479,10 @@ export const adminService = {
       }
     }
 
-    // Clean image URLs - remove any empty or invalid entries
-    imageUrls = imageUrls.filter((url) => typeof url === 'string' && url.trim().length > 0);
+    // Clean image URLs - remove any empty or invalid entries, and block base64 strings
+    imageUrls = imageUrls.filter(
+      (url) => typeof url === 'string' && url.trim().length > 0 && !url.trim().startsWith('data:image')
+    );
     const primaryImageUrl = imageUrls[0] || '';
 
     // Validate category
@@ -3928,6 +3935,18 @@ export const adminService = {
       return { success: false, error: 'Product not found' };
     }
 
+    const hasNewImageFiles = Boolean(
+      newImageFile && (Array.isArray(newImageFile) ? newImageFile.length > 0 : true)
+    );
+    const hasDeletedStorageImages = Boolean(
+      imagesToDeleteFromStorage && imagesToDeleteFromStorage.length > 0
+    );
+    const hasExplicitImagesField = productData.images !== undefined;
+
+    // Strict rule: ONLY an explicit admin image action may change products.image_url or products.images
+    const shouldUpdateProductImages =
+      hasExplicitImagesField || hasNewImageFiles || hasDeletedStorageImages;
+
     let updatedImages = productData.images ? [...productData.images] : [...current.images];
     let updatedVideos = productData.videos ? [...productData.videos] : [...(current.videos || [])];
 
@@ -3941,7 +3960,11 @@ export const adminService = {
               updatedImages.push(uploadedUrl);
             }
           } catch (uploadErr: any) {
-            console.warn('Image upload warning during update:', uploadErr);
+            console.error('Image upload failed during update:', uploadErr);
+            return {
+              success: false,
+              error: `Failed to upload product image to storage: ${uploadErr?.message || 'Storage error'}. Existing images remain unchanged.`,
+            };
           }
         }
       }
@@ -3976,8 +3999,10 @@ export const adminService = {
       });
     }
 
-    // Clean image URLs
-    updatedImages = updatedImages.filter((url) => typeof url === 'string' && url.trim().length > 0);
+    // Clean image URLs - remove any empty or invalid entries, and block base64 strings
+    updatedImages = updatedImages.filter(
+      (url) => typeof url === 'string' && url.trim().length > 0 && !url.trim().startsWith('data:image')
+    );
     const primaryImageUrl = updatedImages[0] || '';
 
     // Validate category if explicitly updated
@@ -4019,8 +4044,6 @@ export const adminService = {
       size_or_variant: updatedProduct.sizeOrVariant || null,
       condition: updatedProduct.condition,
       description: updatedProduct.description,
-      image_url: updatedImages.length > 1 ? JSON.stringify(updatedImages) : (primaryImageUrl || null),
-      images: updatedProduct.images,
       videos: updatedVideos,
       variants: updatedProduct.variants || [],
       category_attributes: updatedProduct.categoryAttributes || {},
@@ -4045,6 +4068,12 @@ export const adminService = {
       is_active: isAct,
       updated_at: new Date().toISOString(),
     };
+
+    // Final rule: ONLY an explicit admin image action may change products.image_url or products.images
+    if (shouldUpdateProductImages) {
+      updatePayload.image_url = updatedImages.length > 1 ? JSON.stringify(updatedImages) : (primaryImageUrl || null);
+      updatePayload.images = updatedImages;
+    }
 
     let { error } = await executeWithColumnFallback(
       (payload) => supabase.from('products').update(payload).eq('id', id),
@@ -4113,6 +4142,22 @@ export const adminService = {
       await this.syncProductMedia(id, mediaToSync);
     }
 
+    // Trigger non-blocking inventory stock threshold evaluation
+    if (updatedProduct.stock !== undefined) {
+      try {
+        fetch('/api/notifications/notify-inventory-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            productId: id,
+            stock: updatedProduct.stock,
+            productName: updatedProduct.name,
+            threshold: updatedProduct.lowStockThreshold || 5,
+          }),
+        }).catch(() => {});
+      } catch {}
+    }
+
     productService.invalidateCache();
 
     return { success: true, data: updatedProduct };
@@ -4158,6 +4203,19 @@ export const adminService = {
         errors.push(`ID ${item.id}: ${error.message}`);
       } else {
         updatedCount++;
+        if (item.changes.stock !== undefined) {
+          try {
+            fetch('/api/notifications/notify-inventory-check', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                productId: item.id,
+                stock: Number(item.changes.stock),
+                threshold: 5,
+              }),
+            }).catch(() => {});
+          } catch {}
+        }
       }
     }
 
@@ -4475,6 +4533,47 @@ export const adminService = {
   },
 
   /**
+   * Fetches secure Supabase Auth account records for all customers using the security-definer RPC:
+   * public.get_admin_customer_accounts()
+   * Returns a map keyed by auth user ID (which matches profiles.id).
+   * Internal requirement: Caller must be an authorized KUD admin (is_admin()).
+   */
+  async getAdminCustomerAccounts(): Promise<Record<string, AdminCustomerAccountInfo>> {
+    if (!isSupabaseConfigured() || !supabase) {
+      return {};
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('get_admin_customer_accounts');
+      if (error) {
+        console.warn('[adminService] Notice calling get_admin_customer_accounts RPC:', error.message || error);
+        return {};
+      }
+
+      if (!data || !Array.isArray(data)) {
+        return {};
+      }
+
+      const map: Record<string, AdminCustomerAccountInfo> = {};
+      for (const row of data) {
+        if (row && row.id) {
+          map[row.id] = {
+            id: String(row.id),
+            email: String(row.email || ''),
+            created_at: String(row.created_at || ''),
+            last_sign_in_at: row.last_sign_in_at ? String(row.last_sign_in_at) : null,
+            confirmed_at: row.confirmed_at ? String(row.confirmed_at) : null,
+          };
+        }
+      }
+      return map;
+    } catch (err) {
+      console.warn('[adminService] Notice fetching admin customer accounts:', err);
+      return {};
+    }
+  },
+
+  /**
    * Customers Management
    */
   async getCustomers(searchQuery?: string): Promise<Customer[]> {
@@ -4482,12 +4581,30 @@ export const adminService = {
 
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data: profiles, error } = await supabase.from('profiles').select('*');
-        if (!error && profiles && profiles.length > 0) {
-          const orders = await this.getOrders();
+        // Fetch profiles, orders, and auth accounts dataset concurrently
+        const [profilesResult, orders, accountsMap] = await Promise.all([
+          supabase.from('profiles').select('*'),
+          this.getOrders(),
+          this.getAdminCustomerAccounts(),
+        ]);
 
-          customers = profiles.map((p: any) => {
-            const userOrders = orders.filter((o) => o.user_id === p.id || o.shipping_address?.email === p.email);
+        const profiles = profilesResult.data;
+        const error = profilesResult.error;
+
+        if (!error && profiles && profiles.length > 0) {
+          // Strictly exclude administrator accounts so admin credentials NEVER appear under the customer directory
+          const customerProfiles = profiles.filter((p: any) => {
+            const role = String(p.role || '').trim().toLowerCase();
+            const email = String(p.email || '').trim().toLowerCase();
+            if (role === 'admin') return false;
+            if (p.id === 'demo-admin-id') return false;
+            if (email === 'admin@kudstore.com') return false;
+            return true;
+          });
+
+          customers = customerProfiles.map((p: any) => {
+            const authAcc = accountsMap[p.id];
+            const userOrders = orders.filter((o) => o.user_id === p.id || o.shipping_address?.email === (authAcc?.email || p.email));
             const totalSpent = userOrders
               .filter((o) => o.payment_status === 'Paid')
               .reduce((sum, o) => sum + (o.total_amount || 0), 0);
@@ -4506,25 +4623,33 @@ export const adminService = {
               ? Boolean(p.referral_rewards_enabled)
               : (refState.referral_rewards_enabled !== undefined ? Boolean(refState.referral_rewards_enabled) : false);
 
-            const accountStatus = (p.account_status || p.status || (p.is_disabled ? 'disabled' : 'active')) as CustomerAccountStatus;
-            const isDisabled = accountStatus === 'disabled' || accountStatus === 'on_hold' || Boolean(p.is_disabled);
-            const disabledReason = p.disabled_reason || p.disabledReason || '';
-            const disabledAt = p.disabled_at || p.disabledAt;
+            const account_status = (p.account_status || 'active') as CustomerAccountStatus;
+            const disabled_reason = p.disabled_reason || null;
+            const disabled_at = p.disabled_at || null;
+
+            // Map values according to database contract:
+            // Email -> email from auth account (fallback to p.email)
+            const customerEmail = authAcc?.email || p.email || 'customer@kudstore.com';
+            // Member Since -> created_at from auth account (fallback to p.created_at)
+            const memberSince = authAcc?.created_at || p.created_at || new Date().toISOString();
+            const lastSignInAt = authAcc ? authAcc.last_sign_in_at : (p.last_sign_in_at ?? null);
+            const confirmedAt = authAcc ? authAcc.confirmed_at : (p.confirmed_at ?? null);
 
             return {
               id: p.id,
-              email: p.email || 'customer@kudstore.com',
+              email: customerEmail,
               fullName: p.fullName || p.full_name || 'Customer Profile',
               phone: p.phone || p.shipping_address?.phone || '-',
               role: p.role || 'customer',
-              createdAt: p.created_at || new Date().toISOString(),
+              createdAt: memberSince,
               orderCount: userOrders.length,
               totalSpent,
-              accountStatus,
-              status: accountStatus,
-              isDisabled,
-              disabledReason,
-              disabledAt,
+              account_status,
+              disabled_reason,
+              disabled_at,
+              last_sign_in_at: lastSignInAt,
+              confirmed_at: confirmedAt,
+              auth_account: authAcc || undefined,
               referralStatus: isBanned ? 'banned' : 'active',
               isReferralBanned: isBanned,
               isEarningsFrozen: isFrozen,
@@ -4559,29 +4684,15 @@ export const adminService = {
       }
     }
 
-    // Merge each customer with local stored status and referral state if available
+    // Merge each customer with referral state if available
     customers = customers.map((c) => {
       const userRefData = safeGetItem<UserReferralRewardsState | null>(`kud_store_user_rewards_${c.id}`, null);
-      const userStatusOverride = safeGetItem<{ status?: CustomerAccountStatus; reason?: string; disabledAt?: string } | null>(
-        `kud_store_customer_status_${c.id}`,
-        null
-      );
-
-      let effectiveStatus = userStatusOverride?.status || c.accountStatus || c.status || 'active';
-      let effectiveIsDisabled = effectiveStatus === 'disabled' || effectiveStatus === 'on_hold' || Boolean(c.isDisabled);
-      let effectiveDisabledReason = userStatusOverride?.reason || c.disabledReason || '';
-      let effectiveDisabledAt = userStatusOverride?.disabledAt || c.disabledAt;
 
       if (userRefData) {
         const isBanned = Boolean(userRefData.isBanned);
         const isFrozen = Boolean(userRefData.isEarningsFrozen);
         return {
           ...c,
-          accountStatus: effectiveStatus,
-          status: effectiveStatus,
-          isDisabled: effectiveIsDisabled,
-          disabledReason: effectiveDisabledReason,
-          disabledAt: effectiveDisabledAt,
           referralStatus: isBanned ? 'banned' : 'active',
           isReferralBanned: isBanned,
           isEarningsFrozen: isFrozen,
@@ -4599,11 +4710,6 @@ export const adminService = {
       const isBanned = c.isReferralBanned ?? (c.referralStatus === 'banned');
       return {
         ...c,
-        accountStatus: effectiveStatus,
-        status: effectiveStatus,
-        isDisabled: effectiveIsDisabled,
-        disabledReason: effectiveDisabledReason,
-        disabledAt: effectiveDisabledAt,
         referralStatus: isBanned ? 'banned' : 'active',
         isReferralBanned: Boolean(isBanned),
         isEarningsFrozen: Boolean(c.isEarningsFrozen),
@@ -4629,13 +4735,58 @@ export const adminService = {
       );
     }
 
+    // Strictly filter out any administrator accounts so admin credentials NEVER appear in the customer directory
+    customers = customers.filter((c) => {
+      const role = String(c.role || '').trim().toLowerCase();
+      const email = String(c.email || '').trim().toLowerCase();
+      const authEmail = String(c.auth_account?.email || '').trim().toLowerCase();
+      if (role === 'admin') return false;
+      if (c.id === 'demo-admin-id') return false;
+      if (email === 'admin@kudstore.com' || authEmail === 'admin@kudstore.com') return false;
+      return true;
+    });
+
     return customers;
   },
 
   async getCustomerById(id: string): Promise<Customer | null> {
+    // If ID is the demo admin ID, never return as customer
+    if (id === 'demo-admin-id') {
+      return null;
+    }
+
     const customers = await this.getCustomers();
     const found = customers.find((c) => c.id === id);
-    return found || null;
+    if (found) {
+      const role = String(found.role || '').trim().toLowerCase();
+      const email = String(found.email || '').trim().toLowerCase();
+      const authEmail = String(found.auth_account?.email || '').trim().toLowerCase();
+      if (role === 'admin' || email === 'admin@kudstore.com' || authEmail === 'admin@kudstore.com') {
+        return null;
+      }
+
+      if (!found.auth_account && isSupabaseConfigured() && supabase) {
+        try {
+          const accountsMap = await this.getAdminCustomerAccounts();
+          const acc = accountsMap[id];
+          if (acc) {
+            const accEmail = String(acc.email || '').trim().toLowerCase();
+            if (accEmail === 'admin@kudstore.com') {
+              return null;
+            }
+            found.email = acc.email || found.email;
+            found.createdAt = acc.created_at || found.createdAt;
+            found.last_sign_in_at = acc.last_sign_in_at;
+            found.confirmed_at = acc.confirmed_at;
+            found.auth_account = acc;
+          }
+        } catch (err) {
+          console.warn('[adminService] Graceful fallback loading auth account info:', err);
+        }
+      }
+      return found;
+    }
+    return null;
   },
 
   /**
@@ -4647,63 +4798,56 @@ export const adminService = {
     newStatus: CustomerAccountStatus,
     reason?: string
   ): Promise<{ success: boolean; error?: string; customer?: Customer }> {
-    const now = new Date().toISOString();
-    const isDisabled = newStatus !== 'active';
-    const disabledReason = isDisabled
-      ? (reason?.trim() || (newStatus === 'on_hold' ? 'Account placed on hold by Admin' : 'Account disabled by Store Admin'))
-      : '';
-    const disabledAt = isDisabled ? now : undefined;
+    if (!isSupabaseConfigured() || !supabase) {
+      return { success: false, error: 'Supabase database is not configured' };
+    }
 
-    // 1. Persist local status override cache
-    safeSetItem(`kud_store_customer_status_${customerId}`, {
-      status: newStatus,
-      reason: disabledReason,
-      disabledAt,
-      updatedAt: now,
-    });
+    try {
+      const sanitizedReason = reason?.trim() || null;
+      const { data, error } = await supabase.rpc('admin_set_customer_account_status', {
+        target_user_id: customerId,
+        new_status: newStatus,
+        reason: sanitizedReason,
+      });
 
-    // 2. Persist directly in Supabase profiles
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        await executeWithColumnFallback(
-          (p) => supabase.from('profiles').update(p).eq('id', customerId),
-          {
-            status: newStatus,
-            account_status: newStatus,
-            is_disabled: isDisabled,
-            disabled_reason: disabledReason,
-            disabled_at: disabledAt || null,
-            updated_at: now,
-          }
-        );
-      } catch (err: any) {
-        console.warn('[AdminService] Supabase customer status update exception:', err);
+      if (error) {
+        console.error('[AdminService] admin_set_customer_account_status RPC error:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to update customer account status in database',
+        };
       }
-    }
 
-    // 3. Update local storage customers array if present
-    const localCusts = safeGetItem<Customer[]>(LOCAL_CUSTOMERS_KEY, []);
-    const idx = localCusts.findIndex((c) => c.id === customerId);
-    if (idx > -1) {
-      localCusts[idx].accountStatus = newStatus;
-      localCusts[idx].status = newStatus;
-      localCusts[idx].isDisabled = isDisabled;
-      localCusts[idx].disabledReason = disabledReason;
-      localCusts[idx].disabledAt = disabledAt;
-      safeSetItem(LOCAL_CUSTOMERS_KEY, localCusts);
-    }
+      if (!data || data.success !== true) {
+        console.error('[AdminService] admin_set_customer_account_status rejected:', data);
+        return {
+          success: false,
+          error: data?.error || data?.message || 'Database rejected customer account status update',
+        };
+      }
 
-    // Broadcast customer status change event
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('kud_customer_status_changed', {
-          detail: { customerId, status: newStatus, isDisabled, reason: disabledReason },
-        })
-      );
-    }
+      // Broadcast customer status change event so all active components re-evaluate state
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('kud_customer_status_changed', {
+            detail: {
+              customerId,
+              status: data.account_status || newStatus,
+              reason: data.disabled_reason,
+            },
+          })
+        );
+      }
 
-    const updatedCustomer = await this.getCustomerById(customerId);
-    return { success: true, customer: updatedCustomer || undefined };
+      const updatedCustomer = await this.getCustomerById(customerId);
+      return { success: true, customer: updatedCustomer || undefined };
+    } catch (err: any) {
+      console.error('[AdminService] Customer status update exception:', err);
+      return {
+        success: false,
+        error: err?.message || 'Unexpected error updating customer status',
+      };
+    }
   },
 
   /**
@@ -4791,7 +4935,6 @@ export const adminService = {
 
       // 4. Remove local caches
       try {
-        localStorage.removeItem(`kud_store_customer_status_${customerId}`);
         localStorage.removeItem(`kud_store_user_rewards_${customerId}`);
       } catch (localErr) {
         console.warn('Local storage remove notice:', localErr);
@@ -5240,6 +5383,11 @@ function getDemoCustomers(): Customer[] {
       createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
       orderCount: 4,
       totalSpent: 3800,
+      account_status: 'active',
+      disabled_reason: null,
+      disabled_at: null,
+      last_sign_in_at: new Date(Date.now() - 3600000 * 5).toISOString(),
+      confirmed_at: new Date(Date.now() - 86400000 * 30).toISOString(),
       referralStatus: 'active',
       isReferralBanned: false,
       isEarningsFrozen: false,
@@ -5258,6 +5406,11 @@ function getDemoCustomers(): Customer[] {
       createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
       orderCount: 1,
       totalSpent: 11.5,
+      account_status: 'active',
+      disabled_reason: null,
+      disabled_at: null,
+      last_sign_in_at: null,
+      confirmed_at: null,
       referralStatus: 'active',
       isReferralBanned: false,
       isEarningsFrozen: false,
@@ -5276,6 +5429,11 @@ function getDemoCustomers(): Customer[] {
       createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
       orderCount: 2,
       totalSpent: 1650,
+      account_status: 'active',
+      disabled_reason: null,
+      disabled_at: null,
+      last_sign_in_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+      confirmed_at: new Date(Date.now() - 86400000 * 45).toISOString(),
       referralStatus: 'banned',
       isReferralBanned: true,
       isEarningsFrozen: false,
@@ -5294,6 +5452,11 @@ function getDemoCustomers(): Customer[] {
       createdAt: new Date(Date.now() - 86400000 * 12).toISOString(),
       orderCount: 5,
       totalSpent: 5200,
+      account_status: 'active',
+      disabled_reason: null,
+      disabled_at: null,
+      last_sign_in_at: new Date(Date.now() - 3600000 * 18).toISOString(),
+      confirmed_at: new Date(Date.now() - 86400000 * 12).toISOString(),
       referralStatus: 'active',
       isReferralBanned: false,
       isEarningsFrozen: true,
@@ -5314,6 +5477,9 @@ function getDemoCustomers(): Customer[] {
       createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
       orderCount: 2,
       totalSpent: 1450,
+      account_status: 'active',
+      disabled_reason: null,
+      disabled_at: null,
       referralStatus: 'active',
       isReferralBanned: false,
       isEarningsFrozen: false,

@@ -17,6 +17,7 @@ import {
 import { useShop } from '../../context/ShopContext';
 import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../ThemeToggle';
+import { AdminNotificationBell } from './AdminNotificationBell';
 
 interface AdminHeaderProps {
   onToggleSidebar: () => void;
@@ -150,8 +151,10 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({ onToggleSidebar, title
         )}
       </div>
 
-      {/* Right side: Theme Toggle, Store shortcut & Admin avatar profile widget */}
+      {/* Right side: Notification Bell, Theme Toggle, Store shortcut & Admin avatar profile widget */}
       <div className="flex items-center gap-2 sm:gap-3">
+        <AdminNotificationBell />
+
         <ThemeToggle />
 
         <button

@@ -158,6 +158,9 @@ serve(async (req) => {
     // Get public URL of optimized WebP
     const { data: publicUrlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(optimizedStoragePath);
     const optimizedWebpUrl = publicUrlData?.publicUrl || '';
+    if (!optimizedWebpUrl) {
+      throw new Error('Could not obtain valid public URL for optimized WebP.');
+    }
 
     // Update database record if productId is available
     if (productId && optimizedWebpUrl) {

@@ -15,6 +15,7 @@ import {
   DollarSign,
   ArrowRight,
   Filter,
+  ImageOff,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Product } from '../../types';
@@ -422,10 +423,17 @@ export const InventoryManagementWidget: React.FC<InventoryManagementWidgetProps>
                 const isSaving = savingProductId === product.id;
 
                 const img =
-                  (Array.isArray(product.images) && product.images.find((u) => typeof u === 'string' && u.trim().length > 0)) ||
-                  (typeof (product as any).image_url === 'string' && (product as any).image_url.trim()) ||
-                  (typeof (product as any).image === 'string' && (product as any).image.trim()) ||
-                  'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80';
+                  (Array.isArray(product.images) &&
+                    product.images.find(
+                      (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                    )) ||
+                  (typeof (product as any).image_url === 'string' &&
+                    !(product as any).image_url.trim().startsWith('data:image') &&
+                    (product as any).image_url.trim()) ||
+                  (typeof (product as any).image === 'string' &&
+                    !(product as any).image.trim().startsWith('data:image') &&
+                    (product as any).image.trim()) ||
+                  null;
 
                 // Status styling
                 let statusBadge = (
@@ -456,11 +464,28 @@ export const InventoryManagementWidget: React.FC<InventoryManagementWidgetProps>
                     {/* Product Info */}
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={img}
-                          alt={product.name}
-                          className="w-10 h-10 rounded-xl object-cover bg-gray-50 border border-gray-100 flex-shrink-0"
-                        />
+                        {img ? (
+                          <img
+                            src={img}
+                            alt={product.name}
+                            className="w-10 h-10 rounded-xl object-cover bg-gray-50 border border-gray-100 shrink-0"
+                            onError={(e) => {
+                              const el = e.currentTarget;
+                              el.style.display = 'none';
+                              if (el.parentElement) {
+                                const placeholder = document.createElement('div');
+                                placeholder.className = 'w-10 h-10 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1';
+                                placeholder.title = 'Image unavailable';
+                                placeholder.innerHTML = '<span class="text-[7px] font-medium text-center leading-none text-gray-400 dark:text-slate-500">Image unavailable</span>';
+                                el.parentElement.appendChild(placeholder);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1" title="Image unavailable">
+                            <ImageOff className="w-3.5 h-3.5 text-gray-400" />
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <span className="text-[10px] font-extrabold text-gray-400 uppercase">
                             {product.brand}

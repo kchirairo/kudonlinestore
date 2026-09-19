@@ -36,14 +36,11 @@ export const AdminCustomerAccountControlCard: React.FC<AdminCustomerAccountContr
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const isHeld = customer.accountStatus === 'on_hold' || customer.status === 'on_hold';
-  const isDisabled =
-    customer.accountStatus === 'disabled' ||
-    customer.status === 'disabled' ||
-    (customer.isDisabled && !isHeld);
-  const isActive = !isHeld && !isDisabled;
+  const isHeld = customer.account_status === 'on_hold';
+  const isDisabled = customer.account_status === 'disabled';
+  const isActive = customer.account_status === 'active';
 
-  const currentStatus: CustomerAccountStatus = isHeld ? 'on_hold' : isDisabled ? 'disabled' : 'active';
+  const currentStatus: CustomerAccountStatus = customer.account_status;
 
   const handleOpenStatusModal = (targetStatus: CustomerAccountStatus) => {
     setStatusModalTargetStatus(targetStatus);
@@ -152,21 +149,21 @@ export const AdminCustomerAccountControlCard: React.FC<AdminCustomerAccountContr
       </div>
 
       {/* Status Details / Reason Display */}
-      {(!isActive && customer.disabledReason) && (
+      {(!isActive && customer.disabled_reason) && (
         <div className="p-4 rounded-2xl bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 space-y-1.5 text-xs">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400 font-bold">
             <span className="flex items-center gap-1.5">
               <Info className="w-3.5 h-3.5" />
               Status Change Reason:
             </span>
-            {customer.disabledAt && (
+            {customer.disabled_at && (
               <span className="text-[10px] font-normal">
-                Updated {new Date(customer.disabledAt).toLocaleString()}
+                Updated {new Date(customer.disabled_at).toLocaleString()}
               </span>
             )}
           </div>
           <p className="font-semibold text-gray-900 dark:text-white pl-5">
-            "{customer.disabledReason}"
+            "{customer.disabled_reason}"
           </p>
         </div>
       )}

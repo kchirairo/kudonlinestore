@@ -68,7 +68,15 @@ export const AdminCustomersPage: React.FC = () => {
   const fetchCustomers = async () => {
     setIsLoading(true);
     const data = await adminService.getCustomers(searchQuery);
-    setCustomers(data);
+    // Explicitly enforce that admin account credentials never appear under the customer directory
+    const customerOnlyList = data.filter(
+      (c) =>
+        c.role !== 'admin' &&
+        String(c.role || '').toLowerCase() !== 'admin' &&
+        c.id !== 'demo-admin-id' &&
+        c.email?.toLowerCase() !== 'admin@kudstore.com'
+    );
+    setCustomers(customerOnlyList);
     setIsLoading(false);
   };
 
@@ -96,19 +104,15 @@ export const AdminCustomersPage: React.FC = () => {
   }, [searchQuery]);
 
   const isCustomerOnHold = (cust: Customer): boolean => {
-    return cust.accountStatus === 'on_hold' || cust.status === 'on_hold';
+    return cust.account_status === 'on_hold';
   };
 
   const isCustomerDisabled = (cust: Customer): boolean => {
-    return (
-      cust.accountStatus === 'disabled' ||
-      cust.status === 'disabled' ||
-      (cust.isDisabled === true && !isCustomerOnHold(cust))
-    );
+    return cust.account_status === 'disabled';
   };
 
   const isCustomerActive = (cust: Customer): boolean => {
-    return !isCustomerOnHold(cust) && !isCustomerDisabled(cust);
+    return cust.account_status === 'active';
   };
 
   const isCustomerBanned = (cust: Customer): boolean => {
@@ -656,15 +660,9 @@ export const AdminCustomersPage: React.FC = () => {
                                   <span className="font-bold text-gray-900 dark:text-white text-sm">
                                     {cust.fullName || 'Registered Customer'}
                                   </span>
-                                  {cust.role === 'admin' ? (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                      Admin
-                                    </span>
-                                  ) : (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                                      Customer
-                                    </span>
-                                  )}
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                    Customer
+                                  </span>
                                 </div>
                                 <span className="text-[10px] text-gray-400 block mt-0.5">
                                   Joined {new Date(cust.createdAt).toLocaleDateString()}

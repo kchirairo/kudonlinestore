@@ -87,6 +87,7 @@ export const AdminEditProductPage: React.FC = () => {
 
   // Media (Images & Videos)
   const [images, setImages] = useState<StagedImageItem[]>([]);
+  const [initialRemoteImageUrls, setInitialRemoteImageUrls] = useState<string[]>([]);
   const [videos, setVideos] = useState<StagedVideoItem[]>([]);
   const [deletedStorageUrls, setDeletedStorageUrls] = useState<string[]>([]);
   const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
@@ -190,6 +191,10 @@ export const AdminEditProductPage: React.FC = () => {
             }));
           }
           setImages(stagedImgs);
+          const initialValidUrls = stagedImgs
+            .map((s) => s.url)
+            .filter((u) => typeof u === 'string' && u.trim().length > 0 && !u.startsWith('data:image'));
+          setInitialRemoteImageUrls(initialValidUrls);
 
           // Map existing videos
           const videoMedia = product.mediaItems?.filter((m) => m.mediaType === 'video') || [];
@@ -501,6 +506,19 @@ export const AdminEditProductPage: React.FC = () => {
         }
       });
 
+      // Protect existing images:
+      // ONLY send image_url or images to Supabase if the admin explicitly:
+      // - uploads/replaces an image
+      // - deletes an image
+      // - reorders images
+      const hasImageUploads = filesToUpload.length > 0;
+      const hasImageDeletions = deletedStorageUrls.length > 0;
+      const hasImageReordering =
+        preservedRemoteUrls.length !== initialRemoteImageUrls.length ||
+        preservedRemoteUrls.some((url, idx) => url !== initialRemoteImageUrls[idx]);
+
+      const adminExplicitlyChangedImages = hasImageUploads || hasImageDeletions || hasImageReordering;
+
       const productPayload: Partial<Product> = {
         name: name.trim(),
         brand: brand.trim() || 'KUD Store',
@@ -525,7 +543,7 @@ export const AdminEditProductPage: React.FC = () => {
         scheduledAt: scheduledAt || undefined,
         isActive: targetIsActive,
         isFeatured,
-        images: preservedRemoteUrls,
+        images: adminExplicitlyChangedImages ? preservedRemoteUrls : undefined,
         videos: preservedVideos,
         variants,
         categoryAttributes,
@@ -546,8 +564,8 @@ export const AdminEditProductPage: React.FC = () => {
       const result = await adminService.updateProduct(
         id,
         productPayload,
-        filesToUpload,
-        deletedStorageUrls,
+        adminExplicitlyChangedImages ? filesToUpload : undefined,
+        adminExplicitlyChangedImages ? deletedStorageUrls : undefined,
         videoFilesToUpload
       );
 
@@ -559,8 +577,12 @@ export const AdminEditProductPage: React.FC = () => {
       showToast(`Product "${result.data.name}" updated successfully!`, 'success');
       setSuccessMsg('Product changes saved successfully!');
 
-      // If new images were uploaded, reload the remote images list
-      if (result.data.images) {
+      // If images were explicitly changed and saved, sync the remote images list
+      if (adminExplicitlyChangedImages && result.data.images) {
+        const updatedValidUrls = result.data.images.filter(
+          (u: any) => typeof u === 'string' && u.trim().length > 0 && !u.startsWith('data:image')
+        );
+        setInitialRemoteImageUrls(updatedValidUrls);
         const updatedStaged: StagedImageItem[] = result.data.images.map((url, idx) => ({
           id: `remote-img-${idx}-${Date.now()}`,
           url,

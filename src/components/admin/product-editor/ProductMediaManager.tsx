@@ -311,8 +311,12 @@ export const ProductMediaManager: React.FC<ProductMediaManagerProps> = ({
   const handleAddImageUrl = () => {
     const trimmed = imageUrlInput.trim();
     if (!trimmed) return;
-    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://') && !trimmed.startsWith('data:')) {
-      alert('Please enter a valid image URL (e.g. https://images.unsplash.com/...)');
+    if (trimmed.startsWith('data:')) {
+      alert('Embedded base64 data URIs cannot be used as product images. Please upload an image file or provide a public HTTPS URL.');
+      return;
+    }
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      alert('Please enter a valid image URL starting with https://');
       return;
     }
 
@@ -555,12 +559,12 @@ export const ProductMediaManager: React.FC<ProductMediaManagerProps> = ({
                 <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
                 <span>Add Image from Web URL</span>
               </span>
-              <span className="text-[11px] text-gray-400">CDN / Unsplash / Direct link</span>
+              <span className="text-[11px] text-gray-400">CDN / HTTPS Image URL</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
               <input
                 type="url"
-                placeholder="https://images.unsplash.com/photo-..."
+                placeholder="https://example.com/product-photo.jpg"
                 value={imageUrlInput}
                 onChange={(e) => setImageUrlInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -667,8 +671,14 @@ export const ProductMediaManager: React.FC<ProductMediaManagerProps> = ({
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           draggable={false}
                           onError={(e) => {
-                            (e.target as HTMLImageElement).src =
-                              'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80';
+                            const el = e.currentTarget;
+                            el.style.display = 'none';
+                            if (el.parentElement) {
+                              const placeholder = document.createElement('div');
+                              placeholder.className = 'w-full h-full flex flex-col items-center justify-center p-3 text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 select-none';
+                              placeholder.innerHTML = '<svg class="w-6 h-6 stroke-[1.5] mb-1 text-gray-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"></line><path d="M10.41 10.41a2 2 0 1 0-2.83-2.83"></path><line x1="13.5" y1="13.5" x2="6" y2="21"></line><line x1="18" y1="12" x2="21" y2="15"></line><path d="m3.59 3.59 16.82 16.82"></path><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg><span class="text-[10px] font-medium tracking-tight">Image unavailable</span>';
+                              el.parentElement.appendChild(placeholder);
+                            }
                           }}
                         />
 

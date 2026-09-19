@@ -172,13 +172,21 @@ export function mapSupabaseProduct(p: any): Product {
     images = [p.photo_url.trim()];
   }
 
-  // If still empty, use a graceful placeholder
+  // Sanitize images: filter out empty strings and embedded data:image base64 URLs.
+  // Real product images must be hosted in Supabase Storage or remote URLs, never embedded base64 blobs.
+  images = images.filter(
+    (img) => typeof img === 'string' && img.trim().length > 0 && !img.trim().startsWith('data:image')
+  );
+
+  // If still empty, do NOT substitute with Unsplash, stock photos, or base64.
+  // Keep images empty ([]) and let the UI render a neutral display-only "Image unavailable" placeholder.
+  // This guarantees that placeholder URLs are never saved or sent to Supabase.
   if (images.length === 0) {
-    images = ['https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=800&q=80'];
+    images = [];
   }
 
-  // Synthesize mediaItems if not already populated from product_media
-  if (mediaItems.length === 0) {
+  // Synthesize mediaItems if not already populated from product_media (only for real images)
+  if (mediaItems.length === 0 && images.length > 0) {
     mediaItems = images.map((url, idx) => ({
       id: `media-img-${p.id || 'temp'}-${idx}`,
       productId: String(p.id || ''),

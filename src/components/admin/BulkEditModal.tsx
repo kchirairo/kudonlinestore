@@ -64,9 +64,9 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
       setItems(
         selectedProducts.map((p) => {
           const img =
-            (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim())) ||
-            (typeof (p as any).image_url === 'string' && (p as any).image_url.trim()) ||
-            'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=200&q=80';
+            (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim() && !u.startsWith('data:image'))) ||
+            (typeof (p as any).image_url === 'string' && (p as any).image_url.trim() && !(p as any).image_url.startsWith('data:image')) ||
+            '';
 
           return {
             id: p.id,
@@ -238,9 +238,9 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
     setItems(
       selectedProducts.map((p) => {
         const img =
-          (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim())) ||
-          (typeof (p as any).image_url === 'string' && (p as any).image_url.trim()) ||
-          'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=200&q=80';
+          (Array.isArray(p.images) && p.images.find((u) => typeof u === 'string' && u.trim() && !u.startsWith('data:image'))) ||
+          (typeof (p as any).image_url === 'string' && (p as any).image_url.trim() && !(p as any).image_url.startsWith('data:image')) ||
+          '';
 
         return {
           id: p.id,
@@ -611,11 +611,18 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                     {/* Product Identity */}
                     <td className="py-3.5 px-5">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="w-11 h-11 rounded-xl object-cover bg-gray-100 border border-gray-200 flex-shrink-0"
-                        />
+                        {item.image ? (
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-11 h-11 rounded-xl object-cover bg-gray-100 border border-gray-200 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-11 h-11 rounded-xl bg-gray-100 border border-gray-200 flex flex-col items-center justify-center text-gray-400 flex-shrink-0">
+                            <Layers className="w-4 h-4 text-gray-300" />
+                            <span className="text-[8px] font-semibold text-gray-400 mt-0.5">No image</span>
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="text-[10px] font-extrabold text-gray-400 uppercase truncate">

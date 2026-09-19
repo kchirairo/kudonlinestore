@@ -296,6 +296,39 @@ export const orderService = {
       authUserId = userId;
     }
 
+    // 4.b Verify customer account status directly against Supabase database
+    if (authUserId && isSupabaseConfigured() && supabase) {
+      try {
+        const { data: prof, error: profErr } = await supabase
+          .from('profiles')
+          .select('account_status, disabled_reason')
+          .eq('id', authUserId)
+          .maybeSingle();
+
+        if (!profErr && prof) {
+          if (prof.account_status === 'disabled') {
+            throw new Error(
+              prof.disabled_reason
+                ? `Order creation blocked: Account disabled (${prof.disabled_reason})`
+                : 'Order creation blocked: Your account has been disabled by store administration.'
+            );
+          }
+          if (prof.account_status === 'on_hold') {
+            throw new Error(
+              prof.disabled_reason
+                ? `Order creation blocked: Account on hold (${prof.disabled_reason})`
+                : 'Order creation blocked: Your account is temporarily on hold. Please contact support.'
+            );
+          }
+        }
+      } catch (checkErr: any) {
+        if (checkErr.message?.startsWith('Order creation blocked:')) {
+          throw checkErr;
+        }
+        console.warn('[orderService] Customer account status check notice:', checkErr);
+      }
+    }
+
     if (!isSupabaseConfigured() || !supabase) {
       const localUuid = crypto.randomUUID();
       const attribution = getCurrentAttribution();
@@ -420,6 +453,19 @@ export const orderService = {
     }
 
     const formattedOrder = mapSupabaseOrder(createdOrderRow, items);
+
+    // Asynchronously notify admin of new order creation (server-side, trusted, non-blocking)
+    try {
+      fetch('/api/notifications/notify-order-created', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: createdOrderId }),
+      }).catch((notifErr) => {
+        console.warn('[orderService] Non-blocking order notification notice:', notifErr);
+      });
+    } catch (notifErr) {
+      console.warn('[orderService] Caught non-blocking notification error:', notifErr);
+    }
 
     // Save local copy for UI history/cache
     const existingOrders = orderService.getLocalOrders();

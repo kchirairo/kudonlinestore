@@ -29,6 +29,7 @@ import {
   ChevronDown,
   UploadCloud,
   Copy,
+  ImageOff,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Product, ProductCategory } from '../../types';
@@ -882,10 +883,16 @@ export const AdminProductsPage: React.FC = () => {
                 {products.map((product) => {
                   const img =
                     (Array.isArray(product.images) &&
-                      product.images.find((u) => typeof u === 'string' && u.trim().length > 0)) ||
-                    (typeof (product as any).image_url === 'string' && (product as any).image_url.trim()) ||
-                    (typeof (product as any).image === 'string' && (product as any).image.trim()) ||
-                    'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80';
+                      product.images.find(
+                        (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                      )) ||
+                    (typeof (product as any).image_url === 'string' &&
+                      !(product as any).image_url.trim().startsWith('data:image') &&
+                      (product as any).image_url.trim()) ||
+                    (typeof (product as any).image === 'string' &&
+                      !(product as any).image.trim().startsWith('data:image') &&
+                      (product as any).image.trim()) ||
+                    null;
 
                   const isSelected = selectedIds.has(product.id);
                   const edit = inlineEdits[product.id] || {
@@ -926,11 +933,29 @@ export const AdminProductsPage: React.FC = () => {
                       {/* Product Info */}
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-3">
-                          <img
-                            src={img}
-                            alt={product.name}
-                            className="w-12 h-12 rounded-xl object-cover bg-gray-50 border border-gray-100 flex-shrink-0"
-                          />
+                          {img ? (
+                            <img
+                              src={img}
+                              alt={product.name}
+                              className="w-12 h-12 rounded-xl object-cover bg-gray-50 border border-gray-100 shrink-0"
+                              onError={(e) => {
+                                const el = e.currentTarget;
+                                el.style.display = 'none';
+                                if (el.parentElement) {
+                                  const placeholder = document.createElement('div');
+                                  placeholder.className = 'w-12 h-12 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1';
+                                  placeholder.title = 'Image unavailable';
+                                  placeholder.innerHTML = '<span class="text-[8px] font-medium text-center leading-none text-gray-400 dark:text-slate-500">Image unavailable</span>';
+                                  el.parentElement.appendChild(placeholder);
+                                }
+                              }}
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1" title="Image unavailable">
+                              <ImageOff className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+                              <span className="text-[8px] font-medium text-center leading-none mt-0.5">Image unavailable</span>
+                            </div>
+                          )}
                           <div className="min-w-0">
                             <span className="text-[10px] font-extrabold text-gray-400 uppercase">
                               {product.brand}
@@ -1149,10 +1174,16 @@ export const AdminProductsPage: React.FC = () => {
             {products.map((product) => {
               const img =
                 (Array.isArray(product.images) &&
-                  product.images.find((u) => typeof u === 'string' && u.trim().length > 0)) ||
-                (typeof (product as any).image_url === 'string' && (product as any).image_url.trim()) ||
-                (typeof (product as any).image === 'string' && (product as any).image.trim()) ||
-                'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80';
+                  product.images.find(
+                    (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                  )) ||
+                (typeof (product as any).image_url === 'string' &&
+                  !(product as any).image_url.trim().startsWith('data:image') &&
+                  (product as any).image_url.trim()) ||
+                (typeof (product as any).image === 'string' &&
+                  !(product as any).image.trim().startsWith('data:image') &&
+                  (product as any).image.trim()) ||
+                null;
               const isSelected = selectedIds.has(product.id);
               const isActive = product.isActive !== false;
 
@@ -1172,11 +1203,29 @@ export const AdminProductsPage: React.FC = () => {
                       className="mt-1 rounded border-gray-300 text-[#ff6452] focus:ring-[#ff6452] accent-[#ff6452] w-4 h-4 cursor-pointer"
                     />
 
-                    <img
-                      src={img}
-                      alt={product.name}
-                      className="w-16 h-16 rounded-xl object-cover bg-gray-50 border border-gray-100 flex-shrink-0"
-                    />
+                    {img ? (
+                      <img
+                        src={img}
+                        alt={product.name}
+                        className="w-16 h-16 rounded-xl object-cover bg-gray-50 border border-gray-100 shrink-0"
+                        onError={(e) => {
+                          const el = e.currentTarget;
+                          el.style.display = 'none';
+                          if (el.parentElement) {
+                            const placeholder = document.createElement('div');
+                            placeholder.className = 'w-16 h-16 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1';
+                            placeholder.title = 'Image unavailable';
+                            placeholder.innerHTML = '<span class="text-[9px] font-medium text-center leading-none text-gray-400 dark:text-slate-500">Image unavailable</span>';
+                            el.parentElement.appendChild(placeholder);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-gray-100 dark:bg-slate-800 flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 shrink-0 select-none p-1" title="Image unavailable">
+                        <ImageOff className="w-5 h-5 text-gray-400 dark:text-slate-500" />
+                        <span className="text-[9px] font-medium text-center leading-none mt-1">Image unavailable</span>
+                      </div>
+                    )}
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">

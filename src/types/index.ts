@@ -236,14 +236,9 @@ export interface UserProfile {
   province?: string;
   postalCode?: string;
   role?: 'customer' | 'admin';
-  accountStatus?: CustomerAccountStatus;
-  status?: CustomerAccountStatus;
-  isDisabled?: boolean;
-  is_disabled?: boolean;
-  disabledReason?: string;
-  disabled_reason?: string;
-  disabledAt?: string;
-  disabled_at?: string;
+  account_status?: CustomerAccountStatus;
+  disabled_reason?: string | null;
+  disabled_at?: string | null;
 }
 
 export interface Category {
@@ -259,6 +254,14 @@ export interface Category {
   created_at?: string;
 }
 
+export interface AdminCustomerAccountInfo {
+  id: string;
+  email: string;
+  created_at: string;
+  last_sign_in_at: string | null;
+  confirmed_at: string | null;
+}
+
 export interface Customer {
   id: string;
   email: string;
@@ -268,14 +271,12 @@ export interface Customer {
   createdAt: string;
   orderCount: number;
   totalSpent: number;
-  accountStatus?: CustomerAccountStatus;
-  status?: CustomerAccountStatus;
-  isDisabled?: boolean;
-  is_disabled?: boolean;
-  disabledReason?: string;
-  disabled_reason?: string;
-  disabledAt?: string;
-  disabled_at?: string;
+  account_status: CustomerAccountStatus;
+  disabled_reason: string | null;
+  disabled_at: string | null;
+  last_sign_in_at?: string | null;
+  confirmed_at?: string | null;
+  auth_account?: AdminCustomerAccountInfo;
   referralStatus?: 'active' | 'banned';
   isReferralBanned?: boolean;
   isEarningsFrozen?: boolean;
@@ -1055,6 +1056,35 @@ export interface MarketingAnalyticsSummary {
   tax_rate: number;
   show_tax_on_receipt: boolean;
   vat_registration_number: string | null;
+}
+
+export type NotificationType = 'order' | 'payment' | 'inventory' | 'security' | 'system' | 'customer' | string;
+export type NotificationSeverity = 'info' | 'warning' | 'critical' | 'error' | 'success';
+
+export interface AdminNotification {
+  id: string;
+  type: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  user_id?: string | null;
+  order_id?: string | null;
+  product_id?: string | null;
+  metadata?: Record<string, any>;
+  is_read: boolean;
+  read_at?: string | null;
+  fingerprint?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type NotificationFilterTab = 'all' | 'unread' | 'critical' | 'security' | 'order' | 'payment' | 'inventory';
+
+export interface AdminNotificationFilters {
+  tab?: NotificationFilterTab;
+  search?: string;
+  page?: number;
+  limit?: number;
 }
 
 

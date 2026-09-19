@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag, CheckCircle2, AlertTriangle, Ban, PauseCircle } from 'lucide-react';
+import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag, CheckCircle2, AlertTriangle, Ban, PauseCircle, ImageOff } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 import { EmptyState } from '../components/EmptyState';
@@ -152,21 +152,50 @@ export const CartPage: React.FC = () => {
                 className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-800 flex items-center gap-4 shadow-xs hover:border-gray-200 dark:hover:border-slate-700 transition-all"
               >
                 {/* Product Thumbnail */}
-                <div
-                  onClick={() => navigate(`/product/${item.product.id}`)}
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800 cursor-pointer shrink-0 border border-gray-100 dark:border-slate-800"
-                >
-                  <img
-                    src={
-                      (Array.isArray(item.product.images) && item.product.images.find((u) => typeof u === 'string' && u.trim().length > 0)) ||
-                      (typeof (item.product as any).image_url === 'string' && (item.product as any).image_url.trim()) ||
-                      (typeof (item.product as any).image === 'string' && (item.product as any).image.trim()) ||
-                      'https://images.unsplash.com/photo-1560343090-f0409e92791a?auto=format&fit=crop&w=400&q=80'
-                    }
-                    alt={item.product.name}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
+                {(() => {
+                  const cartImg =
+                    (Array.isArray(item.product.images) &&
+                      item.product.images.find(
+                        (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                      )) ||
+                    (typeof (item.product as any).image_url === 'string' &&
+                      !(item.product as any).image_url.trim().startsWith('data:image') &&
+                      (item.product as any).image_url.trim()) ||
+                    (typeof (item.product as any).image === 'string' &&
+                      !(item.product as any).image.trim().startsWith('data:image') &&
+                      (item.product as any).image.trim()) ||
+                    null;
+
+                  return (
+                    <div
+                      onClick={() => navigate(`/product/${item.product.id}`)}
+                      className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800 cursor-pointer shrink-0 border border-gray-100 dark:border-slate-800 flex items-center justify-center"
+                    >
+                      {cartImg ? (
+                        <img
+                          src={cartImg}
+                          alt={item.product.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            el.style.display = 'none';
+                            if (el.parentElement) {
+                              const placeholder = document.createElement('div');
+                              placeholder.className = 'w-full h-full flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-2 select-none';
+                              placeholder.innerHTML = '<span class="text-[9px] font-medium text-center leading-tight">Image unavailable</span>';
+                              el.parentElement.appendChild(placeholder);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-2 select-none">
+                          <ImageOff className="w-5 h-5 text-gray-400 dark:text-slate-500 mb-1" />
+                          <span className="text-[9px] font-medium text-center leading-tight">Image unavailable</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Details */}
                 <div className="flex-1 min-w-0 space-y-1">

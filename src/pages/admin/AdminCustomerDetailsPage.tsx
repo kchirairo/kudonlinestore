@@ -19,6 +19,7 @@ import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PaymentStatusBadge } from '../../components/admin/PaymentStatusBadge';
 import { AdminCustomerReferralCard } from '../../components/admin/AdminCustomerReferralCard';
 import { AdminCustomerAccountControlCard } from '../../components/admin/AdminCustomerAccountControlCard';
+import { AdminCustomerAccountInfoCard } from '../../components/admin/AdminCustomerAccountInfoCard';
 import { STORE_CONFIG } from '../../constants/config';
 
 export const AdminCustomerDetailsPage: React.FC = () => {
@@ -39,8 +40,20 @@ export const AdminCustomerDetailsPage: React.FC = () => {
         adminService.getCustomerOrders(id!),
       ]);
 
-      setCustomer(cust);
-      setOrders(custOrders);
+      // Defense-in-depth: Never display admin account credentials under customer details
+      if (
+        !cust ||
+        cust.role === 'admin' ||
+        String(cust.role || '').toLowerCase() === 'admin' ||
+        cust.id === 'demo-admin-id' ||
+        cust.email?.toLowerCase() === 'admin@kudstore.com'
+      ) {
+        setCustomer(null);
+        setOrders([]);
+      } else {
+        setCustomer(cust);
+        setOrders(custOrders);
+      }
       setIsLoading(false);
     }
 
@@ -97,12 +110,12 @@ export const AdminCustomerDetailsPage: React.FC = () => {
                 </span>
 
                 {/* Account Status Badge */}
-                {customer.accountStatus === 'disabled' || (customer.isDisabled && customer.accountStatus !== 'on_hold') ? (
+                {customer.account_status === 'disabled' ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-700 border border-red-200">
                     <AlertTriangle className="w-3 h-3 text-red-600" />
                     Account Disabled
                   </span>
-                ) : customer.accountStatus === 'on_hold' ? (
+                ) : customer.account_status === 'on_hold' ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                     Account On Hold
@@ -158,6 +171,9 @@ export const AdminCustomerDetailsPage: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {/* Account & Login Information Section */}
+        <AdminCustomerAccountInfoCard customer={customer} />
 
         {/* Customer Account Status & Permissions Control Card */}
         <AdminCustomerAccountControlCard

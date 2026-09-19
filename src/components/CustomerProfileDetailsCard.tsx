@@ -40,20 +40,22 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
 
   // Sync state when user or profile changes
   useEffect(() => {
-    if (user) {
-      setFullName(user.fullName || profile?.full_name || '');
-      setPhone(user.phone || profile?.phone || '');
+    if (user && !isEditing) {
+      const resolvedName = profile?.full_name ?? user.fullName ?? '';
+      setFullName(resolvedName);
+      setPhone(profile?.phone ?? user.phone ?? '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
       setPostalCode(user.postalCode || profile?.postal_code || '');
     }
-  }, [user, profile]);
+  }, [user, profile, isEditing]);
 
   const handleStartEdit = () => {
     if (user) {
-      setFullName(user.fullName || profile?.full_name || '');
-      setPhone(user.phone || profile?.phone || '');
+      const resolvedName = profile?.full_name ?? user.fullName ?? '';
+      setFullName(resolvedName);
+      setPhone(profile?.phone ?? user.phone ?? '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
@@ -66,8 +68,9 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
 
   const handleCancel = () => {
     if (user) {
-      setFullName(user.fullName || profile?.full_name || '');
-      setPhone(user.phone || profile?.phone || '');
+      const resolvedName = profile?.full_name ?? user.fullName ?? '';
+      setFullName(resolvedName);
+      setPhone(profile?.phone ?? user.phone ?? '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
@@ -79,6 +82,7 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
     setFormError(null);
 
     const trimmedName = fullName.trim();
@@ -194,7 +198,7 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
               <div>
                 <span className="text-gray-400 dark:text-slate-500 font-medium block text-[11px]">Full Name</span>
                 <span className="font-bold text-gray-800 dark:text-slate-200 text-sm">
-                  {user?.fullName || profile?.full_name || 'Not set'}
+                  {profile?.full_name || user?.fullName || 'Not set'}
                 </span>
               </div>
 
