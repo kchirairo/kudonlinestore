@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   CheckCircle2,
+  Check,
   AlertCircle,
   RefreshCw,
   ArrowRight,
@@ -29,6 +30,22 @@ export const UpdatePasswordPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Live password validation criteria
+  const passwordCriteria = {
+    minLength: password.length >= 8,
+    hasLower: /[a-z]/.test(password),
+    hasUpper: /[A-Z]/.test(password),
+    hasNumber: /[0-9]/.test(password),
+    hasSymbol: /[^A-Za-z0-9]/.test(password),
+  };
+
+  const isPasswordValid =
+    passwordCriteria.minLength &&
+    passwordCriteria.hasLower &&
+    passwordCriteria.hasUpper &&
+    passwordCriteria.hasNumber &&
+    passwordCriteria.hasSymbol;
 
   // Auth recovery session detection state
   const [isVerifyingSession, setIsVerifyingSession] = useState<boolean>(true);
@@ -190,13 +207,15 @@ export const UpdatePasswordPage: React.FC = () => {
       return;
     }
 
-    if (password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters long.');
+    if (!isPasswordValid) {
+      setErrorMessage(
+        'Please use at least 8 characters, including a lowercase letter, uppercase letter, number, and symbol.'
+      );
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage('Passwords do not match. Please verify both fields.');
+      setErrorMessage('Passwords do not match.');
       return;
     }
 
@@ -348,78 +367,225 @@ export const UpdatePasswordPage: React.FC = () => {
 
               <form onSubmit={handleUpdatePassword} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
+                  <label
+                    htmlFor="update-password"
+                    className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                  >
                     New Password
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      id="update-password"
                       type={showPassword ? 'text' : 'password'}
                       required
-                      minLength={6}
+                      autoComplete="new-password"
                       autoFocus
-                      placeholder="Minimum 6 characters"
+                      placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
                     />
                     <button
                       type="button"
+                      id="update-toggle-password-visibility"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
-                      tabIndex={-1}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-md transition-colors cursor-pointer"
                     >
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+
+                  {/* Compact Password Requirements Checklist */}
+                  <div
+                    className="mt-2.5 bg-gray-50/90 dark:bg-slate-800/60 rounded-xl p-3 border border-gray-100 dark:border-slate-800 space-y-1.5"
+                    aria-label="Password requirements"
+                  >
+                    <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 block">
+                      Password must contain:
+                    </span>
+                    <ul className="space-y-1 text-xs">
+                      <li
+                        className={`flex items-center gap-2 transition-colors ${
+                          passwordCriteria.minLength
+                            ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                            : 'text-gray-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {passwordCriteria.minLength ? (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                            aria-hidden="true"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                          </span>
+                        )}
+                        <span>At least 8 characters</span>
+                        <span className="sr-only">
+                          {passwordCriteria.minLength ? '(Met)' : '(Unmet)'}
+                        </span>
+                      </li>
+                      <li
+                        className={`flex items-center gap-2 transition-colors ${
+                          passwordCriteria.hasLower
+                            ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                            : 'text-gray-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {passwordCriteria.hasLower ? (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                            aria-hidden="true"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                          </span>
+                        )}
+                        <span>One lowercase letter (a–z)</span>
+                        <span className="sr-only">
+                          {passwordCriteria.hasLower ? '(Met)' : '(Unmet)'}
+                        </span>
+                      </li>
+                      <li
+                        className={`flex items-center gap-2 transition-colors ${
+                          passwordCriteria.hasUpper
+                            ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                            : 'text-gray-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {passwordCriteria.hasUpper ? (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                            aria-hidden="true"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                          </span>
+                        )}
+                        <span>One uppercase letter (A–Z)</span>
+                        <span className="sr-only">
+                          {passwordCriteria.hasUpper ? '(Met)' : '(Unmet)'}
+                        </span>
+                      </li>
+                      <li
+                        className={`flex items-center gap-2 transition-colors ${
+                          passwordCriteria.hasNumber
+                            ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                            : 'text-gray-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {passwordCriteria.hasNumber ? (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                            aria-hidden="true"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                          </span>
+                        )}
+                        <span>One number (0–9)</span>
+                        <span className="sr-only">
+                          {passwordCriteria.hasNumber ? '(Met)' : '(Unmet)'}
+                        </span>
+                      </li>
+                      <li
+                        className={`flex items-center gap-2 transition-colors ${
+                          passwordCriteria.hasSymbol
+                            ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                            : 'text-gray-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {passwordCriteria.hasSymbol ? (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                            aria-hidden="true"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                          </span>
+                        )}
+                        <span>One symbol (e.g. ! @ # $ %)</span>
+                        <span className="sr-only">
+                          {passwordCriteria.hasSymbol ? '(Met)' : '(Unmet)'}
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
+                  <label
+                    htmlFor="update-confirm-password"
+                    className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                  >
                     Confirm New Password
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Lock className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      id="update-confirm-password"
                       type={showConfirmPassword ? 'text' : 'password'}
                       required
-                      minLength={6}
-                      placeholder="Re-type new password"
+                      autoComplete="new-password"
+                      placeholder="••••••••"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] outline-none"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
                     />
                     <button
                       type="button"
+                      id="update-toggle-confirm-password-visibility"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
-                      tabIndex={-1}
+                      aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-md transition-colors cursor-pointer"
                     >
                       {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                </div>
-
-                {/* Password strength tips */}
-                <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-3 text-[11px] text-gray-500 dark:text-slate-400 space-y-1 border border-gray-100 dark:border-slate-700">
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#ff6452]" />
-                    <span>Password Requirements:</span>
-                  </div>
-                  <ul className="list-disc list-inside pl-1 text-[11px] text-gray-500 dark:text-slate-400 space-y-0.5">
-                    <li className={password.length >= 6 ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}>
-                      At least 6 characters
-                    </li>
-                    <li className={password && password === confirmPassword ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}>
-                      Both password entries must match
-                    </li>
-                  </ul>
+                  {confirmPassword && password !== confirmPassword && (
+                    <p
+                      className="text-xs text-rose-600 dark:text-rose-400 mt-1.5 font-medium flex items-center gap-1.5"
+                      role="alert"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Passwords do not match.</span>
+                    </p>
+                  )}
+                  {confirmPassword && password === confirmPassword && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1.5 font-medium flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      <span>Passwords match</span>
+                    </p>
+                  )}
                 </div>
 
                 <button
                   type="submit"
+                  id="update-submit-btn"
                   disabled={isSubmitting}
-                  className="w-full py-3.5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl shadow-md shadow-[#ff6452]/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
+                  className="w-full py-3 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-xl shadow-md shadow-[#ff6452]/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
                 >
                   {isSubmitting ? (
                     <>

@@ -22,18 +22,29 @@ export function mapSupabaseOrder(row: any, fallbackItems: OrderItem[] = []): Ord
 
   const parsedItems: OrderItem[] =
     Array.isArray(row.order_items) && row.order_items.length > 0
-      ? row.order_items.map((it: any) => ({
-          id: it.id || String(Math.random()),
-          order_id: it.order_id || row.id,
-          product_id: it.product_id || '',
-          product_name: it.product_name || it.name || '',
-          product_brand: it.product_brand || it.brand || '',
-          product_image: it.product_image || it.image || '',
-          quantity: Number(it.quantity) || 1,
-          unit_price: Number(it.unit_price ?? it.price ?? 0),
-          total_price: Number(it.total_price ?? it.total ?? ((Number(it.unit_price ?? it.price ?? 0)) * (Number(it.quantity) || 1))),
-          variant: it.variant || it.size_or_variant || undefined,
-        }))
+      ? row.order_items.map((it: any) => {
+          let customData = it.customization || undefined;
+          if (!customData && it.customization_details) {
+            try {
+              customData = typeof it.customization_details === 'string' ? JSON.parse(it.customization_details) : it.customization_details;
+            } catch {
+              // fallback
+            }
+          }
+          return {
+            id: it.id || String(Math.random()),
+            order_id: it.order_id || row.id,
+            product_id: it.product_id || '',
+            product_name: it.product_name || it.name || '',
+            product_brand: it.product_brand || it.brand || '',
+            product_image: it.product_image || it.image || '',
+            quantity: Number(it.quantity) || 1,
+            unit_price: Number(it.unit_price ?? it.price ?? 0),
+            total_price: Number(it.total_price ?? it.total ?? ((Number(it.unit_price ?? it.price ?? 0)) * (Number(it.quantity) || 1))),
+            variant: it.variant || it.size_or_variant || undefined,
+            customization: customData,
+          };
+        })
       : fallbackItems;
 
   const rawSubtotal = Number(row.subtotal ?? row.subtotal_amount ?? 0);
@@ -429,17 +440,38 @@ export const orderService = {
 
     // 6. After creating the order, create its order_items using the returned order ID
     if (items && items.length > 0) {
-      const itemsToInsert = items.map((item) => ({
-        order_id: createdOrderId,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        product_brand: item.product_brand || '',
-        product_image: item.product_image || null,
-        quantity: Number(item.quantity) || 1,
-        unit_price: Number(item.unit_price) || 0,
-        total_price: Number(item.total_price) || (Number(item.unit_price || 0) * (Number(item.quantity) || 1)),
-        variant: item.variant || null,
-      }));
+      const itemsToInsert = items.map((item) => {
+        // Construct clear variant summary string if customized
+        let displayVariant = item.variant || null;
+        if (item.customization) {
+          const c = item.customization;
+          const details: string[] = [];
+          if (c.selectedSizeOption?.name) details.push(`Size: ${c.selectedSizeOption.name}`);
+          if (c.customDimensions) details.push(`Dim: ${c.customDimensions}`);
+          if (c.tshirtSize) details.push(`Size: ${c.tshirtSize}`);
+          if (c.customText) details.push(`Text: "${c.customText}"`);
+          if (c.printPosition) details.push(`Pos: ${c.printPosition}`);
+          if (c.cupType) details.push(`Type: ${c.cupType}`);
+          if (c.necklaceType) details.push(`Finish: ${c.necklaceType}`);
+          if (c.engravingFont) details.push(`Font: ${c.engravingFont}`);
+          if (details.length > 0) {
+            displayVariant = details.join(' | ');
+          }
+        }
+
+        return {
+          order_id: createdOrderId,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          product_brand: item.product_brand || '',
+          product_image: item.product_image || null,
+          quantity: Number(item.quantity) || 1,
+          unit_price: Number(item.unit_price) || 0,
+          total_price: Number(item.total_price) || (Number(item.unit_price || 0) * (Number(item.quantity) || 1)),
+          variant: displayVariant,
+          customization_details: item.customization ? JSON.stringify(item.customization) : null,
+        };
+      });
 
       const { error: itemsInsertError } = await executeWithColumnFallback(
         (itemsPayload) => supabase.from('order_items').insert(itemsPayload),
@@ -476,17 +508,30 @@ export const orderService = {
   },
 
   /**
-   * Fetch orders for a user
+   * Fetch orders for a user authoritatively
    */
   async getUserOrders(userId?: string): Promise<Order[]> {
     if (isSupabaseConfigured() && supabase) {
       try {
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUserId = authData?.user?.id;
+        if (!currentUserId) {
+          return [];
+        }
+
+        // Authoritative admin check via RPC
+        const { data: rpcAdmin } = await supabase.rpc('is_admin');
+        const isAdmin = rpcAdmin === true;
+
         let query = supabase
           .from('orders')
           .select('*, order_items(*)')
           .order('created_at', { ascending: false });
 
-        if (userId && userId !== 'guest') {
+        // If not admin, strictly constrain to current authenticated user
+        if (!isAdmin) {
+          query = query.eq('user_id', currentUserId);
+        } else if (userId && userId !== 'guest') {
           query = query.eq('user_id', userId);
         }
 
@@ -508,7 +553,7 @@ export const orderService = {
     if (userId && userId !== 'guest') {
       return orders.filter((o) => o.user_id === userId || (o as any).userId === userId);
     }
-    return orders;
+    return [];
   },
 
   /**

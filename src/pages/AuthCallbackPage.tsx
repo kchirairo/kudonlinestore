@@ -269,7 +269,7 @@ export const AuthCallbackPage: React.FC = () => {
                 <RefreshCw className="w-6 h-6 animate-spin" />
               </div>
               <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">
-                Confirming authentication token with Supabase...
+                Confirming authentication token...
               </p>
             </div>
           )}

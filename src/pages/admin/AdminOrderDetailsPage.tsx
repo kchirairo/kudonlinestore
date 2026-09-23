@@ -374,7 +374,7 @@ export const AdminOrderDetailsPage: React.FC = () => {
                   Purchase Confirmation Email System
                 </h3>
                 <p className="text-[11px] text-gray-500">
-                  Automated transactional receipt dispatched via Supabase Edge Function & Resend
+                  Automated transactional receipt dispatched via secure email gateway
                 </p>
               </div>
             </div>

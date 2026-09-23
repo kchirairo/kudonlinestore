@@ -46,6 +46,7 @@ import { PaymentGatewaysSettings } from '../../components/admin/PaymentGatewaysS
 import { ReferralsManagementSettings } from '../../components/admin/ReferralsManagementSettings';
 import { InvoiceSettingsConfigCard } from '../../components/admin/InvoiceSettingsConfigCard';
 import { StoreTaxSettingsCard } from '../../components/admin/StoreTaxSettingsCard';
+import { AdminAuthAppearanceSettings } from '../../components/admin/AdminAuthAppearanceSettings';
 
 /**
  * Authentic Google "G" Brand Icon for Admin UI
@@ -71,7 +72,7 @@ const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
   </svg>
 );
 
-type SettingsTab = 'general' | 'invoices' | 'coupons' | 'referrals' | 'branding' | 'banner' | 'payments';
+type SettingsTab = 'general' | 'invoices' | 'coupons' | 'referrals' | 'branding' | 'banner' | 'auth_appearance' | 'payments';
 
 export const AdminSettingsPage: React.FC = () => {
   const { showToast, reloadGeneralSettings, updateGeneralSettings } = useShop();
@@ -86,6 +87,7 @@ export const AdminSettingsPage: React.FC = () => {
       activeTabParam === 'referrals' ||
       activeTabParam === 'branding' ||
       activeTabParam === 'banner' ||
+      activeTabParam === 'auth_appearance' ||
       activeTabParam === 'coupons'
     ) {
       return activeTabParam;
@@ -95,7 +97,7 @@ export const AdminSettingsPage: React.FC = () => {
 
   useEffect(() => {
     const tab = searchParams.get('tab') as SettingsTab | null;
-    if (tab && ['general', 'invoices', 'coupons', 'referrals', 'branding', 'banner', 'payments'].includes(tab)) {
+    if (tab && ['general', 'invoices', 'coupons', 'referrals', 'branding', 'banner', 'auth_appearance', 'payments'].includes(tab)) {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -406,6 +408,18 @@ export const AdminSettingsPage: React.FC = () => {
           >
             <Megaphone className="w-3.5 h-3.5" />
             <span>Promo Banner</span>
+          </button>
+
+          <button
+            onClick={() => handleTabChange('auth_appearance')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'auth_appearance'
+                ? 'bg-[#ff6452] text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Auth Appearance</span>
           </button>
 
           <button
@@ -1236,7 +1250,7 @@ export const AdminSettingsPage: React.FC = () => {
             <div className="text-xs text-gray-600 space-y-0.5">
               <p className="font-bold text-gray-900">Encrypted Cloud Synchronization & Key Vault Protection:</p>
               <p>
-                All store configurations are synchronized with Supabase database storage. Sensitive backend server credentials remain secured behind protected environment variables.
+                All store configurations are synchronized with cloud database storage. Sensitive backend server credentials remain secured behind protected environment variables.
               </p>
             </div>
           </div>
@@ -1299,6 +1313,11 @@ export const AdminSettingsPage: React.FC = () => {
       {activeTab === 'banner' && <PromoBannerSettings />}
 
       {/* ========================================================================= */}
+      {/* TAB 4B: AUTHENTICATION APPEARANCE & CINEMATIC LOGIN REDESIGN */}
+      {/* ========================================================================= */}
+      {activeTab === 'auth_appearance' && <AdminAuthAppearanceSettings />}
+
+      {/* ========================================================================= */}
       {/* TAB 5: PAYMENT GATEWAY PROVIDERS MANUAL INTEGRATION */}
       {/* ========================================================================= */}
       {activeTab === 'payments' && !isAdmin && (
@@ -1323,19 +1342,6 @@ export const AdminSettingsPage: React.FC = () => {
             <p className="text-[11px] text-amber-800 leading-normal">
               Non-admin store user profiles cannot view or modify secret payment gateway API credentials or payment processing modes.
             </p>
-          </div>
-
-          <div className="pt-2">
-            <button
-              onClick={() => {
-                localStorage.setItem('kud_store_demo_admin', 'true');
-                window.location.reload();
-              }}
-              className="px-6 py-2.5 bg-[#ff6452] hover:bg-[#ff4935] text-white text-xs font-bold rounded-2xl transition-all shadow-xs flex items-center justify-center gap-2 mx-auto cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>Switch to Verified Admin Session</span>
-            </button>
           </div>
         </div>
       )}

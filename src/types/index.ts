@@ -123,14 +123,20 @@ export interface Product {
   isActive?: boolean;
   rating?: number;
   reviewCount?: number;
+  customizationConfig?: ProductCustomizationConfig;
   createdAt: string;
   updatedAt?: string;
 }
 
+export * from './customization';
+
 export interface CartItem {
+  id?: string;
   product: Product;
   quantity: number;
   selectedSizeOrVariant?: string;
+  customization?: CustomerCustomizationData;
+  calculatedUnitPrice?: number;
 }
 
 export type OrderStatus =
@@ -177,6 +183,7 @@ export interface OrderItem {
   unit_price: number;
   total_price: number;
   variant?: string;
+  customization?: CustomerCustomizationData;
 }
 
 export interface ShippingAddress {
@@ -228,13 +235,19 @@ export interface UserProfile {
   id: string;
   email: string;
   fullName?: string;
+  full_name?: string;
   phone?: string;
+  age?: number | null;
+  gender?: 'Male' | 'Female' | string | null;
   avatarUrl?: string;
+  avatar_url?: string;
   addressLine?: string;
+  address_line?: string;
   address?: string;
   city?: string;
   province?: string;
   postalCode?: string;
+  postal_code?: string;
   role?: 'customer' | 'admin';
   account_status?: CustomerAccountStatus;
   disabled_reason?: string | null;
@@ -267,6 +280,8 @@ export interface Customer {
   email: string;
   fullName?: string;
   phone?: string;
+  age?: number | null;
+  gender?: 'Male' | 'Female' | string | null;
   role: 'customer' | 'admin';
   createdAt: string;
   orderCount: number;
@@ -550,6 +565,125 @@ export interface StoreBrandingConfig {
   accentColor?: string;
   showTagline: boolean;
   lastUpdated?: string;
+}
+
+export type AuthTransitionEffect = 'fade' | 'zoom-fade' | 'pan' | 'crossfade' | 'slide' | 'ken-burns';
+
+export interface SupabaseAuthAppearanceSettings {
+  id?: number;
+  login_title: string;
+  login_subtitle: string;
+  signup_title: string;
+  signup_subtitle: string;
+  show_logo: boolean;
+  show_google: boolean;
+  show_apple: boolean;
+  show_signup_link: boolean;
+  show_login_link: boolean;
+  animation_enabled: boolean;
+  animation_type: 'ken-burns' | 'fade' | 'pan' | 'zoom-fade' | 'slide';
+  transition_duration: number; // in seconds (e.g. 1.5)
+  image_display_duration: number; // in seconds (e.g. 6)
+  zoom_intensity: number; // e.g. 1.05
+  pan_enabled: boolean;
+  randomize_images: boolean;
+  overlay_opacity: number; // 0 to 1 (e.g. 0.45)
+  card_opacity: number; // 0 to 1 (e.g. 0.72)
+  card_border_radius: number; // in px (e.g. 24)
+  card_position: 'center' | 'left' | 'right';
+  updated_at?: string;
+}
+
+export interface SupabaseAuthBackgroundImage {
+  id: string;
+  name: string;
+  storage_path: string;
+  is_active: boolean;
+  display_order: number;
+  is_default: boolean;
+  created_at?: string;
+  updated_at?: string;
+  public_url?: string;
+}
+
+export interface AuthBackgroundImage {
+  id: string;
+  url: string;
+  title?: string;
+  altText?: string;
+  name?: string;
+  storage_path?: string;
+  isActive: boolean;
+  order: number;
+  is_default?: boolean;
+  uploadedAt?: string;
+}
+
+export interface AuthAppearanceConfig {
+  id?: number;
+  enabled: boolean;
+  images: AuthBackgroundImage[];
+  
+  // Database fields from public.auth_appearance_settings
+  login_title?: string;
+  login_subtitle?: string;
+  signup_title?: string;
+  signup_subtitle?: string;
+  show_logo?: boolean;
+  show_google?: boolean;
+  show_apple?: boolean;
+  show_signup_link?: boolean;
+  show_login_link?: boolean;
+  animation_enabled?: boolean;
+  animation_type?: 'ken-burns' | 'fade' | 'pan' | 'zoom-fade' | 'slide';
+  transition_duration?: number; // seconds
+  image_display_duration?: number; // seconds
+  zoom_intensity?: number;
+  pan_enabled?: boolean;
+  randomize_images?: boolean;
+  overlay_opacity?: number; // 0 to 1
+  card_opacity?: number; // 0 to 1 or percentage
+  cardOpacity?: number; // legacy alias 0 to 100 percentage
+  card_border_radius?: number; // px
+  card_position?: 'center' | 'left' | 'right';
+
+  // Animation settings (legacy aliases)
+  rotationIntervalSeconds?: number; // e.g. 6 (range 3 - 30)
+  transitionEffect?: AuthTransitionEffect;
+  transitionDurationMs?: number; // e.g. 1000
+  enableMotion?: boolean; // Subtle zoom/pan Ken Burns effect
+  
+  // Page customization (legacy aliases)
+  welcomeHeadline?: string;
+  welcomeSubtext?: string;
+  overlayDarkness?: number; // 0 to 90 percentage
+  overlayBlur?: number; // 0 to 20 px
+  overlayGradient?: 'dark' | 'soft' | 'radial' | 'vignette' | 'none';
+  
+  // Glassmorphism card styling
+  cardBlur?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  cardBorderIntensity?: 'none' | 'subtle' | 'medium' | 'high';
+  
+  // Branding display
+  showLogoBadge?: boolean;
+  showFeaturesPill?: boolean;
+  
+  // Cinematic Preset Management & Visibility
+  active_preset_id?: string;
+  active_preset_name?: string;
+  show_preset_name_on_frontend?: boolean;
+  custom_presets?: CinematicPreset[];
+
+  lastUpdated?: string;
+}
+
+export interface CinematicPreset {
+  id: string;
+  name: string;
+  description: string;
+  previewUrl: string;
+  isVisibleOnFrontend: boolean; // Controls whether the preset's name is visible or hidden on customer frontend
+  config: Partial<AuthAppearanceConfig>;
 }
 
 export type BannerMediaType = 'image' | 'video' | 'none';

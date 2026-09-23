@@ -32,6 +32,7 @@ import {
   BellRing,
   X,
   Calendar,
+  Phone,
   Snowflake,
   Send,
   ShieldCheck,
@@ -50,6 +51,7 @@ import { InviteFriendsModal } from '../components/InviteFriendsModal';
 import { ReferralRedemptionModal } from '../components/ReferralRedemptionModal';
 import { LoyaltyTiersCard } from '../components/LoyaltyTiersCard';
 import { TopReferrersLeaderboard } from '../components/TopReferrersLeaderboard';
+import { CinematicAuthContainer } from '../components/auth/CinematicAuthContainer';
 import {
   referralService,
   getVoucherExpiryStatus,
@@ -82,28 +84,55 @@ const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
   </svg>
 );
 
+/**
+ * Authentic Apple Brand Icon
+ */
+const AppleIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 170 170" fill="currentColor">
+    <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.35.13-9.16-1.9-14.42-6.08-3.7-3.04-7.6-7.79-11.73-14.24-6.95-10.88-12.28-23.23-15.99-37.05-3.7-13.82-5.56-26.68-5.56-38.58 0-16.1 4.13-29.28 12.39-39.53 8.26-10.25 18.49-15.48 30.68-15.69 5.86 0 12.06 1.48 18.59 4.45 6.53 2.97 10.66 4.51 12.39 4.63 1.3.12 5.65-1.54 13.06-4.99 7.4-3.46 14.15-4.97 20.25-4.54 15.45.86 27.67 6.47 36.67 16.83-13.72 8.36-20.36 19.86-19.92 34.5.32 11.53 4.67 21.08 13.06 28.65 3.91 3.59 8.37 6.3 13.38 8.15-2.82 8.26-6.63 17.58-11.42 27.97zM119.22 33.39c0-8.04 2.82-15.86 8.46-23.47 5.65-7.6 12.71-12.44 21.19-14.52.43 2.17.65 4.35.65 6.52 0 7.82-2.93 15.64-8.8 23.47-5.87 7.82-13 12.71-21.4 14.67-.11-2.17-.11-4.49-.1-6.67z" />
+  </svg>
+);
+
 export const AccountPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, profile, signOut, showToast, generalSettings, isAccountDisabled, accountStatus, disabledReason } = useShop();
+  const { user, profile, signOut, showToast, generalSettings, isAccountDisabled, accountStatus, disabledReason, authAppearance } = useShop();
   const { loading: isAuthLoading, role, refetchProfile, isGoogleAuthEnabled: authGoogleAuthEnabled } = useAuth();
 
-  // Check if admin has enabled or disabled Google social authentication (from AuthContext or ShopContext)
+  // Check if admin has enabled or disabled Google & Apple authentication
   const isGoogleAuthEnabled =
-    authGoogleAuthEnabled !== undefined
+    (authAppearance?.show_google ?? true) &&
+    (authGoogleAuthEnabled !== undefined
       ? authGoogleAuthEnabled
-      : generalSettings?.isGoogleAuthEnabled !== false && generalSettings?.enableGoogleAuth !== false;
+      : generalSettings?.isGoogleAuthEnabled !== false && generalSettings?.enableGoogleAuth !== false);
+
+  const isAppleAuthEnabled = authAppearance?.show_apple ?? false;
+  const isSignUpAllowed = authAppearance?.show_signup_link ?? true;
+  const isLoginAllowed = authAppearance?.show_login_link ?? true;
+  const [isAppleLoading, setIsAppleLoading] = useState<boolean>(false);
 
   // Initialize sign up mode from pathname or query param
   const [isSignUp, setIsSignUp] = useState<boolean>(() => {
     const search = new URLSearchParams(location.search);
-    return (
+    const wantsSignUp = (
       location.pathname.includes('signup') ||
       location.pathname.includes('register') ||
       search.get('mode') === 'signup' ||
       search.get('tab') === 'signup'
     );
+    if (!isSignUpAllowed) return false;
+    if (!isLoginAllowed) return true;
+    return wantsSignUp;
   });
+
+  // Keep state compliant if admin disabled either tab
+  useEffect(() => {
+    if (!isSignUpAllowed && isSignUp) {
+      setIsSignUp(false);
+    } else if (!isLoginAllowed && !isSignUp) {
+      setIsSignUp(true);
+    }
+  }, [isSignUpAllowed, isLoginAllowed, isSignUp]);
 
   // Keep isSignUp in sync when routing changes (e.g. /login vs /signup vs /register)
   useEffect(() => {
@@ -126,11 +155,32 @@ export const AccountPage: React.FC = () => {
   const [isForgotPassword, setIsForgotPassword] = useState<boolean>(false);
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [fullName, setFullName] = useState<string>('');
+  const [phoneNumber, setPhoneNumber] = useState<string>('');
+  const [age, setAge] = useState<string>('');
+  const [gender, setGender] = useState<'Male' | 'Female' | ''>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Live password validation criteria for sign up
+  const passwordCriteria = {
+    minLength: password.length >= 8,
+    hasLower: /[a-z]/.test(password),
+    hasUpper: /[A-Z]/.test(password),
+    hasNumber: /[0-9]/.test(password),
+    hasSymbol: /[^A-Za-z0-9]/.test(password),
+  };
+
+  const isPasswordValid =
+    passwordCriteria.minLength &&
+    passwordCriteria.hasLower &&
+    passwordCriteria.hasUpper &&
+    passwordCriteria.hasNumber &&
+    passwordCriteria.hasSymbol;
 
   // Email confirmation & pending verification states
   const [signupPendingVerification, setSignupPendingVerification] = useState<boolean>(false);
@@ -294,7 +344,7 @@ export const AccountPage: React.FC = () => {
 
     try {
       if (!isSupabaseConfigured() || !supabase) {
-        throw new Error('Supabase authentication is not configured.');
+        throw new Error('Authentication service is currently unavailable. Please try again later.');
       }
 
       console.log('[Google Auth] Initiating signInWithOAuth for Google');
@@ -329,7 +379,7 @@ export const AccountPage: React.FC = () => {
 
     try {
       if (!isSupabaseConfigured() || !supabase) {
-        throw new Error('Supabase authentication is not configured.');
+        throw new Error('Authentication service is currently unavailable. Please try again later.');
       }
 
       const redirectUrl = getAuthRedirectUrl('/auth/callback');
@@ -395,57 +445,7 @@ export const AccountPage: React.FC = () => {
     }
   };
 
-  // Demo account identifiers for instant developer/reviewer access
-  const isDemoAdminAccount = (e: string) => {
-    const val = e.trim().toLowerCase();
-    return val === 'admin@kudstore.com' || val === 'admin@kudstore.co.za' || val === 'admin@demo.com';
-  };
-
-  const isDemoCustomerAccount = (e: string) => {
-    const val = e.trim().toLowerCase();
-    return (
-      val === 'customer@kudstore.co.za' ||
-      val === 'customer@kudstore.com' ||
-      val === 'demo@kudstore.co.za' ||
-      val === 'demo@kudstore.com' ||
-      val === 'sipho@example.co.za' ||
-      val === 'test@kudstore.co.za'
-    );
-  };
-
-  const handleQuickDemoLogin = async (targetRole: 'admin' | 'customer') => {
-    setIsSubmitting(true);
-    setLoginError(null);
-    setUnconfirmedEmail(null);
-    try {
-      if (targetRole === 'admin') {
-        localStorage.setItem('kud_store_demo_admin', 'true');
-        localStorage.removeItem('kud_store_demo_user');
-        setEmail('admin@kudstore.com');
-      } else {
-        localStorage.setItem('kud_store_demo_user', 'true');
-        localStorage.removeItem('kud_store_demo_admin');
-        setEmail('customer@kudstore.co.za');
-      }
-      await refetchProfile();
-      showToast(
-        targetRole === 'admin'
-          ? 'Signed in successfully as Administrator!'
-          : 'Signed in successfully as Customer!',
-        'success'
-      );
-      const returnUrl =
-        (location.state as any)?.returnUrl ||
-        new URLSearchParams(location.search).get('returnUrl') ||
-        (targetRole === 'admin' ? '/admin' : '/');
-      navigate(targetRole === 'admin' ? '/admin' : returnUrl, { replace: true });
-    } catch (demoErr) {
-      console.error('Quick demo login error:', demoErr);
-      showToast('Could not initialize session. Please try again.', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  // Redirect admin users immediately to /admin to prevent flash
 
   // If user is already authenticated and has admin role, redirect immediately to /admin to prevent flash
   useEffect(() => {
@@ -469,18 +469,92 @@ export const AccountPage: React.FC = () => {
       return;
     }
 
+    if (isSignUp) {
+      const cleanFullName = fullName.trim();
+      if (!cleanFullName) {
+        const nameError = 'Please enter your full name.';
+        setLoginError(nameError);
+        showToast(nameError, 'error');
+        return;
+      }
+
+      const cleanPhone = phoneNumber.trim();
+      if (!cleanPhone) {
+        const phoneError = 'Please enter your phone number.';
+        setLoginError(phoneError);
+        showToast(phoneError, 'error');
+        return;
+      }
+
+      // Check phone number format (at least 10 digits)
+      const digitsOnly = cleanPhone.replace(/\D/g, '');
+      if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+        const phoneError = 'Please enter a valid phone number with at least 10 digits.';
+        setLoginError(phoneError);
+        showToast(phoneError, 'error');
+        return;
+      }
+
+      const cleanAge = age.trim();
+      if (!cleanAge) {
+        const ageError = 'Please enter your age.';
+        setLoginError(ageError);
+        showToast(ageError, 'error');
+        return;
+      }
+
+      const parsedAge = parseInt(cleanAge, 10);
+      if (isNaN(parsedAge) || parsedAge < 13 || parsedAge > 120) {
+        const ageError = 'Please enter a valid age between 13 and 120.';
+        setLoginError(ageError);
+        showToast(ageError, 'error');
+        return;
+      }
+
+      if (!gender || (gender !== 'Male' && gender !== 'Female')) {
+        const genderError = 'Please select your gender (Male or Female).';
+        setLoginError(genderError);
+        showToast(genderError, 'error');
+        return;
+      }
+
+      if (!isPasswordValid) {
+        const pwdError =
+          'Please use at least 8 characters, including a lowercase letter, uppercase letter, number, and symbol.';
+        setLoginError(pwdError);
+        showToast(pwdError, 'error');
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        const matchError = 'Passwords do not match.';
+        setLoginError(matchError);
+        showToast(matchError, 'error');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     if (isSupabaseConfigured() && supabase) {
       try {
         if (isSignUp) {
           const redirectUrl = getAuthRedirectUrl('/auth/callback');
+          const cleanPhone = phoneNumber.trim();
+          const parsedAge = parseInt(age.trim(), 10);
           console.log('[Auth] Signing up with emailRedirectTo:', redirectUrl);
+
           const { data, error } = await supabase.auth.signUp({
             email: cleanEmail,
             password,
             options: {
-              data: { full_name: fullName.trim() || cleanEmail.split('@')[0] },
+              data: {
+                full_name: fullName.trim() || cleanEmail.split('@')[0],
+                phone: cleanPhone,
+                phone_number: cleanPhone,
+                age: parsedAge,
+                gender: gender,
+              },
               emailRedirectTo: redirectUrl,
             },
           });
@@ -494,6 +568,61 @@ export const AccountPage: React.FC = () => {
             setLoginError(existingMsg);
             showToast(existingMsg, 'error');
             return;
+          }
+
+          // Ensure profile record is saved in public.profiles table
+          if (data.user) {
+            try {
+              const profilePayload: Record<string, any> = {
+                id: data.user.id,
+                full_name: fullName.trim() || cleanEmail.split('@')[0],
+                phone: cleanPhone,
+                age: parsedAge,
+                gender: gender,
+                role: 'customer',
+                updated_at: new Date().toISOString(),
+              };
+
+              const { error: profileError } = await supabase
+                .from('profiles')
+                .upsert(profilePayload, { onConflict: 'id' });
+
+              if (profileError) {
+                console.warn('[Auth] Upsert with age/gender warning, retrying with core columns:', profileError.message);
+                await supabase
+                  .from('profiles')
+                  .upsert(
+                    {
+                      id: data.user.id,
+                      full_name: fullName.trim() || cleanEmail.split('@')[0],
+                      phone: cleanPhone,
+                      role: 'customer',
+                      updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'id' }
+                  );
+              }
+            } catch (upsertErr) {
+              console.warn('[Auth] Exception saving customer profile record on signup:', upsertErr);
+            }
+
+            // Cache customer profile locally for immediate state access
+            const initialCachedProfile = {
+              id: data.user.id,
+              email: cleanEmail,
+              fullName: fullName.trim() || cleanEmail.split('@')[0],
+              full_name: fullName.trim() || cleanEmail.split('@')[0],
+              phone: cleanPhone,
+              age: parsedAge,
+              gender: gender,
+              role: 'customer',
+            };
+            try {
+              localStorage.setItem(`kud_store_user_profile_${data.user.id}`, JSON.stringify(initialCachedProfile));
+              localStorage.setItem('kud_store_user_profile', JSON.stringify(initialCachedProfile));
+            } catch {
+              // Ignore localStorage quota errors
+            }
           }
 
           if (data.session) {
@@ -513,47 +642,17 @@ export const AccountPage: React.FC = () => {
             showToast('Account created. Please check your email to confirm your account.', 'success');
           }
         } else {
-          // Check if user is entering a demo email
-          const isDemoAdmin = isDemoAdminAccount(cleanEmail);
-          const isDemoCustomer = isDemoCustomerAccount(cleanEmail);
-
-          // 1. Authenticate with Supabase
-          let authError: any = null;
-
-          try {
-            const res = await supabase.auth.signInWithPassword({
-              email: cleanEmail,
-              password,
-            });
-            authError = res.error;
-          } catch (supabaseCatchErr: any) {
-            authError = supabaseCatchErr;
-          }
+          // 1. Authoritatively authenticate with Supabase Auth
+          const { data: signInData, error: authError } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
 
           if (authError) {
-            // If Supabase Auth rejected known demo credentials, apply demo session fallback
-            if (isDemoAdmin || isDemoCustomer) {
-              console.log('[Auth] Supabase auth fallback activated for demo account:', cleanEmail);
-              if (isDemoAdmin) {
-                localStorage.setItem('kud_store_demo_admin', 'true');
-                localStorage.removeItem('kud_store_demo_user');
-              } else {
-                localStorage.setItem('kud_store_demo_user', 'true');
-                localStorage.removeItem('kud_store_demo_admin');
-              }
-              await refetchProfile();
-              showToast(`Signed in successfully as ${isDemoAdmin ? 'Administrator' : 'Customer'}!`, 'success');
-              const returnUrl =
-                (location.state as any)?.returnUrl ||
-                new URLSearchParams(location.search).get('returnUrl') ||
-                (isDemoAdmin ? '/admin' : '/');
-              navigate(isDemoAdmin ? '/admin' : returnUrl, { replace: true });
-              return;
-            }
             throw authError;
           }
 
-          // 2. Get the authenticated user from supabase.auth.getUser()
+          // 2. Get the authenticated user authoritatively from Supabase session
           const {
             data: { user: authenticatedUser },
             error: userFetchError,
@@ -565,15 +664,26 @@ export const AccountPage: React.FC = () => {
 
           console.log('Authenticated user ID:', authenticatedUser.id);
 
-          // 3. Query the user's profile: public.profiles where id = authenticatedUser.id select role
+          // 3. Query the user's profile: public.profiles where id = authenticatedUser.id
           let { data: profileRow, error: profileErr } = await supabase
             .from('profiles')
-            .select('role, full_name, phone')
+            .select('role, full_name, phone, account_status, disabled_reason')
             .eq('id', authenticatedUser.id)
             .maybeSingle();
 
           if (profileErr) {
             console.error('Error fetching profile for user:', profileErr);
+          }
+
+          // Strict security check: disabled accounts must not be granted access
+          if (profileRow?.account_status === 'disabled') {
+            await supabase.auth.signOut();
+            const disabledMsg = profileRow.disabled_reason
+              ? `Your account has been disabled: ${profileRow.disabled_reason}`
+              : 'Your account has been disabled by store administration. Please contact support.';
+            setLoginError(disabledMsg);
+            showToast(disabledMsg, 'error');
+            return;
           }
 
           let userRole = profileRow?.role;
@@ -592,7 +702,7 @@ export const AccountPage: React.FC = () => {
             }
           }
 
-          // If profile row doesn't exist yet, attempt to upsert one safely
+          // If profile row doesn't exist yet, attempt to upsert one safely with default customer role
           if (!profileRow) {
             try {
               const profileFullName =
@@ -606,7 +716,7 @@ export const AccountPage: React.FC = () => {
                   {
                     id: authenticatedUser.id,
                     full_name: profileFullName,
-                    role: userRole || 'customer',
+                    role: userRole === 'admin' ? 'admin' : 'customer',
                     phone: authenticatedUser.phone || '',
                     created_at: new Date().toISOString(),
                   },
@@ -656,10 +766,12 @@ export const AccountPage: React.FC = () => {
 
         if (
           rawMsg.toLowerCase().includes('invalid login credentials') ||
-          rawMsg.toLowerCase().includes('invalid_credentials')
+          rawMsg.toLowerCase().includes('invalid_credentials') ||
+          rawMsg.toLowerCase().includes('invalid email or password') ||
+          rawMsg.toLowerCase().includes('invalid_grant')
         ) {
           friendlyMsg =
-            'Invalid email or password. Please verify your details, create a new account, or use 1-Click Demo Access below.';
+            'Invalid email or password. Please check your details and try again.';
         } else if (
           rawMsg.toLowerCase().includes('email not confirmed') ||
           rawMsg.toLowerCase().includes('email_not_confirmed')
@@ -678,15 +790,9 @@ export const AccountPage: React.FC = () => {
         setIsSubmitting(false);
       }
     } else {
-      setTimeout(async () => {
-        showToast(`Signed in as ${cleanEmail}`);
-        const returnUrl =
-          (location.state as any)?.returnUrl ||
-          new URLSearchParams(location.search).get('returnUrl') ||
-          '/';
-        navigate(returnUrl, { replace: true });
-        setIsSubmitting(false);
-      }, 300);
+      const err = 'Authentication service is not configured. Please contact administrator.';
+      setLoginError(err);
+      showToast(err, 'error');
     }
   };
 
@@ -723,10 +829,10 @@ export const AccountPage: React.FC = () => {
         canonicalPath="/account"
         noindex={true}
       />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-28">
       {user ? (
         /* Authenticated User Dashboard */
-        <div className="space-y-6">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-28">
+          <div className="space-y-6">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-gray-100 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
             <div className="w-20 h-20 rounded-full bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] flex items-center justify-center font-black text-2xl border-2 border-white dark:border-slate-800 shadow-sm">
               {((profile?.full_name || user.fullName || 'K')[0] || 'K').toUpperCase()}
@@ -1329,9 +1435,29 @@ export const AccountPage: React.FC = () => {
           {/* Dynamic Customer Order Help & Support Card */}
           <CustomerOrderHelpCard />
         </div>
-      ) : (
-        /* Unauthenticated User Auth Form / Forgot Password Form / Signup Verification Pending */
-        <div className="max-w-md mx-auto bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-gray-100 dark:border-slate-800 shadow-md space-y-6">
+
+        {/* Modals - Accessible inside customer profile */}
+        <TrackOrderModal
+          isOpen={isTrackOrderModalOpen}
+          onClose={() => setIsTrackOrderModalOpen(false)}
+          initialOrderId={trackOrderInitialId}
+        />
+        <InviteFriendsModal
+          isOpen={isInviteFriendsModalOpen}
+          onClose={() => setIsInviteFriendsModalOpen(false)}
+        />
+        <ReferralRedemptionModal
+          isOpen={isRedemptionModalOpen}
+          onClose={() => setIsRedemptionModalOpen(false)}
+          initialType={redemptionInitialType}
+          onSuccess={() => {
+            fetchUserRewards();
+          }}
+        />
+      </div>
+    ) : (
+      /* Cinematic Unauthenticated Auth Experience */
+      <CinematicAuthContainer isSignUp={isSignUp}>
           {signupPendingVerification ? (
             /* Signup Pending Email Verification Screen */
             <div className="space-y-6">
@@ -1499,46 +1625,110 @@ export const AccountPage: React.FC = () => {
           ) : (
             /* Sign In / Sign Up Form */
             <>
-              <div className="text-center space-y-2">
-                <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] mx-auto flex items-center justify-center font-bold">
-                  <User className="w-6 h-6" />
-                </div>
-                <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-                  {isSignUp ? 'Create an Account' : 'Welcome Back'}
-                </h1>
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {isSignUp
-                    ? 'Join KUD Store to enjoy effortless shopping and rewards.'
-                    : `Sign in to manage your ${STORE_CONFIG.STORE_NAME} account and track orders.`}
-                </p>
-              </div>
-
-              {/* Google OAuth Button (Controlled by Admin Settings) */}
-              {isGoogleAuthEnabled && (
-                <div className="space-y-4 pt-1">
+              {/* Modern Segmented Tab Switcher (Visible when both login & signup are permitted) */}
+              {isSignUpAllowed && isLoginAllowed && (
+                <div className="flex rounded-2xl bg-gray-100/90 dark:bg-slate-800/80 p-1 border border-gray-200/60 dark:border-slate-700/60 shadow-2xs mb-2">
                   <button
                     type="button"
-                    onClick={handleGoogleSignIn}
-                    disabled={isGoogleLoading || isSubmitting || isResendingConfirmation}
-                    className="w-full py-3 px-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-750 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 text-xs sm:text-sm font-bold rounded-2xl transition-all flex items-center justify-center gap-2.5 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                    onClick={() => {
+                      setIsSignUp(false);
+                      setLoginError(null);
+                      setUnconfirmedEmail(null);
+                    }}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      !isSignUp
+                        ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-xs'
+                        : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
+                    }`}
                   >
-                    {isGoogleLoading ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 text-[#ff6452] animate-spin" />
-                        <span>Connecting to Google...</span>
-                      </>
-                    ) : (
-                      <>
-                        <GoogleIcon className="w-4 h-4 shrink-0 transition-transform group-hover:scale-110" />
-                        <span>Continue with Google</span>
-                      </>
-                    )}
+                    Sign In
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(true);
+                      setLoginError(null);
+                      setUnconfirmedEmail(null);
+                    }}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      isSignUp
+                        ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-xs'
+                        : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
+                    }`}
+                  >
+                    Create Account
+                  </button>
+                </div>
+              )}
+
+              {/* Social OAuth Buttons (Google & Apple) */}
+              {(isGoogleAuthEnabled || isAppleAuthEnabled) && (
+                <div className="space-y-2.5 pt-1">
+                  {isGoogleAuthEnabled && (
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      disabled={isGoogleLoading || isAppleLoading || isSubmitting || isResendingConfirmation}
+                      className="w-full py-2.5 px-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-750 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 text-xs sm:text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-2.5 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                    >
+                      {isGoogleLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 text-[#ff6452] animate-spin" />
+                          <span>Connecting to Google...</span>
+                        </>
+                      ) : (
+                        <>
+                          <GoogleIcon className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                          <span>Continue with Google</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {isAppleAuthEnabled && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setIsAppleLoading(true);
+                        try {
+                          if (!isSupabaseConfigured()) {
+                            showToast('Authentication service is not configured yet.', 'error');
+                            return;
+                          }
+                          const redirectTo = getAuthRedirectUrl('/account');
+                          const { error } = await supabase.auth.signInWithOAuth({
+                            provider: 'apple',
+                            options: { redirectTo },
+                          });
+                          if (error) throw error;
+                        } catch (err: any) {
+                          console.error('Apple Sign In Error:', err);
+                          showToast(err?.message || 'Apple Sign-In is currently unavailable.', 'error');
+                        } finally {
+                          setIsAppleLoading(false);
+                        }
+                      }}
+                      disabled={isGoogleLoading || isAppleLoading || isSubmitting || isResendingConfirmation}
+                      className="w-full py-2.5 px-4 bg-black dark:bg-white text-white dark:text-black hover:bg-neutral-900 dark:hover:bg-neutral-100 border border-black dark:border-white text-xs sm:text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-2.5 shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                    >
+                      {isAppleLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Connecting to Apple...</span>
+                        </>
+                      ) : (
+                        <>
+                          <AppleIcon className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                          <span>Continue with Apple</span>
+                        </>
+                      )}
+                    </button>
+                  )}
 
                   {/* Clean Divider */}
-                  <div className="relative flex items-center justify-center">
+                  <div className="relative flex items-center justify-center pt-2">
                     <div className="w-full border-t border-gray-200 dark:border-slate-800" />
-                    <span className="bg-white dark:bg-slate-900 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                    <span className="bg-white dark:bg-slate-900 px-3 text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-slate-500">
                       or continue with email
                     </span>
                   </div>
@@ -1546,15 +1736,13 @@ export const AccountPage: React.FC = () => {
               )}
 
               {loginError && (
-                <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-2xl p-4 space-y-3 text-rose-700 dark:text-rose-300 text-xs font-medium">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <span className="font-bold block text-rose-900 dark:text-rose-200 text-sm">
-                        {isSignUp ? 'Sign Up Notice' : 'Sign In Notice'}
-                      </span>
-                      <p className="leading-relaxed text-gray-700 dark:text-slate-300">{loginError}</p>
-                    </div>
+                <div
+                  role="alert"
+                  className="bg-rose-50/90 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/60 rounded-xl p-3.5 text-xs font-medium text-rose-800 dark:text-rose-200 space-y-2.5"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-[#ff6452] shrink-0 mt-0.5" />
+                    <p className="leading-relaxed flex-1">{loginError}</p>
                   </div>
 
                   {unconfirmedEmail && (
@@ -1563,12 +1751,12 @@ export const AccountPage: React.FC = () => {
                         type="button"
                         onClick={() => handleResendConfirmationEmail(unconfirmedEmail)}
                         disabled={isResendingConfirmation || resendCooldown > 0}
-                        className="w-full py-2 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        className="w-full py-2 bg-[#ff6452] hover:bg-[#ff523d] text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                       >
                         {isResendingConfirmation ? (
                           <>
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Sending Email...</span>
+                            <span>Sending confirmation email...</span>
                           </>
                         ) : resendCooldown > 0 ? (
                           <span>Resend available in {resendCooldown}s</span>
@@ -1581,89 +1769,160 @@ export const AccountPage: React.FC = () => {
                       </button>
                     </div>
                   )}
-
-                  {!isSignUp && !unconfirmedEmail && (
-                    <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/50 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsSignUp(true);
-                          setLoginError(null);
-                        }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-rose-100/50 dark:hover:bg-slate-700 text-[#ff6452] font-bold rounded-lg border border-rose-200 dark:border-slate-700 transition-colors cursor-pointer text-xs"
-                      >
-                        Create account with this email
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setResetEmail(email);
-                          setIsForgotPassword(true);
-                          setLoginError(null);
-                        }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 font-semibold rounded-lg border border-gray-200 dark:border-slate-700 transition-colors cursor-pointer text-xs"
-                      >
-                        Reset password
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
 
               <form onSubmit={handleAuth} className="space-y-4">
                 {isSignUp && (
                   <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
-                      Full Name
+                    <label
+                      htmlFor="auth-fullname"
+                      className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                    >
+                      Full Name <span className="text-[#ff6452]">*</span>
                     </label>
                     <div className="relative">
-                      <User className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <User className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
+                        id="auth-fullname"
                         type="text"
                         required
+                        autoComplete="name"
                         placeholder="Sipho Dlamini"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] outline-hidden"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
                       />
                     </div>
                   </div>
                 )}
 
                 <div>
-                  <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400 mb-1">
-                    Email Address
+                  <label
+                    htmlFor="auth-email"
+                    className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                  >
+                    Email Address {isSignUp && <span className="text-[#ff6452]">*</span>}
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Mail className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      id="auth-email"
                       type="email"
                       required
+                      autoComplete="email"
                       placeholder="sipho@example.co.za"
                       value={email}
                       onChange={(e) => {
                         setEmail(e.target.value);
                         setResetEmail(e.target.value);
                       }}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] outline-hidden"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
                     />
                   </div>
                 </div>
 
+                {isSignUp && (
+                  <div>
+                    <label
+                      htmlFor="auth-phone"
+                      className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                    >
+                      Phone Number <span className="text-[#ff6452]">*</span>
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        id="auth-phone"
+                        type="tel"
+                        required
+                        autoComplete="tel"
+                        placeholder="082 123 4567"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {isSignUp && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    {/* Age */}
+                    <div>
+                      <label
+                        htmlFor="auth-age"
+                        className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                      >
+                        Age <span className="text-[#ff6452]">*</span>
+                      </label>
+                      <div className="relative">
+                        <Calendar className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          id="auth-age"
+                          type="number"
+                          min={13}
+                          max={120}
+                          required
+                          placeholder="e.g. 26"
+                          value={age}
+                          onChange={(e) => setAge(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Gender — dropdown with only: Male, Female */}
+                    <div>
+                      <label
+                        htmlFor="auth-gender"
+                        className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                      >
+                        Gender <span className="text-[#ff6452]">*</span>
+                      </label>
+                      <div className="relative">
+                        <User className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <select
+                          id="auth-gender"
+                          required
+                          value={gender}
+                          onChange={(e) => setGender(e.target.value as 'Male' | 'Female' | '')}
+                          className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all appearance-none cursor-pointer"
+                        >
+                          <option value="" disabled className="text-gray-400">
+                            Select gender
+                          </option>
+                          <option value="Male" className="text-gray-900 dark:text-white">
+                            Male
+                          </option>
+                          <option value="Female" className="text-gray-900 dark:text-white">
+                            Female
+                          </option>
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold uppercase text-gray-500 dark:text-slate-400">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label
+                      htmlFor="auth-password"
+                      className="block text-xs font-semibold text-gray-700 dark:text-slate-300"
+                    >
                       Password
                     </label>
                     {!isSignUp && (
                       <button
                         type="button"
+                        id="auth-forgot-password-btn"
                         onClick={() => {
                           setResetEmail(email);
                           setIsForgotPassword(true);
                           setLoginError(null);
                         }}
-                        className="text-xs font-semibold text-[#ff6452] hover:underline cursor-pointer"
+                        className="text-xs font-medium text-[#ff6452] hover:text-[#ff523d] hover:underline cursor-pointer transition-colors"
                       >
                         Forgot password?
                       </button>
@@ -1672,15 +1931,18 @@ export const AccountPage: React.FC = () => {
                   <div className="relative">
                     <Lock className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      id="auth-password"
                       type={showPassword ? 'text' : 'password'}
                       required
+                      autoComplete={isSignUp ? 'new-password' : 'current-password'}
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] outline-hidden"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
                     />
                     <button
                       type="button"
+                      id="auth-toggle-password-visibility"
                       onClick={() => setShowPassword(!showPassword)}
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-md transition-colors cursor-pointer"
@@ -1692,65 +1954,248 @@ export const AccountPage: React.FC = () => {
                       )}
                     </button>
                   </div>
+
+                  {/* Compact Password Requirements Checklist for Sign Up */}
+                  {isSignUp && (
+                    <div
+                      className="mt-2.5 bg-gray-50/90 dark:bg-slate-800/60 rounded-xl p-3 border border-gray-100 dark:border-slate-800 space-y-1.5"
+                      aria-label="Password requirements"
+                    >
+                      <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300 block">
+                        Password must contain:
+                      </span>
+                      <ul className="space-y-1 text-xs">
+                        <li
+                          className={`flex items-center gap-2 transition-colors ${
+                            passwordCriteria.minLength
+                              ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                              : 'text-gray-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {passwordCriteria.minLength ? (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                              aria-hidden="true"
+                            >
+                              <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                            </span>
+                          )}
+                          <span>At least 8 characters</span>
+                          <span className="sr-only">
+                            {passwordCriteria.minLength ? '(Met)' : '(Unmet)'}
+                          </span>
+                        </li>
+                        <li
+                          className={`flex items-center gap-2 transition-colors ${
+                            passwordCriteria.hasLower
+                              ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                              : 'text-gray-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {passwordCriteria.hasLower ? (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                              aria-hidden="true"
+                            >
+                              <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                            </span>
+                          )}
+                          <span>One lowercase letter (a–z)</span>
+                          <span className="sr-only">
+                            {passwordCriteria.hasLower ? '(Met)' : '(Unmet)'}
+                          </span>
+                        </li>
+                        <li
+                          className={`flex items-center gap-2 transition-colors ${
+                            passwordCriteria.hasUpper
+                              ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                              : 'text-gray-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {passwordCriteria.hasUpper ? (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                              aria-hidden="true"
+                            >
+                              <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                            </span>
+                          )}
+                          <span>One uppercase letter (A–Z)</span>
+                          <span className="sr-only">
+                            {passwordCriteria.hasUpper ? '(Met)' : '(Unmet)'}
+                          </span>
+                        </li>
+                        <li
+                          className={`flex items-center gap-2 transition-colors ${
+                            passwordCriteria.hasNumber
+                              ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                              : 'text-gray-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {passwordCriteria.hasNumber ? (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                              aria-hidden="true"
+                            >
+                              <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                            </span>
+                          )}
+                          <span>One number (0–9)</span>
+                          <span className="sr-only">
+                            {passwordCriteria.hasNumber ? '(Met)' : '(Unmet)'}
+                          </span>
+                        </li>
+                        <li
+                          className={`flex items-center gap-2 transition-colors ${
+                            passwordCriteria.hasSymbol
+                              ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                              : 'text-gray-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {passwordCriteria.hasSymbol ? (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 flex items-center justify-center shrink-0"
+                              aria-hidden="true"
+                            >
+                              <span className="w-1 h-1 rounded-full bg-gray-400 dark:bg-slate-500" />
+                            </span>
+                          )}
+                          <span>One symbol (e.g. ! @ # $ %)</span>
+                          <span className="sr-only">
+                            {passwordCriteria.hasSymbol ? '(Met)' : '(Unmet)'}
+                          </span>
+                        </li>
+                      </ul>
+                    </div>
+                  )}
                 </div>
+
+                {isSignUp && (
+                  <div>
+                    <label
+                      htmlFor="auth-confirm-password"
+                      className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5"
+                    >
+                      Confirm Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-gray-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        id="auth-confirm-password"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="new-password"
+                        placeholder="••••••••"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:border-[#ff6452] dark:focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 outline-hidden transition-all"
+                      />
+                      <button
+                        type="button"
+                        id="auth-toggle-confirm-password-visibility"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 p-1 rounded-md transition-colors cursor-pointer"
+                      >
+                        {showConfirmPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                    {confirmPassword && password !== confirmPassword && (
+                      <p
+                        className="text-xs text-rose-600 dark:text-rose-400 mt-1.5 font-medium flex items-center gap-1.5"
+                        role="alert"
+                      >
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>Passwords do not match.</span>
+                      </p>
+                    )}
+                    {confirmPassword && password === confirmPassword && (
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1.5 font-medium flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                        <span>Passwords match</span>
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <button
                   type="submit"
+                  id="auth-submit-btn"
                   disabled={isSubmitting || isGoogleLoading}
-                  className="w-full py-3.5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl shadow-md shadow-[#ff6452]/20 transition-all cursor-pointer disabled:opacity-50 text-sm"
+                  className="w-full py-3 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-xl shadow-md shadow-[#ff6452]/20 transition-all cursor-pointer disabled:opacity-50 text-sm flex items-center justify-center gap-2"
                 >
-                  {isSubmitting
-                    ? isSignUp
-                      ? 'Creating Account...'
-                      : 'Signing In...'
-                    : isSignUp
-                    ? 'Create Account'
-                    : 'Sign In'}
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>{isSignUp ? 'Creating Account...' : 'Signing In...'}</span>
+                    </>
+                  ) : (
+                    <span>{isSignUp ? 'Sign Up' : 'Sign In'}</span>
+                  )}
                 </button>
               </form>
 
-              <div className="text-center border-t border-gray-100 dark:border-slate-800 pt-4">
-                <button
-                  onClick={() => {
-                    setIsSignUp(!isSignUp);
-                    setLoginError(null);
-                    setUnconfirmedEmail(null);
-                  }}
-                  className="text-xs font-semibold text-[#ff6452] hover:underline cursor-pointer"
-                >
-                  {isSignUp
-                    ? 'Already have an account? Sign In'
-                    : "Don't have an account? Sign Up"}
-                </button>
-              </div>
+              {isSignUpAllowed && isLoginAllowed && (
+                <div className="text-center border-t border-gray-100 dark:border-slate-800 pt-4">
+                  <button
+                    type="button"
+                    id="auth-toggle-mode-btn"
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setLoginError(null);
+                      setUnconfirmedEmail(null);
+                      setPassword('');
+                      setConfirmPassword('');
+                    }}
+                    className="text-xs text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
+                  >
+                    {isSignUp ? (
+                      <>
+                        Already have an account?{' '}
+                        <span className="font-bold text-[#ff6452] hover:underline">Sign In</span>
+                      </>
+                    ) : (
+                      <>
+                        Don't have an account?{' '}
+                        <span className="font-bold text-[#ff6452] hover:underline">Sign Up</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </>
           )}
-        </div>
+        </CinematicAuthContainer>
       )}
-
-      {/* Modals - Accessible inside customer profile */}
-      {user && (
-        <>
-          <TrackOrderModal
-            isOpen={isTrackOrderModalOpen}
-            onClose={() => setIsTrackOrderModalOpen(false)}
-            initialOrderId={trackOrderInitialId}
-          />
-          <InviteFriendsModal
-            isOpen={isInviteFriendsModalOpen}
-            onClose={() => setIsInviteFriendsModalOpen(false)}
-          />
-          <ReferralRedemptionModal
-            isOpen={isRedemptionModalOpen}
-            onClose={() => setIsRedemptionModalOpen(false)}
-            initialType={redemptionInitialType}
-            onSuccess={() => {
-              fetchUserRewards();
-            }}
-          />
-        </>
-      )}
-    </div>
     </>
   );
 };

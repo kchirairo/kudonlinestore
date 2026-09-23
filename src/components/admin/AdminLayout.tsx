@@ -12,9 +12,8 @@ export const AdminLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isDemoAdmin = typeof window !== 'undefined' && localStorage.getItem('kud_store_demo_admin') === 'true';
-  const isAdmin = role === 'admin' || user?.role === 'admin' || isDemoAdmin;
-  const isAuthenticated = Boolean(user) || isDemoAdmin;
+  const isAdmin = role === 'admin' || user?.role === 'admin';
+  const isAuthenticated = Boolean(user);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
@@ -93,33 +92,19 @@ export const AdminLayout: React.FC = () => {
           </div>
 
           <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-left space-y-1">
-            <p className="text-[11px] font-bold text-amber-900">Administrator Setup Note:</p>
+            <p className="text-[11px] font-bold text-amber-900">Administrator Access Required:</p>
             <p className="text-[11px] text-amber-800 leading-normal">
-              To grant your profile full admin status in Supabase, update your row in <code className="font-mono">profiles</code>: <br />
-              <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono text-amber-950">
-                UPDATE profiles SET role = 'admin' WHERE id = '{user?.id}';
-              </code>
+              Store administration requires verified administrator credentials. If you are an authorized staff member, please request admin provisioning from the store owner.
             </p>
           </div>
 
-          <div className="space-y-3 pt-2">
+          <div className="pt-2">
             <button
               onClick={() => navigate('/')}
               className="w-full py-3 bg-[#ff6452] hover:bg-[#ff4935] text-white font-bold rounded-2xl text-xs transition-all flex items-center justify-center gap-2 shadow-sm"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Return to Customer Store</span>
-            </button>
-
-            <button
-              onClick={() => {
-                localStorage.setItem('kud_store_demo_admin', 'true');
-                window.location.reload();
-              }}
-              className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl text-xs transition-colors flex items-center justify-center gap-1.5"
-            >
-              <Lock className="w-3.5 h-3.5 text-[#ff6452]" />
-              <span>Bypass to Demo Admin View</span>
             </button>
           </div>
         </div>

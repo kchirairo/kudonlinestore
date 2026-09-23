@@ -130,7 +130,7 @@ export const AdminProductsPage: React.FC = () => {
       });
     } catch (err: any) {
       console.error('[AdminProductsPage] Failed to load products:', err);
-      setDbError(err?.message || 'Failed to connect to Supabase products table.');
+      setDbError(err?.message || 'Failed to connect to products database.');
       setProducts([]);
     } finally {
       setIsLoading(false);

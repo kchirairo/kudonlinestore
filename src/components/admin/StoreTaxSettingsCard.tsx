@@ -164,7 +164,7 @@ export const StoreTaxSettingsCard: React.FC = () => {
         throw new Error(response.error || 'Failed to save VAT/TAX settings.');
       }
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save VAT/TAX settings to Supabase.';
+      const msg = err?.message || 'Failed to save VAT/TAX settings to database.';
       setErrorMessage(msg);
       showToast(msg, 'error');
       // Revert UI to previously verified database state on failure
@@ -271,7 +271,7 @@ export const StoreTaxSettingsCard: React.FC = () => {
       {isLoading ? (
         <div className="py-12 text-center space-y-3">
           <div className="w-8 h-8 border-2 border-[#ff6452] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-bold text-gray-500">Connecting to Supabase public.settings...</p>
+          <p className="text-xs font-bold text-gray-500">Connecting to store settings...</p>
         </div>
       ) : (
         <form onSubmit={handleSave} className="space-y-6">
@@ -452,7 +452,7 @@ export const StoreTaxSettingsCard: React.FC = () => {
                   <span>How KUD Store Handles Taxes</span>
                 </p>
                 <p className="text-[11px] leading-relaxed text-amber-800/90">
-                  • <strong>Single Source of Truth:</strong> Settings are persisted directly to <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px]">public.settings</code> in Supabase.
+                  • <strong>Single Source of Truth:</strong> Settings are persisted directly to <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px]">public.settings</code> in the cloud database.
                 </p>
                 <p className="text-[11px] leading-relaxed text-amber-800/90">
                   • <strong>Historical Order Snapshots:</strong> Each placed order permanently snapshots the active tax rate and amount into <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px]">public.orders</code>. Future tax changes will never alter past orders.

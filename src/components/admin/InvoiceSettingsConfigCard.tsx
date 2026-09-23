@@ -45,7 +45,7 @@ export const InvoiceSettingsConfigCard: React.FC = () => {
     try {
       const res = await adminService.saveInvoiceSettings(settings);
       if (res.success) {
-        showToast('Invoice & receipt configuration saved to Supabase', 'success');
+        showToast('Invoice & receipt configuration saved', 'success');
       } else {
         showToast(res.error || 'Failed to save invoice settings', 'error');
       }

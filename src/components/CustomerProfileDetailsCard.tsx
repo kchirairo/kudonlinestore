@@ -12,6 +12,8 @@ import {
   Loader2,
   Save,
   Check,
+  Calendar,
+  ChevronDown,
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { SA_PROVINCES } from '../constants/config';
@@ -33,6 +35,8 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
   // Form State
   const [fullName, setFullName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
+  const [age, setAge] = useState<string>('');
+  const [gender, setGender] = useState<'Male' | 'Female' | ''>('');
   const [addressLine, setAddressLine] = useState<string>('');
   const [city, setCity] = useState<string>('');
   const [province, setProvince] = useState<string>('Gauteng');
@@ -44,6 +48,8 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
       const resolvedName = profile?.full_name ?? user.fullName ?? '';
       setFullName(resolvedName);
       setPhone(profile?.phone ?? user.phone ?? '');
+      setAge(profile?.age !== undefined && profile?.age !== null ? String(profile.age) : user.age !== undefined && user.age !== null ? String(user.age) : '');
+      setGender((profile?.gender || user.gender || '') as 'Male' | 'Female' | '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
@@ -56,6 +62,8 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
       const resolvedName = profile?.full_name ?? user.fullName ?? '';
       setFullName(resolvedName);
       setPhone(profile?.phone ?? user.phone ?? '');
+      setAge(profile?.age !== undefined && profile?.age !== null ? String(profile.age) : user.age !== undefined && user.age !== null ? String(user.age) : '');
+      setGender((profile?.gender || user.gender || '') as 'Male' | 'Female' | '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
@@ -71,6 +79,8 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
       const resolvedName = profile?.full_name ?? user.fullName ?? '';
       setFullName(resolvedName);
       setPhone(profile?.phone ?? user.phone ?? '');
+      setAge(profile?.age !== undefined && profile?.age !== null ? String(profile.age) : user.age !== undefined && user.age !== null ? String(user.age) : '');
+      setGender((profile?.gender || user.gender || '') as 'Male' | 'Female' | '');
       setAddressLine(user.addressLine || user.address || profile?.address_line || profile?.address || '');
       setCity(user.city || profile?.city || '');
       setProvince(user.province || profile?.province || 'Gauteng');
@@ -91,11 +101,20 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
       return;
     }
 
+    const trimmedPhone = phone.trim();
+    const parsedAge = age.trim() ? parseInt(age.trim(), 10) : undefined;
+    if (parsedAge !== undefined && (isNaN(parsedAge) || parsedAge < 13 || parsedAge > 120)) {
+      setFormError('Please enter a valid age between 13 and 120.');
+      return;
+    }
+
     try {
       setIsSaving(true);
       const res = await updateUserProfile({
         fullName: trimmedName,
-        phone: phone.trim(),
+        phone: trimmedPhone,
+        age: parsedAge,
+        gender: (gender as 'Male' | 'Female') || undefined,
         addressLine: addressLine.trim(),
         address: addressLine.trim(),
         city: city.trim(),
@@ -219,6 +238,21 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
                   )}
                 </span>
               </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-200/60 dark:border-slate-700/60">
+                <div>
+                  <span className="text-gray-400 dark:text-slate-500 font-medium block text-[11px]">Age</span>
+                  <span className="font-medium text-gray-700 dark:text-slate-300">
+                    {profile?.age ?? user?.age ? `${profile?.age ?? user?.age} yrs` : 'Not set'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 dark:text-slate-500 font-medium block text-[11px]">Gender</span>
+                  <span className="font-medium text-gray-700 dark:text-slate-300">
+                    {profile?.gender || user?.gender || 'Not set'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -300,6 +334,45 @@ export const CustomerProfileDetailsCard: React.FC<CustomerProfileDetailsCardProp
                 placeholder="e.g. +27 82 123 4567"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-medium focus:ring-2 focus:ring-rose-500/20 focus:border-[#ff6452] outline-hidden transition-all"
               />
+            </div>
+
+            {/* Age */}
+            <div className="space-y-1">
+              <label htmlFor="edit-profile-age" className="text-xs font-bold text-gray-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                Age
+              </label>
+              <input
+                id="edit-profile-age"
+                type="number"
+                min={13}
+                max={120}
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="e.g. 26"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-medium focus:ring-2 focus:ring-rose-500/20 focus:border-[#ff6452] outline-hidden transition-all"
+              />
+            </div>
+
+            {/* Gender */}
+            <div className="space-y-1">
+              <label htmlFor="edit-profile-gender" className="text-xs font-bold text-gray-700 dark:text-slate-300 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-gray-400" />
+                Gender
+              </label>
+              <div className="relative">
+                <select
+                  id="edit-profile-gender"
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value as 'Male' | 'Female' | '')}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-medium focus:ring-2 focus:ring-rose-500/20 focus:border-[#ff6452] outline-hidden transition-all appearance-none cursor-pointer"
+                >
+                  <option value="">Select gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
             {/* Address Line */}

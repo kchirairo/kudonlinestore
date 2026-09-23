@@ -9,11 +9,19 @@ import {
   StoreBrandingConfig,
   PromoBannerConfig,
   GeneralStoreSettings,
+  AuthAppearanceConfig,
+  CustomerCustomizationData,
 } from '../types';
 import { STORE_CONFIG, DEFAULT_STORE_BRANDING, DEFAULT_PROMO_BANNER, DEFAULT_GENERAL_SETTINGS } from '../constants/config';
+import { DEFAULT_AUTH_APPEARANCE, AUTH_APPEARANCE_STORAGE_KEY } from '../constants/authAppearance';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import { adminService } from '../services/adminService';
+import {
+  calculateCustomizedUnitPrice,
+  generateCartItemId,
+  validateQuantityRules,
+} from '../utils/customizationPricing';
 
 interface ToastMessage {
   id: string;
@@ -24,9 +32,19 @@ interface ToastMessage {
 interface ShopContextType {
   // Cart
   cart: CartItem[];
-  addToCart: (product: Product, quantity?: number, selectedSizeOrVariant?: string) => void;
-  removeFromCart: (productId: string, variant?: string) => void;
-  updateQuantity: (productId: string, quantity: number, variant?: string) => void;
+  addToCart: (
+    product: Product,
+    quantity?: number,
+    selectedSizeOrVariant?: string,
+    customization?: CustomerCustomizationData
+  ) => void;
+  removeFromCart: (productIdOrCartItemId: string, variant?: string) => void;
+  updateQuantity: (productIdOrCartItemId: string, quantity: number, variant?: string) => void;
+  updateCartItemCustomization: (
+    cartItemId: string,
+    customization: CustomerCustomizationData,
+    quantity?: number
+  ) => void;
   clearCart: () => void;
   cartCount: number;
   cartSubtotal: number;
@@ -57,6 +75,9 @@ interface ShopContextType {
   updateStoreBranding: (config: StoreBrandingConfig) => Promise<{ success: boolean; error?: string }>;
   promoBanner: PromoBannerConfig;
   updatePromoBanner: (config: PromoBannerConfig) => Promise<{ success: boolean; error?: string }>;
+  authAppearance: AuthAppearanceConfig;
+  updateAuthAppearance: (config: AuthAppearanceConfig) => Promise<{ success: boolean; error?: string }>;
+  reloadAuthAppearance: () => Promise<void>;
   reloadStoreCustomization: () => Promise<void>;
 
   // Auth & User
@@ -104,6 +125,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       enabled: false,
       promotional_banner_enabled: false,
     };
+  });
+
+  // Authentication Appearance State (Cinematic background images, animation effects, glassmorphism)
+  const [authAppearance, setAuthAppearance] = useState<AuthAppearanceConfig>(() => {
+    return safeGetItem<AuthAppearanceConfig>(AUTH_APPEARANCE_STORAGE_KEY, DEFAULT_AUTH_APPEARANCE);
   });
 
   // Cart State
@@ -173,56 +199,16 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setAuthError(null);
 
-      // 1. Get authenticated user from supabase.auth.getUser()
+      // 1. Get authenticated user authoritatively from Supabase Auth session
       const {
         data: { user: authUser },
         error: userError,
       } = await supabase.auth.getUser();
 
       if (userError || !authUser) {
-        const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
-        const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
-        if (isDemoAdmin) {
-          const storedAvatar = localStorage.getItem('kud_store_admin_avatar') || undefined;
-          const demoAdminUser = {
-            id: 'demo-admin-id',
-            email: 'admin@kudstore.com',
-            fullName: 'Demo Administrator',
-            phone: '+27 82 123 4567',
-            avatarUrl: storedAvatar,
-            role: 'admin' as const,
-          };
-          setUser(demoAdminUser);
-          setProfile({
-            id: 'demo-admin-id',
-            role: 'admin',
-            full_name: 'Demo Administrator',
-            avatar_url: storedAvatar,
-            avatarUrl: storedAvatar,
-          });
-          setRole('admin');
-        } else if (isDemoUser) {
-          const demoCached = safeGetItem<any>('kud_store_user_profile_demo-customer-id', null);
-          const demoCustomerUser = {
-            id: 'demo-customer-id',
-            email: 'customer@kudstore.co.za',
-            fullName: demoCached?.fullName || 'Sipho Dlamini (Demo)',
-            phone: demoCached?.phone || '+27 83 987 6543',
-            addressLine: demoCached?.addressLine || '42 Nelson Mandela Ave, Rosebank',
-            address: demoCached?.addressLine || '42 Nelson Mandela Ave, Rosebank',
-            city: demoCached?.city || 'Johannesburg',
-            province: demoCached?.province || 'Gauteng',
-            postalCode: demoCached?.postalCode || '2196',
-            role: 'customer' as const,
-          };
-          setUser(demoCustomerUser);
-          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: demoCustomerUser.fullName, ...demoCustomerUser });
-          setRole('customer');
-        } else {
-          setUser(null);
-          setProfile(null);
-          setRole(null);
-        }
+        setUser(null);
+        setProfile(null);
+        setRole(null);
         setIsAuthLoading(false);
         return;
       }
@@ -282,7 +268,20 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let phone =
         profileData?.phone !== undefined && profileData?.phone !== null && profileData?.phone !== ''
           ? profileData.phone
-          : (localCache?.phone || '');
+          : (authUser.user_metadata?.phone || authUser.user_metadata?.phone_number || localCache?.phone || '');
+
+      let age: number | null =
+        profileData?.age !== undefined && profileData?.age !== null
+          ? Number(profileData.age)
+          : authUser.user_metadata?.age !== undefined && authUser.user_metadata?.age !== null
+          ? Number(authUser.user_metadata.age)
+          : (localCache?.age !== undefined && localCache?.age !== null ? Number(localCache.age) : null);
+
+      let gender: 'Male' | 'Female' | string | null =
+        profileData?.gender ||
+        authUser.user_metadata?.gender ||
+        localCache?.gender ||
+        null;
 
       let addressLine =
         localCache?.addressLine ||
@@ -313,6 +312,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: fullName,
             fullName,
             phone,
+            age,
+            gender,
             address_line: addressLine,
             addressLine,
             address: addressLine,
@@ -332,6 +333,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: fullName,
             role: fetchedRole,
             phone,
+            age,
+            gender,
             address_line: addressLine,
             addressLine,
             address: addressLine,
@@ -352,7 +355,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id: authUser.id,
         email: authUser.email || '',
         fullName,
+        full_name: fullName,
         phone,
+        age,
+        gender,
         avatarUrl,
         addressLine,
         address: addressLine,
@@ -457,65 +463,154 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, profile]);
 
   // Cart Functions
-  const addToCart = useCallback((product: Product, quantity = 1, selectedSizeOrVariant?: string) => {
-    if (!user) {
-      showToast('Please sign in to add products to your cart', 'info');
-      const returnPath = window.location.pathname + window.location.search;
-      window.location.href = `/account?returnUrl=${encodeURIComponent(returnPath || '/')}`;
-      return;
-    }
-
-    if (isAccountDisabled) {
-      const msg =
-        accountStatus === 'on_hold'
-          ? 'Your account is currently on hold. Adding products to cart is restricted.'
-          : 'Your account has been disabled. Adding products to cart is restricted.';
-      showToast(msg, 'error');
-      return;
-    }
-
-    const variant = selectedSizeOrVariant || product.sizeOrVariant || '';
-    setCart((prev) => {
-      const existingIndex = prev.findIndex(
-        (item) => item.product.id === product.id && item.selectedSizeOrVariant === variant
-      );
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        updated[existingIndex].quantity += quantity;
-        return updated;
-      } else {
-        return [...prev, { product, quantity, selectedSizeOrVariant: variant }];
+  const addToCart = useCallback(
+    (
+      product: Product,
+      quantity = 1,
+      selectedSizeOrVariant?: string,
+      customization?: CustomerCustomizationData
+    ) => {
+      if (!user) {
+        showToast('Please sign in to add products to your cart', 'info');
+        const returnPath = window.location.pathname + window.location.search;
+        window.location.href = `/account?returnUrl=${encodeURIComponent(returnPath || '/')}`;
+        return;
       }
-    });
-    showToast(`Added "${product.name}" to cart`);
-  }, [user, isAccountDisabled, accountStatus, showToast]);
 
-  const removeFromCart = useCallback((productId: string, variant?: string) => {
+      if (isAccountDisabled) {
+        const msg =
+          accountStatus === 'on_hold'
+            ? 'Your account is currently on hold. Adding products to cart is restricted.'
+            : 'Your account has been disabled. Adding products to cart is restricted.';
+        showToast(msg, 'error');
+        return;
+      }
+
+      // Quantity validation
+      const qtyValidation = validateQuantityRules(product, quantity);
+      const targetQuantity = qtyValidation.clampedQuantity;
+      if (!qtyValidation.isValid && qtyValidation.error) {
+        showToast(qtyValidation.error, 'error');
+        if (targetQuantity <= 0) return;
+      }
+
+      const variant = selectedSizeOrVariant || product.sizeOrVariant || '';
+      const cartItemId = generateCartItemId(product.id, variant, customization);
+      const pricing = calculateCustomizedUnitPrice(product, customization, targetQuantity);
+
+      setCart((prev) => {
+        // Search by unique cartItemId first (guarantees separate customized items)
+        const existingIndex = prev.findIndex((item) => (item.id || generateCartItemId(item.product.id, item.selectedSizeOrVariant, item.customization)) === cartItemId);
+
+        if (existingIndex > -1) {
+          const updated = [...prev];
+          const newQty = updated[existingIndex].quantity + targetQuantity;
+          const revalidated = validateQuantityRules(product, newQty);
+          const finalQty = revalidated.clampedQuantity;
+          const updatedPricing = calculateCustomizedUnitPrice(product, customization, finalQty);
+
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            quantity: finalQty,
+            calculatedUnitPrice: updatedPricing.finalUnitPrice,
+          };
+          return updated;
+        } else {
+          return [
+            ...prev,
+            {
+              id: cartItemId,
+              product,
+              quantity: targetQuantity,
+              selectedSizeOrVariant: variant,
+              customization: customization || undefined,
+              calculatedUnitPrice: pricing.finalUnitPrice,
+            },
+          ];
+        }
+      });
+
+      const customLabel = customization ? 'customized item' : `"${product.name}"`;
+      showToast(`Added ${customLabel} to cart`);
+    },
+    [user, isAccountDisabled, accountStatus, showToast]
+  );
+
+  const removeFromCart = useCallback((productIdOrCartItemId: string, variant?: string) => {
     setCart((prev) =>
-      prev.filter(
-        (item) => !(item.product.id === productId && item.selectedSizeOrVariant === (variant || item.product.sizeOrVariant || ''))
-      )
+      prev.filter((item) => {
+        const itemId = item.id || generateCartItemId(item.product.id, item.selectedSizeOrVariant, item.customization);
+        if (itemId === productIdOrCartItemId) return false;
+        if (
+          item.product.id === productIdOrCartItemId &&
+          item.selectedSizeOrVariant === (variant || item.product.sizeOrVariant || '')
+        ) {
+          return false;
+        }
+        return true;
+      })
     );
     showToast('Item removed from cart', 'info');
   }, [showToast]);
 
-  const updateQuantity = useCallback((productId: string, quantity: number, variant?: string) => {
-    if (quantity <= 0) {
-      removeFromCart(productId, variant);
-      return;
-    }
-    setCart((prev) =>
-      prev.map((item) => {
-        if (
-          item.product.id === productId &&
-          item.selectedSizeOrVariant === (variant || item.product.sizeOrVariant || '')
-        ) {
-          return { ...item, quantity };
-        }
-        return item;
-      })
-    );
-  }, [removeFromCart]);
+  const updateQuantity = useCallback(
+    (productIdOrCartItemId: string, quantity: number, variant?: string) => {
+      if (quantity <= 0) {
+        removeFromCart(productIdOrCartItemId, variant);
+        return;
+      }
+
+      setCart((prev) =>
+        prev.map((item) => {
+          const itemId = item.id || generateCartItemId(item.product.id, item.selectedSizeOrVariant, item.customization);
+          const matches =
+            itemId === productIdOrCartItemId ||
+            (item.product.id === productIdOrCartItemId &&
+              item.selectedSizeOrVariant === (variant || item.product.sizeOrVariant || ''));
+
+          if (matches) {
+            const ruleValidation = validateQuantityRules(item.product, quantity);
+            const finalQty = ruleValidation.clampedQuantity;
+            const updatedPricing = calculateCustomizedUnitPrice(item.product, item.customization, finalQty);
+
+            return {
+              ...item,
+              quantity: finalQty,
+              calculatedUnitPrice: updatedPricing.finalUnitPrice,
+            };
+          }
+          return item;
+        })
+      );
+    },
+    [removeFromCart]
+  );
+
+  const updateCartItemCustomization = useCallback(
+    (cartItemId: string, newCustomization: CustomerCustomizationData, newQuantity?: number) => {
+      setCart((prev) =>
+        prev.map((item) => {
+          const currentId = item.id || generateCartItemId(item.product.id, item.selectedSizeOrVariant, item.customization);
+          if (currentId === cartItemId) {
+            const qty = newQuantity !== undefined ? newQuantity : item.quantity;
+            const updatedPricing = calculateCustomizedUnitPrice(item.product, newCustomization, qty);
+            const newCartItemId = generateCartItemId(item.product.id, item.selectedSizeOrVariant, newCustomization);
+
+            return {
+              ...item,
+              id: newCartItemId,
+              quantity: qty,
+              customization: newCustomization,
+              calculatedUnitPrice: updatedPricing.finalUnitPrice,
+            };
+          }
+          return item;
+        })
+      );
+      showToast('Customization details updated', 'success');
+    },
+    [showToast]
+  );
 
   const clearCart = useCallback(() => {
     setCart((prev) => {
@@ -527,7 +622,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const cartCount = useMemo(() => cart.reduce((total, item) => total + item.quantity, 0), [cart]);
 
   const cartSubtotal = useMemo(
-    () => cart.reduce((total, item) => total + item.product.price * item.quantity, 0),
+    () =>
+      cart.reduce((total, item) => {
+        const pricing = calculateCustomizedUnitPrice(item.product, item.customization, item.quantity);
+        return total + pricing.subtotal;
+      }, 0),
     [cart]
   );
 
@@ -591,16 +690,21 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  // Load General Settings, Store Branding & Promo Banner from Supabase on mount
+  // Load General Settings, Store Branding, Promo Banner & Auth Appearance from Supabase on mount
   const loadStoreCustomization = useCallback(async () => {
     try {
-      const [general, branding, banner] = await Promise.all([
+      const [general, branding, banner, authApp] = await Promise.all([
         adminService.getGeneralSettings(),
         adminService.getStoreBranding(),
         adminService.getPromoBanner(),
+        adminService.getAuthAppearance(),
       ]);
       if (general) setGeneralSettings(general);
       if (branding) setStoreBranding(branding);
+      if (authApp) {
+        setAuthAppearance(authApp);
+        safeSetItem(AUTH_APPEARANCE_STORAGE_KEY, authApp);
+      }
       if (banner) {
         // Enforce single source of truth from Supabase
         const isAuthoritativeTrue = banner.promotional_banner_enabled === true;
@@ -671,6 +775,50 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   }, []);
 
+  const updateAuthAppearance = useCallback(async (config: AuthAppearanceConfig) => {
+    setAuthAppearance(config);
+    safeSetItem(AUTH_APPEARANCE_STORAGE_KEY, config);
+    const res = await adminService.saveAuthAppearance(config);
+    return res;
+  }, []);
+
+  const reloadAuthAppearance = useCallback(async () => {
+    try {
+      const authApp = await adminService.getAuthAppearance();
+      if (authApp) {
+        setAuthAppearance(authApp);
+        safeSetItem(AUTH_APPEARANCE_STORAGE_KEY, authApp);
+      }
+    } catch (err) {
+      console.warn('Failed to reload auth appearance from Supabase:', err);
+    }
+  }, []);
+
+  // Listen for real-time auth appearance updates from other tabs or admin actions
+  useEffect(() => {
+    const handleAuthAppEvent = (e: any) => {
+      if (e.detail) {
+        // If event detail has full config
+        if (e.detail.images) {
+          setAuthAppearance(e.detail);
+          safeSetItem(AUTH_APPEARANCE_STORAGE_KEY, e.detail);
+        } else {
+          // If partial or settings row, reload full appearance with images
+          reloadAuthAppearance();
+        }
+      }
+    };
+    const handleImagesEvent = () => {
+      reloadAuthAppearance();
+    };
+    window.addEventListener('kud_auth_appearance_updated', handleAuthAppEvent);
+    window.addEventListener('kud_auth_images_updated', handleImagesEvent);
+    return () => {
+      window.removeEventListener('kud_auth_appearance_updated', handleAuthAppEvent);
+      window.removeEventListener('kud_auth_images_updated', handleImagesEvent);
+    };
+  }, [reloadAuthAppearance]);
+
   const updateAdminAvatar = useCallback(
     async (file: File) => {
       try {
@@ -730,38 +878,106 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const updatedFullName = details.fullName !== undefined ? details.fullName.trim() : (user.fullName || '');
         const updatedPhone = details.phone !== undefined ? details.phone.trim() : (user.phone || '');
+        const updatedAge = details.age !== undefined ? details.age : (user.age ?? null);
+        const updatedGender = details.gender !== undefined ? details.gender : (user.gender ?? null);
         const updatedAddressLine = details.addressLine !== undefined ? details.addressLine.trim() : (user.addressLine || '');
         const updatedCity = details.city !== undefined ? details.city.trim() : (user.city || '');
         const updatedProvince = details.province !== undefined ? details.province.trim() : (user.province || 'Gauteng');
         const updatedPostalCode = details.postalCode !== undefined ? details.postalCode.trim() : (user.postalCode || '');
 
-        // If real user in Supabase
-        if (isSupabaseConfigured() && supabase && user.id && !user.id.startsWith('demo-')) {
-          // 1. UPDATE public.profiles:
-          // Update full_name and phone using authenticated user's ID
-          // STRICT RULE: Only update valid columns (full_name, phone, updated_at).
-          // Do NOT touch role, id, created_at, or non-existent columns (email, address_line, city, etc.)
-          const updatePayload: { full_name: string; phone: string; updated_at: string } = {
-            full_name: updatedFullName,
-            phone: updatedPhone,
-            updated_at: new Date().toISOString(),
-          };
+        if (!isSupabaseConfigured() || !supabase) {
+          throw new Error('Authentication service is not available.');
+        }
 
-          const { error: updateError } = await supabase
+        // Authoritatively verify current session with Supabase Auth
+        const { data: authData, error: authErr } = await supabase.auth.getUser();
+        if (authErr || !authData?.user) {
+          throw new Error('You must be signed in to update your profile.');
+        }
+        const verifiedUserId = authData.user.id;
+
+        // Authoritatively check account status from public.profiles
+        const { data: statusCheck } = await supabase
+          .from('profiles')
+          .select('account_status, disabled_reason')
+          .eq('id', verifiedUserId)
+          .maybeSingle();
+
+        if (statusCheck?.account_status === 'disabled') {
+          await supabase.auth.signOut();
+          setUser(null);
+          setProfile(null);
+          setRole(null);
+          throw new Error(
+            statusCheck.disabled_reason
+              ? `Account disabled: ${statusCheck.disabled_reason}`
+              : 'Your account has been disabled by store administration.'
+          );
+        }
+
+        if (statusCheck?.account_status === 'on_hold') {
+          throw new Error(
+            statusCheck.disabled_reason
+              ? `Account on hold: ${statusCheck.disabled_reason}`
+              : 'Your account is temporarily on hold. Profile updates are restricted.'
+          );
+        }
+
+        // 1. UPDATE public.profiles with verified user ID:
+        const updatePayload: Record<string, any> = {
+          full_name: updatedFullName,
+          phone: updatedPhone,
+          updated_at: new Date().toISOString(),
+        };
+        if (updatedAge !== undefined && updatedAge !== null) {
+          updatePayload.age = updatedAge;
+        }
+        if (updatedGender) {
+          updatePayload.gender = updatedGender;
+        }
+
+        let { error: updateError } = await supabase
+          .from('profiles')
+          .update(updatePayload)
+          .eq('id', verifiedUserId);
+
+        if (updateError) {
+          console.warn('[ShopContext] Error updating profiles with age/gender, retrying with core columns:', updateError.message);
+          const { error: retryError } = await supabase
             .from('profiles')
-            .update(updatePayload)
-            .eq('id', user.id);
+            .update({
+              full_name: updatedFullName,
+              phone: updatedPhone,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', verifiedUserId);
 
-          if (updateError) {
-            console.error('[ShopContext] Supabase profile UPDATE failed:', updateError);
-            throw new Error(updateError.message || 'Failed to update profile in database.');
+            if (retryError) {
+              console.error('[ShopContext] Supabase profile UPDATE failed:', retryError);
+              throw new Error(retryError.message || 'Failed to update profile in database.');
+            }
+          }
+
+          // Also synchronize user_metadata in Supabase Auth
+          try {
+            await supabase.auth.updateUser({
+              data: {
+                full_name: updatedFullName,
+                phone: updatedPhone,
+                phone_number: updatedPhone,
+                age: updatedAge,
+                gender: updatedGender,
+              },
+            });
+          } catch (authMetaErr) {
+            console.warn('[ShopContext] auth.updateUser metadata sync warning:', authMetaErr);
           }
 
           // 2. IMMEDIATELY fetch the saved profile from Supabase (SELECT the profile again)
           const { data: refreshedProfile, error: fetchError } = await supabase
             .from('profiles')
             .select('*')
-            .eq('id', user.id)
+            .eq('id', verifiedUserId)
             .single();
 
           if (fetchError || !refreshedProfile) {
@@ -781,16 +997,27 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             refreshedProfile.phone !== undefined && refreshedProfile.phone !== null
               ? refreshedProfile.phone
               : updatedPhone;
+          const verifiedDbAge =
+            refreshedProfile.age !== undefined && refreshedProfile.age !== null
+              ? Number(refreshedProfile.age)
+              : updatedAge;
+          const verifiedDbGender =
+            refreshedProfile.gender || updatedGender;
 
           const updatedUser: UserProfile = {
             ...user,
+            id: verifiedUserId,
             fullName: verifiedDbFullName,
+            full_name: verifiedDbFullName,
             phone: verifiedDbPhone,
+            age: verifiedDbAge,
+            gender: verifiedDbGender,
             addressLine: updatedAddressLine,
             address: updatedAddressLine,
             city: updatedCity,
             province: updatedProvince,
             postalCode: updatedPostalCode,
+            account_status: (refreshedProfile.account_status as any) || 'active',
           };
 
           setUser(updatedUser);
@@ -800,6 +1027,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: verifiedDbFullName,
             fullName: verifiedDbFullName,
             phone: verifiedDbPhone,
+            age: verifiedDbAge,
+            gender: verifiedDbGender,
             address_line: updatedAddressLine,
             addressLine: updatedAddressLine,
             address: updatedAddressLine,
@@ -810,40 +1039,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }));
 
           // Persist address preferences and verified name locally
-          safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
+          safeSetItem(`kud_store_user_profile_${verifiedUserId}`, updatedUser);
           safeSetItem('kud_store_user_profile', updatedUser);
 
           showToast('Personal details updated successfully!', 'success');
           return { success: true };
-        } else {
-          // Demo user fallback
-          const updatedUser: UserProfile = {
-            ...user,
-            ...details,
-            fullName: updatedFullName,
-            phone: updatedPhone,
-            addressLine: updatedAddressLine,
-            address: updatedAddressLine,
-            city: updatedCity,
-            province: updatedProvince,
-            postalCode: updatedPostalCode,
-          };
-
-          setUser(updatedUser);
-          setProfile((prev: any) => ({
-            ...(prev || {}),
-            ...details,
-            full_name: updatedFullName,
-            fullName: updatedFullName,
-            phone: updatedPhone,
-          }));
-
-          safeSetItem(`kud_store_user_profile_${user.id}`, updatedUser);
-          safeSetItem('kud_store_user_profile', updatedUser);
-
-          showToast('Personal details updated successfully!', 'success');
-          return { success: true };
-        }
       } catch (err: any) {
         console.error('[ShopContext] Failed to update profile:', err);
         const errorMsg = err?.message || 'Failed to update personal details';
@@ -860,8 +1060,6 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isSupabaseConfigured() && supabase) {
       await supabase.auth.signOut();
     }
-    localStorage.removeItem('kud_store_demo_admin');
-    localStorage.removeItem('kud_store_demo_user');
     setUser(null);
     setProfile(null);
     setRole(null);
@@ -878,6 +1076,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       addToCart,
       removeFromCart,
       updateQuantity,
+      updateCartItemCustomization,
       clearCart,
       cartCount,
       cartSubtotal,
@@ -904,6 +1103,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateStoreBranding,
       promoBanner,
       updatePromoBanner,
+      authAppearance,
+      updateAuthAppearance,
+      reloadAuthAppearance,
       reloadStoreCustomization: loadStoreCustomization,
 
       user,
@@ -929,6 +1131,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       addToCart,
       removeFromCart,
       updateQuantity,
+      updateCartItemCustomization,
       clearCart,
       cartCount,
       cartSubtotal,
@@ -948,6 +1151,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateStoreBranding,
       promoBanner,
       updatePromoBanner,
+      authAppearance,
+      updateAuthAppearance,
+      reloadAuthAppearance,
       loadStoreCustomization,
       user,
       profile,

@@ -825,7 +825,7 @@ export const AdminMarketingAnalyticsPage: React.FC = () => {
 
                 <p className="leading-relaxed">
                   Attribution parameters (<code className="font-mono text-xs">ttclid</code>, <code className="font-mono text-xs">utm_source=tiktok</code>)
-                  are preserved through checkout and attached to verified order records in Supabase.
+                  are preserved through checkout and attached to verified order records in the database.
                 </p>
               </div>
             </div>

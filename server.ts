@@ -287,7 +287,7 @@ async function checkAndNotifyProductStock(
 /**
  * Ensures the 'product-images' bucket exists in Supabase Storage and is public.
  */
-async function ensureProductImagesBucket() {
+async function ensureStorageBucket(bucketName: string = 'product-images') {
   const supabase = getServerSupabase();
   if (!supabase) {
     console.log('[Storage] Supabase credentials not configured in environment.');
@@ -300,14 +300,13 @@ async function ensureProductImagesBucket() {
       console.warn('[Storage] Error listing buckets:', listError.message);
     }
 
-    const bucketName = 'product-images';
     const existing = buckets?.find((b) => b.name === bucketName || b.id === bucketName);
 
     if (!existing) {
       console.log(`[Storage] Bucket "${bucketName}" not found. Creating public bucket...`);
       const { data: created, error: createError } = await supabase.storage.createBucket(bucketName, {
         public: true,
-        fileSizeLimit: 10485760, // 10MB
+        fileSizeLimit: 15728640, // 15MB
         allowedMimeTypes: ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/avif', 'image/svg+xml'],
       });
 
@@ -331,6 +330,10 @@ async function ensureProductImagesBucket() {
     console.warn('[Storage] Exception during bucket initialization:', err);
     return { success: false, error: err?.message || String(err) };
   }
+}
+
+async function ensureProductImagesBucket() {
+  return ensureStorageBucket('product-images');
 }
 
 async function startServer() {
@@ -385,12 +388,15 @@ async function startServer() {
         return res.status(500).json({ success: false, error: 'Database/Storage not configured.' });
       }
 
-      const targetBucket = bucket === 'store-branding' ? 'store-branding' : 'product-images';
+      const targetBucket =
+        bucket === 'store-branding'
+          ? 'store-branding'
+          : bucket === 'auth-backgrounds'
+          ? 'auth-backgrounds'
+          : 'product-images';
 
-      // Ensure bucket exists first for product-images
-      if (targetBucket === 'product-images') {
-        await ensureProductImagesBucket();
-      }
+      // Ensure bucket exists first
+      await ensureStorageBucket(targetBucket);
 
       const buffer = Buffer.from(base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, ''), 'base64');
       const cleanPath = folder ? `${folder}/${fileName}` : fileName;
@@ -418,12 +424,464 @@ async function startServer() {
         success: true,
         url: publicUrl,
         fileName,
+        storagePath: cleanPath,
         bucket: targetBucket,
         isRemote: true,
       });
     } catch (err: any) {
       console.error('[Storage] Error in /api/admin/storage/upload:', err);
       return res.status(500).json({ success: false, error: err?.message || 'Internal upload error' });
+    }
+  });
+
+  // =========================================================================
+  // CUSTOMER DESIGN & CUSTOMIZATION UPLOAD ENDPOINT
+  // =========================================================================
+  app.post('/api/customizations/upload', async (req, res) => {
+    try {
+      const { fileName, originalName, base64Data, contentType = 'image/png' } = req.body || {};
+
+      if (!fileName || !base64Data) {
+        return res.status(400).json({ success: false, error: 'File data is required.' });
+      }
+
+      // 1. Validate file type (image only: jpeg, png, webp)
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      if (!allowedTypes.includes(contentType.toLowerCase())) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid file format. Only JPG, JPEG, PNG, and WEBP image files are supported.',
+        });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database storage is not configured.' });
+      }
+
+      const targetBucket = 'customer-customizations';
+      await ensureStorageBucket(targetBucket);
+
+      const buffer = Buffer.from(base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, ''), 'base64');
+
+      // 2. Strict 10MB limit enforcement
+      const maxSizeBytes = 10 * 1024 * 1024;
+      if (buffer.length > maxSizeBytes) {
+        return res.status(400).json({
+          success: false,
+          error: `File exceeds maximum allowed size of 10 MB (${(buffer.length / (1024 * 1024)).toFixed(1)} MB uploaded).`,
+        });
+      }
+
+      const safePath = `customer-designs/${fileName}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(targetBucket)
+        .upload(safePath, buffer, {
+          contentType,
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (uploadError || !uploadData) {
+        console.error('[Customization] Server upload to customer-customizations failed:', uploadError);
+        // Fallback: try uploading to product-images/customizations if customer-customizations bucket had permission restriction
+        const fallbackBucket = 'product-images';
+        await ensureStorageBucket(fallbackBucket);
+        const { data: fallbackData, error: fallbackError } = await supabase.storage
+          .from(fallbackBucket)
+          .upload(safePath, buffer, { contentType, cacheControl: '3600', upsert: true });
+
+        if (fallbackError || !fallbackData) {
+          return res.status(400).json({
+            success: false,
+            error: uploadError?.message || fallbackError?.message || 'Storage upload failed.',
+          });
+        }
+
+        const { data: fbUrlData } = supabase.storage.from(fallbackBucket).getPublicUrl(safePath);
+        return res.json({
+          success: true,
+          url: fbUrlData?.publicUrl || '',
+          fileName: originalName || fileName,
+          sizeBytes: buffer.length,
+        });
+      }
+
+      const { data: publicUrlData } = supabase.storage.from(targetBucket).getPublicUrl(safePath);
+      return res.json({
+        success: true,
+        url: publicUrlData?.publicUrl || '',
+        fileName: originalName || fileName,
+        sizeBytes: buffer.length,
+      });
+    } catch (err: any) {
+      console.error('[Customization] Error handling customer upload:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to process file upload.' });
+    }
+  });
+
+  // =========================================================================
+  // SERVER-SIDE PRICE AND INVENTORY VALIDATION ENDPOINT
+  // =========================================================================
+  app.post('/api/orders/validate-prices', async (req, res) => {
+    try {
+      const { items } = req.body || {};
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, error: 'No items provided for validation.' });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not available.' });
+      }
+
+      const productIds = items.map((it: any) => it.productId || it.product_id).filter(Boolean);
+      const { data: dbProducts, error: prodErr } = await supabase
+        .from('products')
+        .select('*')
+        .in('id', productIds);
+
+      if (prodErr || !dbProducts) {
+        return res.status(500).json({ success: false, error: 'Failed to retrieve authoritative product data.' });
+      }
+
+      const productMap = new Map<string, any>(dbProducts.map((p: any) => [String(p.id), p]));
+      let calculatedSubtotal = 0;
+      const validatedItems: any[] = [];
+
+      for (const item of items) {
+        const prodId = String(item.productId || item.product_id);
+        const dbProd = productMap.get(prodId);
+        if (!dbProd) {
+          return res.status(400).json({ success: false, error: `Product not found in catalog: ${prodId}` });
+        }
+
+        const qty = Math.max(1, Number(item.quantity) || 1);
+        const basePrice = Number(dbProd.price) || 0;
+
+        // Extract custom config
+        const customConfig =
+          dbProd.customization_config ||
+          dbProd.category_attributes?.customizationConfig ||
+          {};
+
+        // Check stock rules
+        const disableStock = customConfig.disableStockLimits || dbProd.track_inventory === false || dbProd.allow_backorders;
+        if (!disableStock && typeof dbProd.stock === 'number' && dbProd.stock < qty) {
+          return res.status(400).json({
+            success: false,
+            error: `Insufficient stock for "${dbProd.name}". Available: ${dbProd.stock}, Requested: ${qty}`,
+          });
+        }
+
+        // Calculate size modifier
+        let sizeAdjustment = 0;
+        const customization = item.customization;
+        if (customization?.selectedSizeOption?.priceModifier !== undefined) {
+          sizeAdjustment = Number(customization.selectedSizeOption.priceModifier) || 0;
+        }
+
+        // Customization charge
+        let customizationCharge = 0;
+        if (customConfig.isCustomizable && customConfig.customizationCharge > 0) {
+          customizationCharge = Number(customConfig.customizationCharge) || 0;
+        }
+
+        let verifiedUnitPrice = basePrice + sizeAdjustment + customizationCharge;
+
+        // Bulk pricing tiers
+        if (customConfig.bulkPricingTiers && Array.isArray(customConfig.bulkPricingTiers)) {
+          const matchTier = customConfig.bulkPricingTiers
+            .filter((t: any) => qty >= t.minQuantity && (!t.maxQuantity || qty <= t.maxQuantity))
+            .sort((a: any, b: any) => b.minQuantity - a.minQuantity)[0];
+          if (matchTier && matchTier.pricePerUnit > 0) {
+            verifiedUnitPrice = matchTier.pricePerUnit + sizeAdjustment;
+          }
+        }
+
+        const itemSubtotal = verifiedUnitPrice * qty;
+        calculatedSubtotal += itemSubtotal;
+
+        validatedItems.push({
+          productId: prodId,
+          productName: dbProd.name,
+          quantity: qty,
+          basePrice,
+          sizeAdjustment,
+          customizationCharge,
+          unitPrice: verifiedUnitPrice,
+          totalPrice: itemSubtotal,
+          customization,
+        });
+      }
+
+      return res.json({
+        success: true,
+        subtotal: calculatedSubtotal,
+        items: validatedItems,
+      });
+    } catch (err: any) {
+      console.error('[PriceValidation] Error in /api/orders/validate-prices:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Price validation error.' });
+    }
+  });
+
+  // =========================================================================
+  // SUPABASE AUTH APPEARANCE BACKEND INTEGRATION
+  // =========================================================================
+  app.get('/api/auth-appearance', async (_req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      // Fetch appearance settings
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('auth_appearance_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
+
+      if (settingsError) {
+        console.warn('[AuthAppearance] Error fetching settings:', settingsError.message);
+      }
+
+      // Fetch active background images
+      const { data: imagesData, error: imagesError } = await supabase
+        .from('auth_background_images')
+        .select('*')
+        .order('display_order', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (imagesError) {
+        console.warn('[AuthAppearance] Error fetching background images:', imagesError.message);
+      }
+
+      // Format images with public URLs
+      const formattedImages = (imagesData || []).map((img: any) => {
+        let publicUrl = img.storage_path;
+        if (!publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
+          const { data } = supabase.storage.from('auth-backgrounds').getPublicUrl(img.storage_path);
+          publicUrl = data?.publicUrl || img.storage_path;
+        }
+        return {
+          ...img,
+          public_url: publicUrl,
+        };
+      });
+
+      return res.json({
+        success: true,
+        settings: settingsData || null,
+        images: formattedImages,
+      });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in GET /api/auth-appearance:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to load auth appearance' });
+    }
+  });
+
+  app.post('/api/admin/auth-appearance/settings', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const payload = req.body || {};
+      const { id = 1, ...fieldsToUpdate } = payload;
+      const updateData = {
+        ...fieldsToUpdate,
+        id: 1,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('auth_appearance_settings')
+        .upsert(updateData, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[AuthAppearance] Error updating settings:', error);
+        return res.status(400).json({ success: false, error: error.message });
+      }
+
+      return res.json({ success: true, data });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in POST /api/admin/auth-appearance/settings:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to update settings' });
+    }
+  });
+
+  app.post('/api/admin/auth-appearance/images', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { name, storage_path, is_active = true, display_order = 0, is_default = false } = req.body || {};
+      if (!name || !storage_path) {
+        return res.status(400).json({ success: false, error: 'name and storage_path are required.' });
+      }
+
+      // If is_default is true, clear is_default for other images
+      if (is_default) {
+        await supabase
+          .from('auth_background_images')
+          .update({ is_default: false })
+          .neq('id', '00000000-0000-0000-0000-000000000000');
+      }
+
+      const { data, error } = await supabase
+        .from('auth_background_images')
+        .insert({
+          name: String(name).trim(),
+          storage_path: String(storage_path).trim(),
+          is_active: Boolean(is_active),
+          display_order: Number(display_order) || 0,
+          is_default: Boolean(is_default),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[AuthAppearance] Error inserting image:', error);
+        return res.status(400).json({ success: false, error: error.message });
+      }
+
+      let publicUrl = data.storage_path;
+      if (!publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
+        const { data: urlData } = supabase.storage.from('auth-backgrounds').getPublicUrl(data.storage_path);
+        publicUrl = urlData?.publicUrl || data.storage_path;
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          ...data,
+          public_url: publicUrl,
+        },
+      });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in POST /api/admin/auth-appearance/images:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to insert image' });
+    }
+  });
+
+  app.patch('/api/admin/auth-appearance/images/:id', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { id } = req.params;
+      const updates = req.body || {};
+
+      if (updates.is_default === true) {
+        await supabase
+          .from('auth_background_images')
+          .update({ is_default: false })
+          .neq('id', id);
+      }
+
+      const { data, error } = await supabase
+        .from('auth_background_images')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[AuthAppearance] Error updating image:', error);
+        return res.status(400).json({ success: false, error: error.message });
+      }
+
+      let publicUrl = data?.storage_path;
+      if (publicUrl && !publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
+        const { data: urlData } = supabase.storage.from('auth-backgrounds').getPublicUrl(data.storage_path);
+        publicUrl = urlData?.publicUrl || data.storage_path;
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          ...data,
+          public_url: publicUrl,
+        },
+      });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in PATCH /api/admin/auth-appearance/images/:id:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to update image' });
+    }
+  });
+
+  app.delete('/api/admin/auth-appearance/images/:id', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { id } = req.params;
+      const { storage_path } = req.query as { storage_path?: string };
+
+      // Delete from table
+      const { error: deleteError } = await supabase
+        .from('auth_background_images')
+        .delete()
+        .eq('id', id);
+
+      if (deleteError) {
+        console.error('[AuthAppearance] Error deleting image record:', deleteError);
+        return res.status(400).json({ success: false, error: deleteError.message });
+      }
+
+      // If file is stored in auth-backgrounds bucket, remove it from storage
+      if (storage_path && typeof storage_path === 'string' && !storage_path.startsWith('http')) {
+        await supabase.storage.from('auth-backgrounds').remove([storage_path]);
+      }
+
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in DELETE /api/admin/auth-appearance/images/:id:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to delete image' });
+    }
+  });
+
+  app.post('/api/admin/auth-appearance/reorder', async (req, res) => {
+    try {
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({ success: false, error: 'Database not configured.' });
+      }
+
+      const { orderMap } = req.body || {}; // { [id]: number }
+      if (!orderMap || typeof orderMap !== 'object') {
+        return res.status(400).json({ success: false, error: 'orderMap object is required.' });
+      }
+
+      const promises = Object.entries(orderMap).map(([id, display_order]) =>
+        supabase
+          .from('auth_background_images')
+          .update({
+            display_order: Number(display_order) || 0,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+      );
+
+      await Promise.all(promises);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[AuthAppearance] Error in POST /api/admin/auth-appearance/reorder:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to reorder images' });
     }
   });
 

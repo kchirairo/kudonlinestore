@@ -301,7 +301,7 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({ onToggleSidebar, title
                   {isUploading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Uploading to Supabase Storage...</span>
+                      <span>Uploading to Cloud Storage...</span>
                     </>
                   ) : (
                     <>
@@ -336,7 +336,7 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({ onToggleSidebar, title
               {/* Info Note */}
               <p className="mt-3 text-[10px] text-gray-400 dark:text-slate-400 text-center leading-tight">
                 {hasCustomAvatar
-                  ? 'Saved permanently in Supabase Storage. Click "Remove Avatar" to restore default "K".'
+                  ? 'Saved permanently in Cloud Storage. Click "Remove Avatar" to restore default "K".'
                   : 'Upload JPG, PNG, or WebP up to 10MB to replace default "K" avatar.'}
               </p>
             </div>

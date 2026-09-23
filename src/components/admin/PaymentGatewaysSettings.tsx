@@ -51,7 +51,7 @@ export const PaymentGatewaysSettings: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Failed to load payment gateways:', err);
-      showToast('Failed to load payment gateways from Supabase', 'error');
+      showToast('Failed to load payment gateways', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -239,7 +239,7 @@ export const PaymentGatewaysSettings: React.FC = () => {
             <div>
               <h2 className="text-2xl font-black text-gray-900 tracking-tight">Payment Gateways</h2>
               <p className="text-xs text-gray-500 font-medium">
-                Manage online card, EFT, and wallet payment providers in Supabase
+                Manage online card, EFT, and wallet payment providers
               </p>
             </div>
           </div>
@@ -406,10 +406,10 @@ export const PaymentGatewaysSettings: React.FC = () => {
               <span className="text-xs text-gray-400">PCI-DSS Compliant Storage</span>
             </div>
             <h3 className="text-lg font-bold text-white tracking-tight">
-              Secret API Keys are Isolated in Server-Side Supabase Secrets
+              Secret API Keys are Isolated in Server-Side Secrets
             </h3>
             <p className="text-xs text-gray-300 leading-relaxed">
-              In accordance with security requirements, secret keys (such as <code className="text-rose-300 font-mono">YOCO_SECRET_KEY</code>) are NEVER stored in public database tables or frontend bundles. The database holds only public identifiers and mode settings, while charges are authorized securely via server-side Edge Functions.
+              In accordance with security requirements, secret keys (such as <code className="text-rose-300 font-mono">YOCO_SECRET_KEY</code>) are NEVER stored in public database tables or frontend bundles. The database holds only public identifiers and mode settings, while charges are authorized securely via server-side payment functions.
             </p>
           </div>
 
@@ -474,7 +474,7 @@ export const PaymentGatewaysSettings: React.FC = () => {
       {isLoading ? (
         <div className="py-16 text-center space-y-3 bg-white rounded-3xl border border-gray-100">
           <RefreshCw className="w-8 h-8 text-[#ff6452] animate-spin mx-auto" />
-          <p className="text-sm font-semibold text-gray-500">Loading payment gateways from Supabase...</p>
+          <p className="text-sm font-semibold text-gray-500">Loading payment gateways...</p>
         </div>
       ) : filteredGateways.length === 0 ? (
         <div className="py-12 text-center space-y-3 bg-white rounded-3xl border border-gray-100">

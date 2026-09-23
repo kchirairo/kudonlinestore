@@ -231,6 +231,10 @@ export function mapSupabaseProduct(p: any): Product {
   const parsedVariants = parseJsonSafe(p.variants, []);
   const parsedVideos = videos.length > 0 ? videos : parseJsonSafe(p.videos, []);
   const parsedCategoryAttrs = parseJsonSafe(p.category_attributes || p.categoryAttributes, {});
+  const parsedCustomizationConfig = parseJsonSafe(
+    p.customization_config || p.customizationConfig || parsedCategoryAttrs?.customizationConfig,
+    undefined
+  );
   const parsedDimensions = parseJsonSafe(p.dimensions, undefined);
   const parsedTags = Array.isArray(p.tags)
     ? p.tags
@@ -276,6 +280,7 @@ export function mapSupabaseProduct(p: any): Product {
     mediaItems,
     variants: Array.isArray(parsedVariants) ? parsedVariants : [],
     categoryAttributes: typeof parsedCategoryAttrs === 'object' ? parsedCategoryAttrs : {},
+    customizationConfig: parsedCustomizationConfig,
     inStock,
     stock: stockNumber,
     lowStockThreshold: p.low_stock_threshold !== undefined ? Number(p.low_stock_threshold) : 5,

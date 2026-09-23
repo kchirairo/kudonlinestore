@@ -296,7 +296,7 @@ export const AdminNotificationsPage: React.FC = () => {
                 Live Notification Center
               </span>
               <span className="text-xs text-gray-400 dark:text-slate-500 font-medium">
-                Authoritative Supabase Storage
+                Cloud Synchronized
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white tracking-tight">

@@ -255,9 +255,9 @@ export const PromoBannerSettings: React.FC = () => {
     }
   };
 
-  // Save changes to Supabase & Context
+  // Save changes to Database & Context
   const handleSaveAll = async () => {
-    await persistBannerConfig(formData, 'Promotional Banner configuration published to Supabase!');
+    await persistBannerConfig(formData, 'Promotional Banner configuration published successfully!');
   };
 
   // Reorder banners (Move Up / Down) and persist
@@ -415,7 +415,7 @@ export const PromoBannerSettings: React.FC = () => {
     setEditingBanner(null);
     await persistBannerConfig(
       newConfig,
-      exists ? 'Banner updated and saved to Supabase!' : 'New banner created and saved to Supabase!'
+      exists ? 'Banner updated and saved successfully!' : 'New banner created and saved successfully!'
     );
   };
 
@@ -426,7 +426,7 @@ export const PromoBannerSettings: React.FC = () => {
     const newConfig = { ...formData, banners: updated };
     setFormData(newConfig);
     setBannerToDelete(null);
-    await persistBannerConfig(newConfig, 'Banner deleted and updated in Supabase.');
+    await persistBannerConfig(newConfig, 'Banner deleted and updated successfully.');
   };
 
   // Reset Analytics Counters and persist
@@ -868,14 +868,14 @@ export const PromoBannerSettings: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
-                Supabase 'settings' Table Persistence
+                Store Database 'settings' Table Persistence
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-emerald-600/20 text-emerald-800 dark:text-emerald-300">
                 Live & Synced
               </span>
             </div>
             <p className="text-[11px] text-emerald-800/90 dark:text-emerald-400 font-medium">
-              Promotional banners, 1080×1080 media, videos, schedules & analytics are stored in Supabase <code className="bg-white/80 dark:bg-slate-800 px-1 py-0.5 rounded text-emerald-900 dark:text-emerald-200 font-mono text-[10px]">public.settings (key='banner_config')</code>.
+              Promotional banners, 1080×1080 media, videos, schedules & analytics are stored in database <code className="bg-white/80 dark:bg-slate-800 px-1 py-0.5 rounded text-emerald-900 dark:text-emerald-200 font-mono text-[10px]">public.settings (key='banner_config')</code>.
             </p>
           </div>
         </div>
@@ -893,7 +893,7 @@ export const PromoBannerSettings: React.FC = () => {
       {showSqlSchema && (
         <div className="bg-slate-900 text-slate-100 rounded-2xl p-4 text-xs font-mono border border-slate-800 space-y-2">
           <div className="flex items-center justify-between text-slate-400 text-[11px]">
-            <span>Supabase PostgreSQL Schema for 'settings' Table:</span>
+            <span>PostgreSQL Schema for 'settings' Table:</span>
             <span className="text-emerald-400">Ready</span>
           </div>
           <pre className="bg-slate-950 p-3 rounded-xl overflow-x-auto text-[11px] text-emerald-300">

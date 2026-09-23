@@ -117,7 +117,7 @@ export const AdminCustomerAccountInfoCard: React.FC<AdminCustomerAccountInfoCard
               </span>
             </div>
             <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-              Authoritative Supabase Auth credentials, session telemetry, and verification status.
+              Authoritative security credentials, session telemetry, and verification status.
             </p>
           </div>
         </div>

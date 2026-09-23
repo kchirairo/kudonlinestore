@@ -67,7 +67,7 @@ export const LiveModeConfirmModal: React.FC<LiveModeConfirmModalProps> = ({
           </div>
           <div className="flex items-center space-x-2 font-medium text-gray-800">
             <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span>Production secret key (<code className="text-[11px] font-mono text-gray-700 bg-gray-200/60 px-1 py-0.5 rounded">{gateway.secretKeyEnvName}</code>) must be set in Supabase Edge Functions</span>
+            <span>Production secret key (<code className="text-[11px] font-mono text-gray-700 bg-gray-200/60 px-1 py-0.5 rounded">{gateway.secretKeyEnvName}</code>) must be configured in secure server environment</span>
           </div>
         </div>
 

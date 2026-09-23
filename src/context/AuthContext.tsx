@@ -8,6 +8,7 @@ export interface AuthContextType {
   user: any | null;
   profile: any | null;
   role: 'customer' | 'admin' | null;
+  accountStatus: 'active' | 'on_hold' | 'disabled' | null;
   loading: boolean;
   isAdmin: boolean;
   authError: string | null;
@@ -22,6 +23,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   role: null,
+  accountStatus: null,
   loading: true,
   isAdmin: false,
   authError: null,
@@ -77,22 +79,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUserAndProfile = useCallback(async () => {
     if (!isSupabaseConfigured() || !supabase) {
-      // Demo login check if Supabase is not configured
-      const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
-      const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
-      if (isDemoAdmin) {
-        setUser({ id: 'demo-admin-id', email: 'admin@kudstore.com' });
-        setProfile({ id: 'demo-admin-id', role: 'admin', full_name: 'Demo Admin' });
-        setRole('admin');
-      } else if (isDemoUser) {
-        setUser({ id: 'demo-customer-id', email: 'customer@kudstore.co.za' });
-        setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
-        setRole('customer');
-      } else {
-        setUser(null);
-        setProfile(null);
-        setRole(null);
-      }
+      setUser(null);
+      setProfile(null);
+      setRole(null);
       setLoading(false);
       return;
     }
@@ -103,35 +92,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setAuthError(null);
 
-      // 1. Get authenticated user from supabase.auth.getUser()
+      // 1. Authoritatively get authenticated user from Supabase session
       const {
         data: { user: authUser },
         error: userError,
       } = await supabase.auth.getUser();
 
       if (userError || !authUser) {
-        const isDemoAdmin = localStorage.getItem('kud_store_demo_admin') === 'true';
-        const isDemoUser = localStorage.getItem('kud_store_demo_user') === 'true';
-        if (isDemoAdmin) {
-          setUser({ id: 'demo-admin-id', email: 'admin@kudstore.com' });
-          setProfile({ id: 'demo-admin-id', role: 'admin', full_name: 'Demo Admin' });
-          setRole('admin');
-        } else if (isDemoUser) {
-          setUser({ id: 'demo-customer-id', email: 'customer@kudstore.co.za' });
-          setProfile({ id: 'demo-customer-id', role: 'customer', full_name: 'Sipho Dlamini (Demo)' });
-          setRole('customer');
-        } else {
-          setUser(null);
-          setProfile(null);
-          setRole(null);
-        }
+        setUser(null);
+        setProfile(null);
+        setRole(null);
         setLoading(false);
         return;
       }
 
       console.log('Authenticated user ID:', authUser.id);
 
-      // 2. Query user's profile: public.profiles where id = authenticatedUser.id select role
+      // 2. Query user's profile: public.profiles where id = authenticatedUser.id
       let { data: profileRow, error: profileErr } = await supabase
         .from('profiles')
         .select('*')
@@ -140,6 +117,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (profileErr) {
         console.error('Error querying profile from public.profiles:', profileErr);
+      }
+
+      // Check account status: if customer account is disabled, revoke session immediately
+      if (profileRow?.account_status === 'disabled') {
+        console.warn(`[AuthProvider] User account ${authUser.id} is disabled. Signing out.`);
+        await supabase.auth.signOut();
+        setUser(null);
+        setProfile(null);
+        setRole(null);
+        setAuthError(
+          profileRow.disabled_reason
+            ? `Your account has been disabled: ${profileRow.disabled_reason}`
+            : 'Your account has been disabled by store administration.'
+        );
+        setLoading(false);
+        return;
       }
 
       let fetchedRole: 'customer' | 'admin' | null = profileRow?.role || null;
@@ -170,22 +163,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             authUser.user_metadata?.avatar_url ||
             authUser.user_metadata?.picture ||
             null;
+          const userPhone =
+            authUser.user_metadata?.phone ||
+            authUser.user_metadata?.phone_number ||
+            authUser.phone ||
+            '';
+          const userAge =
+            authUser.user_metadata?.age !== undefined && authUser.user_metadata?.age !== null
+              ? Number(authUser.user_metadata.age)
+              : null;
+          const userGender = authUser.user_metadata?.gender || null;
 
-          const { data: createdProfile } = await supabase
+          const profilePayload: any = {
+            id: authUser.id,
+            full_name: defaultName,
+            role: fetchedRole || 'customer',
+            phone: userPhone,
+            referral_rewards_enabled: false,
+            created_at: new Date().toISOString(),
+          };
+          if (userAge !== null && !isNaN(userAge)) {
+            profilePayload.age = userAge;
+          }
+          if (userGender) {
+            profilePayload.gender = userGender;
+          }
+
+          let createdProfile = null;
+          const { data: upsertData, error: upsertErr } = await supabase
             .from('profiles')
-            .upsert(
-              {
-                id: authUser.id,
-                full_name: defaultName,
-                role: fetchedRole || 'customer',
-                phone: authUser.phone || '',
-                referral_rewards_enabled: false,
-                created_at: new Date().toISOString(),
-              },
-              { onConflict: 'id' }
-            )
+            .upsert(profilePayload, { onConflict: 'id' })
             .select('*')
             .maybeSingle();
+
+          if (upsertErr) {
+            const { data: fallbackData } = await supabase
+              .from('profiles')
+              .upsert(
+                {
+                  id: authUser.id,
+                  full_name: defaultName,
+                  role: fetchedRole || 'customer',
+                  phone: userPhone,
+                  referral_rewards_enabled: false,
+                  created_at: new Date().toISOString(),
+                },
+                { onConflict: 'id' }
+              )
+              .select('*')
+              .maybeSingle();
+            createdProfile = fallbackData;
+          } else {
+            createdProfile = upsertData;
+          }
 
           if (createdProfile) {
             profileRow = createdProfile;
@@ -198,10 +228,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      const resolvedProfile = profileRow || { id: authUser.id, role: fetchedRole };
+      if (resolvedProfile) {
+        if (!resolvedProfile.phone && (authUser.user_metadata?.phone || authUser.phone)) {
+          resolvedProfile.phone = authUser.user_metadata?.phone || authUser.phone;
+        }
+        if ((resolvedProfile.age === undefined || resolvedProfile.age === null) && authUser.user_metadata?.age) {
+          resolvedProfile.age = Number(authUser.user_metadata.age);
+        }
+        if (!resolvedProfile.gender && authUser.user_metadata?.gender) {
+          resolvedProfile.gender = authUser.user_metadata.gender;
+        }
+      }
+
       console.log('Profile role:', fetchedRole);
 
       setUser(authUser);
-      setProfile(profileRow || { id: authUser.id, role: fetchedRole });
+      setProfile(resolvedProfile);
       setRole(fetchedRole);
     } catch (err: any) {
       console.error('Error loading auth user and profile:', err);
@@ -217,8 +260,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isSupabaseConfigured() && supabase) {
         await supabase.auth.signOut();
       }
-      localStorage.removeItem('kud_store_demo_admin');
-      localStorage.removeItem('kud_store_demo_user');
       setUser(null);
       setProfile(null);
       setRole(null);
@@ -255,15 +296,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fetchUserAndProfile]);
 
   const isAdmin = useMemo(
-    () => role === 'admin' || localStorage.getItem('kud_store_demo_admin') === 'true',
+    () => role === 'admin',
     [role]
   );
+
+  const accountStatus = useMemo<'active' | 'on_hold' | 'disabled' | null>(() => {
+    if (!profile) return null;
+    if (profile.account_status === 'disabled') return 'disabled';
+    if (profile.account_status === 'on_hold') return 'on_hold';
+    return 'active';
+  }, [profile]);
 
   const contextValue = useMemo(
     () => ({
       user,
       profile,
       role,
+      accountStatus,
       loading,
       isAdmin,
       authError,
@@ -277,6 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       profile,
       role,
+      accountStatus,
       loading,
       isAdmin,
       authError,
@@ -322,14 +372,14 @@ export const ProtectedAdminRoute: React.FC<{ children?: React.ReactNode }> = ({ 
   }
 
   // 1. Not authenticated -> Redirect to /login
-  if (!user && !localStorage.getItem('kud_store_demo_admin')) {
-    console.log('Unauthenticated access attempt to /admin. Redirecting to: /login');
-    return <Navigate to="/login" replace />;
+  if (!user) {
+    console.warn('Unauthenticated access attempt to /admin. Redirecting to: /login');
+    return <Navigate to="/login?returnUrl=/admin" replace />;
   }
 
   // 2. Authenticated but role !== 'admin' -> Redirect to customer home '/'
-  if (!isAdmin && role !== 'admin') {
-    console.log(`Authenticated user role "${role}" is not admin. Redirecting to: /`);
+  if (!isAdmin || role !== 'admin') {
+    console.warn(`Access denied to /admin: Authenticated user role "${role}" is not admin. Redirecting to: /`);
     return <Navigate to="/" replace />;
   }
 

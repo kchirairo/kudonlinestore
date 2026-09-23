@@ -120,7 +120,7 @@ export const StoreBrandingSettings: React.FC = () => {
         }));
         // Reload global customization so all components update immediately
         await reloadStoreCustomization();
-        showToast('Store logo updated and saved to Supabase settings!', 'success');
+        showToast('Store logo updated and saved successfully!', 'success');
       } else {
         const errMsg = res.error || 'Failed to upload logo image.';
         setValidationError(errMsg);
@@ -322,7 +322,7 @@ export const StoreBrandingSettings: React.FC = () => {
                 Store Branding & Logo
               </h2>
               <p className="text-xs text-gray-500 dark:text-slate-400">
-                Connected to Supabase storage bucket <code className="font-mono font-bold text-gray-700 dark:text-slate-300">store-branding</code> and settings column <code className="font-mono font-bold text-gray-700 dark:text-slate-300">public.settings.logo_url</code>.
+                Connected to storage bucket <code className="font-mono font-bold text-gray-700 dark:text-slate-300">store-branding</code> and settings column <code className="font-mono font-bold text-gray-700 dark:text-slate-300">public.settings.logo_url</code>.
               </p>
             </div>
           </div>

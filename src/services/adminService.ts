@@ -40,7 +40,12 @@ import {
   InvoiceSettingsConfig,
   InvoiceDeliveryStatus,
   TaxSettings,
+  AuthAppearanceConfig,
+  AuthBackgroundImage,
+  SupabaseAuthAppearanceSettings,
+  SupabaseAuthBackgroundImage,
 } from '../types';
+import { DEFAULT_AUTH_APPEARANCE } from '../constants/authAppearance';
 import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
 import { categoryService } from './categoryService';
@@ -339,14 +344,21 @@ async function writeSupabaseSettingHelper<T extends Record<string, any>>(
 
 export const adminService = {
   /**
-   * Check if user is an admin by calling public.is_admin() or checking profiles table
+   * Check if user is an admin by calling public.is_admin() or checking profiles table authoritatively
    */
   async checkIsAdmin(userId?: string): Promise<boolean> {
-    if (!userId) return false;
-
     if (isSupabaseConfigured() && supabase) {
       try {
-        // Try RPC first
+        const { data: authData } = await supabase.auth.getUser();
+        const verifiedUid = authData?.user?.id;
+        if (!verifiedUid) return false;
+
+        // If a userId was passed, enforce that it matches the authenticated session
+        if (userId && userId !== verifiedUid) {
+          return false;
+        }
+
+        // Try authoritative database RPC first
         const { data: rpcIsAdmin, error: rpcError } = await supabase.rpc('is_admin');
         if (!rpcError && typeof rpcIsAdmin === 'boolean') {
           return rpcIsAdmin;
@@ -356,8 +368,8 @@ export const adminService = {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('role')
-          .eq('id', userId)
-          .single();
+          .eq('id', verifiedUid)
+          .maybeSingle();
 
         if (!profileError && profile) {
           return profile.role === 'admin';
@@ -366,10 +378,6 @@ export const adminService = {
         console.warn('Supabase admin check error:', err);
       }
     }
-
-    // Demo admin check for testing/local preview
-    const demoAdminMode = localStorage.getItem('kud_store_demo_admin') === 'true';
-    if (demoAdminMode) return true;
 
     return false;
   },
@@ -475,13 +483,9 @@ export const adminService = {
       }
     }
 
-    // Fallback/combine local orders
+    // Fallback/combine local orders if offline
     if (orders.length === 0) {
       orders = orderService.getLocalOrders();
-      // If still empty, add realistic demo orders
-      if (orders.length === 0) {
-        orders = getDemoOrders();
-      }
     }
 
     // Client-side filtering if needed
@@ -2131,10 +2135,8 @@ export const adminService = {
     referrerId?: string;
   }): Promise<ReferralCommissionRecord[]> {
     let records = safeGetItem<ReferralCommissionRecord[]>(LOCAL_REFERRAL_COMMISSIONS_KEY, []);
-    
-    if (!records || records.length === 0) {
-      records = getDemoReferralCommissions();
-      safeSetItem(LOCAL_REFERRAL_COMMISSIONS_KEY, records);
+    if (!records) {
+      records = [];
     }
 
     const config = await this.getStoreReferralConfig();
@@ -2832,6 +2834,636 @@ export const adminService = {
   },
 
   /**
+   * Fetch stored Authentication Appearance configuration from Supabase public.settings / tables
+   */
+  async getAuthAppearanceSettings(): Promise<SupabaseAuthAppearanceSettings> {
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase
+          .from('auth_appearance_settings')
+          .select('*')
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          return data as SupabaseAuthAppearanceSettings;
+        }
+      } catch (err) {
+        console.warn('[AdminService] Error loading auth_appearance_settings directly:', err);
+      }
+    }
+
+    // Fallback to server API
+    try {
+      const res = await fetch('/api/auth-appearance');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.settings) {
+          return json.settings as SupabaseAuthAppearanceSettings;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[AdminService] Error fetching /api/auth-appearance:', apiErr);
+    }
+
+    return {
+      id: 1,
+      login_title: 'Welcome back',
+      login_subtitle: 'Sign in to continue shopping',
+      signup_title: 'Create your account',
+      signup_subtitle: 'Join us and start shopping',
+      show_logo: true,
+      show_google: true,
+      show_apple: true,
+      show_signup_link: true,
+      show_login_link: true,
+      animation_enabled: true,
+      animation_type: 'ken-burns',
+      transition_duration: 1.5,
+      image_display_duration: 6,
+      zoom_intensity: 1.05,
+      pan_enabled: true,
+      randomize_images: false,
+      overlay_opacity: 0.45,
+      card_opacity: 0.72,
+      card_border_radius: 24,
+      card_position: 'center',
+    };
+  },
+
+  /**
+   * Fetch all background images from Supabase public.auth_background_images
+   */
+  async getAuthBackgroundImages(activeOnly = false): Promise<SupabaseAuthBackgroundImage[]> {
+    if (isSupabaseConfigured()) {
+      try {
+        let query = supabase
+          .from('auth_background_images')
+          .select('*')
+          .order('display_order', { ascending: true })
+          .order('created_at', { ascending: true });
+
+        if (activeOnly) {
+          query = query.eq('is_active', true);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) {
+          return data.map((img: any) => {
+            let publicUrl = img.storage_path;
+            if (!publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
+              const { data: urlData } = supabase.storage.from('auth-backgrounds').getPublicUrl(img.storage_path);
+              publicUrl = urlData?.publicUrl || img.storage_path;
+            }
+            return {
+              ...img,
+              public_url: publicUrl,
+            } as SupabaseAuthBackgroundImage;
+          });
+        }
+      } catch (err) {
+        console.warn('[AdminService] Error fetching auth_background_images directly:', err);
+      }
+    }
+
+    // Fallback to server API
+    try {
+      const res = await fetch('/api/auth-appearance');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.images)) {
+          let list = json.images;
+          if (activeOnly) {
+            list = list.filter((img: any) => img.is_active);
+          }
+          return list as SupabaseAuthBackgroundImage[];
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[AdminService] Error fetching images from /api/auth-appearance:', apiErr);
+    }
+
+    return [];
+  },
+
+  /**
+   * Unified Authentication Appearance fetcher combining settings and active images
+   */
+  async getAuthAppearance(): Promise<AuthAppearanceConfig> {
+    try {
+      const [settings, images] = await Promise.all([
+        this.getAuthAppearanceSettings(),
+        this.getAuthBackgroundImages(true),
+      ]);
+
+      const mappedImages: AuthBackgroundImage[] = images.map((img) => ({
+        id: img.id,
+        url: img.public_url || img.storage_path,
+        title: img.name,
+        altText: img.name,
+        name: img.name,
+        storage_path: img.storage_path,
+        isActive: img.is_active,
+        order: img.display_order,
+        is_default: img.is_default,
+        uploadedAt: img.created_at,
+      }));
+
+      const config: AuthAppearanceConfig = {
+        id: settings.id || 1,
+        enabled: settings.animation_enabled ?? true,
+        images: mappedImages,
+
+        login_title: settings.login_title || 'Welcome back',
+        login_subtitle: settings.login_subtitle || 'Sign in to continue shopping',
+        signup_title: settings.signup_title || 'Create your account',
+        signup_subtitle: settings.signup_subtitle || 'Join us and start shopping',
+        show_logo: settings.show_logo ?? true,
+        show_google: settings.show_google ?? true,
+        show_apple: settings.show_apple ?? true,
+        show_signup_link: settings.show_signup_link ?? true,
+        show_login_link: settings.show_login_link ?? true,
+
+        animation_enabled: settings.animation_enabled ?? true,
+        animation_type: settings.animation_type || 'ken-burns',
+        transition_duration: settings.transition_duration || 1.5,
+        image_display_duration: settings.image_display_duration || 6,
+        zoom_intensity: settings.zoom_intensity || 1.05,
+        pan_enabled: settings.pan_enabled ?? true,
+        randomize_images: settings.randomize_images ?? false,
+
+        overlay_opacity: settings.overlay_opacity ?? 0.45,
+        card_opacity: settings.card_opacity ?? 0.72,
+        card_border_radius: settings.card_border_radius ?? 24,
+        card_position: settings.card_position || 'center',
+
+        // Legacy compatibility mappings
+        rotationIntervalSeconds: settings.image_display_duration || 6,
+        transitionEffect:
+          settings.animation_type === 'slide'
+            ? 'slide'
+            : settings.animation_type === 'pan'
+            ? 'pan'
+            : settings.animation_type === 'fade'
+            ? 'fade'
+            : 'zoom-fade',
+        transitionDurationMs: (settings.transition_duration || 1.5) * 1000,
+        enableMotion: settings.animation_enabled ?? true,
+        welcomeHeadline: settings.login_title || 'Welcome back',
+        welcomeSubtext: settings.login_subtitle || 'Sign in to continue shopping',
+        overlayDarkness: Math.round((settings.overlay_opacity ?? 0.45) * 100),
+        overlayBlur: 1,
+        overlayGradient: 'soft',
+        cardBlur: 'xl',
+        cardOpacity: Math.round((settings.card_opacity ?? 0.72) * 100),
+        cardBorderIntensity: 'subtle',
+        showLogoBadge: settings.show_logo ?? true,
+        showFeaturesPill: true,
+        lastUpdated: settings.updated_at || new Date().toISOString(),
+      };
+
+      return config;
+    } catch (err) {
+      console.warn('[AdminService] getAuthAppearance failed, using defaults:', err);
+      return DEFAULT_AUTH_APPEARANCE;
+    }
+  },
+
+  /**
+   * Save settings directly to Supabase public.auth_appearance_settings
+   */
+  async saveAuthAppearanceSettings(
+    settings: Partial<SupabaseAuthAppearanceSettings>
+  ): Promise<{ success: boolean; error?: string; data?: SupabaseAuthAppearanceSettings }> {
+    const payload = {
+      ...settings,
+      id: 1,
+      updated_at: new Date().toISOString(),
+    };
+
+    let savedData: SupabaseAuthAppearanceSettings | null = null;
+    let errorMsg: string | null = null;
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase
+          .from('auth_appearance_settings')
+          .upsert(payload, { onConflict: 'id' })
+          .select()
+          .single();
+
+        if (!error && data) {
+          savedData = data as SupabaseAuthAppearanceSettings;
+        } else if (error) {
+          errorMsg = error.message;
+        }
+      } catch (err: any) {
+        errorMsg = err?.message;
+      }
+    }
+
+    // If direct Supabase write failed or not configured, use server endpoint fallback
+    if (!savedData) {
+      try {
+        const res = await fetch('/api/admin/auth-appearance/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) {
+            savedData = json.data as SupabaseAuthAppearanceSettings;
+            errorMsg = null;
+          }
+        }
+      } catch (apiErr: any) {
+        errorMsg = errorMsg || apiErr?.message || 'Failed to save settings.';
+      }
+    }
+
+    if (savedData) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kud_auth_appearance_updated', { detail: savedData }));
+      }
+      return { success: true, data: savedData };
+    }
+
+    return { success: false, error: errorMsg || 'Unable to save appearance settings.' };
+  },
+
+  /**
+   * Save unified configuration to Supabase
+   */
+  async saveAuthAppearance(
+    config: AuthAppearanceConfig
+  ): Promise<{ success: boolean; error?: string; data?: AuthAppearanceConfig }> {
+    const dbSettingsPayload: Partial<SupabaseAuthAppearanceSettings> = {
+      login_title: config.login_title || config.welcomeHeadline || 'Welcome back',
+      login_subtitle: config.login_subtitle || config.welcomeSubtext || 'Sign in to continue shopping',
+      signup_title: config.signup_title || 'Create your account',
+      signup_subtitle: config.signup_subtitle || 'Join us and start shopping',
+      show_logo: config.show_logo ?? config.showLogoBadge ?? true,
+      show_google: config.show_google ?? true,
+      show_apple: config.show_apple ?? true,
+      show_signup_link: config.show_signup_link ?? true,
+      show_login_link: config.show_login_link ?? true,
+      animation_enabled: config.animation_enabled ?? config.enableMotion ?? true,
+      animation_type:
+        config.animation_type ||
+        (config.transitionEffect === 'slide'
+          ? 'slide'
+          : config.transitionEffect === 'pan'
+          ? 'pan'
+          : config.transitionEffect === 'fade'
+          ? 'fade'
+          : 'ken-burns'),
+      transition_duration:
+        config.transition_duration || (config.transitionDurationMs ? config.transitionDurationMs / 1000 : 1.5),
+      image_display_duration: config.image_display_duration || config.rotationIntervalSeconds || 6,
+      zoom_intensity: config.zoom_intensity || 1.05,
+      pan_enabled: config.pan_enabled ?? (config.transitionEffect === 'pan' || true),
+      randomize_images: config.randomize_images ?? false,
+      overlay_opacity:
+        config.overlay_opacity !== undefined
+          ? config.overlay_opacity > 1
+            ? config.overlay_opacity / 100
+            : config.overlay_opacity
+          : config.overlayDarkness !== undefined
+          ? config.overlayDarkness / 100
+          : 0.45,
+      card_opacity:
+        config.card_opacity !== undefined
+          ? config.card_opacity > 1
+            ? config.card_opacity / 100
+            : config.card_opacity
+          : 0.72,
+      card_border_radius: config.card_border_radius ?? 24,
+      card_position: config.card_position || 'center',
+    };
+
+    const res = await this.saveAuthAppearanceSettings(dbSettingsPayload);
+    if (res.success) {
+      return { success: true, data: config };
+    }
+    return { success: false, error: res.error };
+  },
+
+  /**
+   * Upload an authentication background image directly to Supabase Storage bucket 'auth-backgrounds'
+   * and insert record into public.auth_background_images.
+   */
+  async uploadAuthBackgroundImageToStorage(
+    file: File,
+    customName?: string
+  ): Promise<{ success: boolean; data?: SupabaseAuthBackgroundImage; error?: string }> {
+    if (!file) {
+      return { success: false, error: 'No image file selected.' };
+    }
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      return { success: false, error: 'Background image size exceeds 10 MB limit.' };
+    }
+    const validMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/avif'];
+    const validExts = ['jpg', 'jpeg', 'png', 'webp', 'avif'];
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    if (!validMimes.includes(file.type?.toLowerCase()) && !validExts.includes(ext)) {
+      return { success: false, error: 'Invalid file format. Please upload JPG, PNG, WEBP, or AVIF.' };
+    }
+
+    const cleanBaseName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageFileName = `${Date.now()}_${cleanBaseName}.${ext}`;
+    const displayName = (customName || cleanBaseName).replace(/_/g, ' ').trim();
+
+    // 1. First attempt direct upload with client Supabase
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('auth-backgrounds')
+          .upload(storageFileName, file, {
+            contentType: file.type || 'image/jpeg',
+            cacheControl: '3600',
+            upsert: true,
+          });
+
+        if (!uploadError && uploadData) {
+          const { data: pubData } = supabase.storage.from('auth-backgrounds').getPublicUrl(storageFileName);
+          const publicUrl = pubData.publicUrl;
+
+          // Insert row into auth_background_images
+          const { data: insertData, error: insertError } = await supabase
+            .from('auth_background_images')
+            .insert({
+              name: displayName,
+              storage_path: storageFileName,
+              is_active: true,
+              display_order: Date.now() % 10000,
+              is_default: false,
+            })
+            .select()
+            .single();
+
+          if (!insertError && insertData) {
+            const resultRow: SupabaseAuthBackgroundImage = {
+              ...insertData,
+              public_url: publicUrl,
+            };
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+            }
+            return { success: true, data: resultRow };
+          }
+        }
+      } catch (err) {
+        console.warn('[AdminService] Direct client upload to auth-backgrounds fallback to server:', err);
+      }
+    }
+
+    // 2. Server proxy fallback
+    try {
+      const base64Data = await fileToBase64(file);
+      const res = await fetch('/api/admin/storage/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: storageFileName,
+          base64Data,
+          contentType: file.type || 'image/jpeg',
+          folder: '',
+          bucket: 'auth-backgrounds',
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        return { success: false, error: errJson.error || 'Failed to upload image via server proxy.' };
+      }
+
+      const uploadResult = await res.json();
+      if (!uploadResult.success || !uploadResult.url) {
+        return { success: false, error: uploadResult.error || 'Failed to get public URL.' };
+      }
+
+      // Insert record into auth_background_images via server API
+      const dbRes = await fetch('/api/admin/auth-appearance/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: displayName,
+          storage_path: storageFileName,
+          is_active: true,
+          display_order: 0,
+          is_default: false,
+        }),
+      });
+
+      if (dbRes.ok) {
+        const dbJson = await dbRes.json();
+        if (dbJson.success && dbJson.data) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true, data: dbJson.data };
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          id: `img-${Date.now()}`,
+          name: displayName,
+          storage_path: storageFileName,
+          public_url: uploadResult.url,
+          is_active: true,
+          display_order: 0,
+          is_default: false,
+        },
+      };
+    } catch (err: any) {
+      console.error('[AdminService] Failed to upload background image:', err);
+      return { success: false, error: err?.message || 'Storage upload failed.' };
+    }
+  },
+
+  /**
+   * Update a background image (active toggle, name, default)
+   */
+  async updateAuthBackgroundImage(
+    id: string,
+    updates: Partial<SupabaseAuthBackgroundImage>
+  ): Promise<{ success: boolean; error?: string; data?: SupabaseAuthBackgroundImage }> {
+    if (isSupabaseConfigured()) {
+      try {
+        if (updates.is_default === true) {
+          await supabase
+            .from('auth_background_images')
+            .update({ is_default: false })
+            .neq('id', id);
+        }
+
+        const { data, error } = await supabase
+          .from('auth_background_images')
+          .update({
+            ...updates,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (!error && data) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true, data };
+        }
+      } catch (err) {
+        console.warn('[AdminService] Direct updateAuthBackgroundImage fallback:', err);
+      }
+    }
+
+    // Fallback to server endpoint
+    try {
+      const res = await fetch(`/api/admin/auth-appearance/images/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true, data: json.data };
+        }
+      }
+    } catch (apiErr: any) {
+      return { success: false, error: apiErr?.message || 'Failed to update image.' };
+    }
+
+    return { success: false, error: 'Could not update background image.' };
+  },
+
+  /**
+   * Delete an authentication background image from database and storage
+   */
+  async deleteAuthBackgroundImage(
+    id: string,
+    storagePath?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase
+          .from('auth_background_images')
+          .delete()
+          .eq('id', id);
+
+        if (!error) {
+          if (storagePath && !storagePath.startsWith('http')) {
+            await supabase.storage.from('auth-backgrounds').remove([storagePath]);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn('[AdminService] Direct deleteAuthBackgroundImage fallback:', err);
+      }
+    }
+
+    // Fallback to server endpoint
+    try {
+      const url = storagePath
+        ? `/api/admin/auth-appearance/images/${id}?storage_path=${encodeURIComponent(storagePath)}`
+        : `/api/admin/auth-appearance/images/${id}`;
+      const res = await fetch(url, { method: 'DELETE' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true };
+        }
+      }
+    } catch (apiErr: any) {
+      return { success: false, error: apiErr?.message || 'Failed to delete image.' };
+    }
+
+    return { success: false, error: 'Could not delete background image.' };
+  },
+
+  /**
+   * Reorder background images display order
+   */
+  async reorderAuthBackgroundImages(
+    orderMap: Record<string, number>
+  ): Promise<{ success: boolean; error?: string }> {
+    if (isSupabaseConfigured()) {
+      try {
+        const promises = Object.entries(orderMap).map(([id, display_order]) =>
+          supabase
+            .from('auth_background_images')
+            .update({
+              display_order,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', id)
+        );
+        await Promise.all(promises);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+        }
+        return { success: true };
+      } catch (err) {
+        console.warn('[AdminService] Direct reorderAuthBackgroundImages fallback:', err);
+      }
+    }
+
+    // Fallback to server endpoint
+    try {
+      const res = await fetch('/api/admin/auth-appearance/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderMap }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kud_auth_images_updated'));
+          }
+          return { success: true };
+        }
+      }
+    } catch (apiErr: any) {
+      return { success: false, error: apiErr?.message || 'Failed to reorder images.' };
+    }
+
+    return { success: false, error: 'Could not reorder images.' };
+  },
+
+  /**
+   * Set a specific background image as the store default
+   */
+  async setDefaultAuthBackgroundImage(id: string): Promise<{ success: boolean; error?: string }> {
+    return this.updateAuthBackgroundImage(id, { is_default: true });
+  },
+
+  /**
+   * Legacy helper for backward compatibility
+   */
+  async uploadAuthBackgroundImage(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
+    const res = await this.uploadAuthBackgroundImageToStorage(file);
+    if (res.success && res.data) {
+      return { success: true, url: res.data.public_url || res.data.storage_path };
+    }
+    return { success: false, error: res.error };
+  },
+
+  /**
    * Validates selected store logo file format and size
    * Allowed: PNG, JPG/JPEG, WEBP (Max 5 MB)
    */
@@ -3515,7 +4147,11 @@ export const adminService = {
       images: imageUrls,
       videos: videoItems,
       variants: productData.variants || [],
-      category_attributes: productData.categoryAttributes || {},
+      category_attributes: {
+        ...(productData.categoryAttributes || {}),
+        customizationConfig: productData.customizationConfig || null,
+      },
+      customization_config: productData.customizationConfig || null,
       stock: Number(productData.stock) || 0,
       low_stock_threshold: productData.lowStockThreshold !== undefined ? Number(productData.lowStockThreshold) : 5,
       track_inventory: productData.trackInventory !== false,
@@ -4046,7 +4682,11 @@ export const adminService = {
       description: updatedProduct.description,
       videos: updatedVideos,
       variants: updatedProduct.variants || [],
-      category_attributes: updatedProduct.categoryAttributes || {},
+      category_attributes: {
+        ...(updatedProduct.categoryAttributes || {}),
+        customizationConfig: updatedProduct.customizationConfig !== undefined ? updatedProduct.customizationConfig : (updatedProduct.categoryAttributes as any)?.customizationConfig || null,
+      },
+      customization_config: updatedProduct.customizationConfig !== undefined ? updatedProduct.customizationConfig : null,
       in_stock: updatedProduct.inStock,
       stock: updatedProduct.stock,
       low_stock_threshold: updatedProduct.lowStockThreshold !== undefined ? Number(updatedProduct.lowStockThreshold) : 5,
@@ -4640,6 +5280,8 @@ export const adminService = {
               email: customerEmail,
               fullName: p.fullName || p.full_name || 'Customer Profile',
               phone: p.phone || p.shipping_address?.phone || '-',
+              age: p.age !== undefined && p.age !== null ? Number(p.age) : undefined,
+              gender: p.gender || undefined,
               role: p.role || 'customer',
               createdAt: memberSince,
               orderCount: userOrders.length,
@@ -4678,9 +5320,6 @@ export const adminService = {
         } catch {
           customers = [];
         }
-      }
-      if (customers.length === 0) {
-        customers = getDemoCustomers();
       }
     }
 
@@ -5205,447 +5844,3 @@ export const adminService = {
   },
 };
 
-// Helper demo records
-function getDemoOrders(): Order[] {
-  return [
-    {
-      id: 'KUD-904128',
-      order_number: 'KUD-904128',
-      user_id: 'usr-1',
-      created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-      subtotal_amount: 1400,
-      delivery_fee: 65,
-      discount_amount: 0,
-      vat_amount: 210,
-      total_amount: 1675,
-      status: 'pending',
-      payment_status: 'Paid',
-      payment_method: 'Yoco Secure Gateway',
-      customer_name: 'Aisha Venter',
-      customer_email: 'aisha.venter@example.co.za',
-      shipping_address: {
-        fullName: 'Aisha Venter',
-        email: 'aisha.venter@example.co.za',
-        phone: '+27 82 555 1234',
-        addressLine: '14 Admiralty Way, Sandton',
-        city: 'Johannesburg',
-        province: 'Gauteng',
-        postalCode: '2196',
-      },
-      items: [
-        {
-          id: 'item-1',
-          product_id: 'p1',
-          product_name: 'Hydrating Glow Serum 30ml',
-          product_brand: 'KUD Skin',
-          product_image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&q=80',
-          quantity: 2,
-          unit_price: 350,
-          total_price: 700,
-          variant: '30ml',
-        },
-        {
-          id: 'item-2',
-          product_id: 'p4',
-          product_name: 'Wireless Noise Cancelling Earbuds',
-          product_brand: 'Acoustix',
-          product_image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=400&q=80',
-          quantity: 1,
-          unit_price: 700,
-          total_price: 700,
-        },
-      ],
-    },
-    {
-      id: 'KUD-109283',
-      order_number: 'KUD-109283',
-      user_id: 'usr-2',
-      created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-      subtotal_amount: 10,
-      delivery_fee: 0,
-      discount_amount: 0,
-      vat_amount: 1.5,
-      total_amount: 11.5,
-      status: 'pending',
-      payment_status: 'pending',
-      payment_method: 'Yoco Secure Gateway',
-      customer_name: 'Thabo Mokoena',
-      customer_email: 'thabo.mokoena@example.co.za',
-      shipping_address: {
-        fullName: 'Thabo Mokoena',
-        email: 'thabo.mokoena@example.co.za',
-        phone: '+27 71 892 4001',
-        addressLine: '88 Lighthouse Road, Umhlanga Rocks',
-        city: 'Durban',
-        province: 'KwaZulu-Natal',
-        postalCode: '4319',
-      },
-      items: [
-        {
-          id: 'item-test-10',
-          product_id: 'p-sample-10',
-          product_name: 'Hydrating Facial Sheet Mask Sample',
-          product_brand: 'KUD Skin',
-          product_image: 'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=400&q=80',
-          quantity: 1,
-          unit_price: 10,
-          total_price: 10,
-          variant: 'Single Pack (1pc)',
-        },
-      ],
-    },
-    {
-      id: 'KUD-812034',
-      order_number: 'KUD-812034',
-      user_id: 'usr-3',
-      created_at: new Date(Date.now() - 3600000 * 14).toISOString(),
-      subtotal_amount: 850,
-      delivery_fee: 0,
-      discount_amount: 0,
-      vat_amount: 127.5,
-      total_amount: 977.5,
-      status: 'processing',
-      payment_status: 'Paid',
-      payment_method: 'Instant EFT (Capitec)',
-      customer_name: 'Emeka Naidoo',
-      customer_email: 'emeka.naidoo@example.co.za',
-      shipping_address: {
-        fullName: 'Emeka Naidoo',
-        email: 'emeka.naidoo@example.co.za',
-        phone: '+27 83 987 6543',
-        addressLine: '22 Victoria Road, Camps Bay',
-        city: 'Cape Town',
-        province: 'Western Cape',
-        postalCode: '8005',
-      },
-      items: [
-        {
-          id: 'item-3',
-          product_id: 'p3',
-          product_name: 'Pro Performance Running Shoes',
-          product_brand: 'StridePro',
-          product_image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=80',
-          quantity: 1,
-          unit_price: 850,
-          total_price: 850,
-          variant: 'EU 42',
-        },
-      ],
-    },
-    {
-      id: 'KUD-741982',
-      order_number: 'KUD-741982',
-      user_id: 'usr-4',
-      created_at: new Date(Date.now() - 3600000 * 48).toISOString(),
-      subtotal_amount: 2150,
-      delivery_fee: 0,
-      discount_amount: 0,
-      vat_amount: 322.5,
-      total_amount: 2472.5,
-      status: 'delivered',
-      payment_status: 'Paid',
-      payment_method: 'Card Payment',
-      customer_name: 'Chidinma Van Der Merwe',
-      customer_email: 'chidinma.vdm@example.co.za',
-      shipping_address: {
-        fullName: 'Chidinma Van Der Merwe',
-        email: 'chidinma.vdm@example.co.za',
-        phone: '+27 84 555 1212',
-        addressLine: '5 Crown Avenue, Waterkloof',
-        city: 'Pretoria',
-        province: 'Gauteng',
-        postalCode: '0181',
-      },
-      items: [
-        {
-          id: 'item-4',
-          product_id: 'p2',
-          product_name: 'Minimalist Ceramic Vase Set',
-          product_brand: 'Nordic Craft',
-          product_image: 'https://images.unsplash.com/photo-1581783342308-f792dbdd27c5?w=400&q=80',
-          quantity: 2,
-          unit_price: 1075,
-          total_price: 2150,
-        },
-      ],
-    },
-  ];
-}
-
-function getDemoCustomers(): Customer[] {
-  return [
-    {
-      id: 'usr-1',
-      email: 'aisha.venter@example.co.za',
-      fullName: 'Aisha Venter',
-      phone: '+27 82 555 1234',
-      role: 'customer',
-      createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-      orderCount: 4,
-      totalSpent: 3800,
-      account_status: 'active',
-      disabled_reason: null,
-      disabled_at: null,
-      last_sign_in_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-      confirmed_at: new Date(Date.now() - 86400000 * 30).toISOString(),
-      referralStatus: 'active',
-      isReferralBanned: false,
-      isEarningsFrozen: false,
-      referralCount: 3,
-      referralBalance: 150,
-      totalReferralEarned: 250,
-      hideEarnings: false,
-      hideInvites: false,
-    },
-    {
-      id: 'usr-2',
-      email: 'thabo.mokoena@example.co.za',
-      fullName: 'Thabo Mokoena',
-      phone: '+27 71 892 4001',
-      role: 'customer',
-      createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
-      orderCount: 1,
-      totalSpent: 11.5,
-      account_status: 'active',
-      disabled_reason: null,
-      disabled_at: null,
-      last_sign_in_at: null,
-      confirmed_at: null,
-      referralStatus: 'active',
-      isReferralBanned: false,
-      isEarningsFrozen: false,
-      referralCount: 0,
-      referralBalance: 0,
-      totalReferralEarned: 0,
-      hideEarnings: false,
-      hideInvites: false,
-    },
-    {
-      id: 'usr-3',
-      email: 'emeka.naidoo@example.co.za',
-      fullName: 'Emeka Naidoo',
-      phone: '+27 83 987 6543',
-      role: 'customer',
-      createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
-      orderCount: 2,
-      totalSpent: 1650,
-      account_status: 'active',
-      disabled_reason: null,
-      disabled_at: null,
-      last_sign_in_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-      confirmed_at: new Date(Date.now() - 86400000 * 45).toISOString(),
-      referralStatus: 'banned',
-      isReferralBanned: true,
-      isEarningsFrozen: false,
-      referralCount: 1,
-      referralBalance: 0,
-      totalReferralEarned: 50,
-      hideEarnings: false,
-      hideInvites: false,
-    },
-    {
-      id: 'usr-4',
-      email: 'chidinma.vdm@example.co.za',
-      fullName: 'Chidinma Van Der Merwe',
-      phone: '+27 84 555 1212',
-      role: 'customer',
-      createdAt: new Date(Date.now() - 86400000 * 12).toISOString(),
-      orderCount: 5,
-      totalSpent: 5200,
-      account_status: 'active',
-      disabled_reason: null,
-      disabled_at: null,
-      last_sign_in_at: new Date(Date.now() - 3600000 * 18).toISOString(),
-      confirmed_at: new Date(Date.now() - 86400000 * 12).toISOString(),
-      referralStatus: 'active',
-      isReferralBanned: false,
-      isEarningsFrozen: true,
-      earningsFrozenReason: 'Under compliance security review',
-      frozenAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      referralCount: 2,
-      referralBalance: 100,
-      totalReferralEarned: 150,
-      hideEarnings: false,
-      hideInvites: false,
-    },
-    {
-      id: 'usr-5',
-      email: 'lerato.khumalo@example.co.za',
-      fullName: 'Lerato Khumalo',
-      phone: '+27 82 123 4567',
-      role: 'customer',
-      createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-      orderCount: 2,
-      totalSpent: 1450,
-      account_status: 'active',
-      disabled_reason: null,
-      disabled_at: null,
-      referralStatus: 'active',
-      isReferralBanned: false,
-      isEarningsFrozen: false,
-      referralCount: 0,
-      referralBalance: 0,
-      totalReferralEarned: 0,
-      hideEarnings: false,
-      hideInvites: true,
-    },
-  ];
-}
-
-function getDemoReferralCommissions(): ReferralCommissionRecord[] {
-  return [
-    {
-      id: 'ref-comm-101',
-      referrerId: 'usr-1',
-      referrerName: 'Aisha Bello',
-      referrerEmail: 'aisha.bello@example.com',
-      referredClientId: 'usr-2',
-      referredClientName: 'Emeka Okafor',
-      referredClientEmail: 'emeka.okafor@example.com',
-      referralCodeUsed: 'AISHA-KUD-88',
-      createdAt: new Date(Date.now() - 86400000 * 20).toISOString(),
-      evaluationMonth: '2026-08',
-      monthlyPurchasesCount: 2,
-      requiredMonthlyPurchases: 2,
-      isQualified: true,
-      status: 'ready_for_allocation',
-      commissionAmount: 50,
-      monthlyOrders: [
-        {
-          orderId: 'KUD-812034',
-          orderDate: new Date(Date.now() - 3600000 * 14).toISOString(),
-          totalAmount: 850,
-          status: 'Processing',
-          paymentStatus: 'Paid',
-          itemsSummary: '1x Pro Performance Running Shoes (EU 42)',
-        },
-        {
-          orderId: 'KUD-809112',
-          orderDate: new Date(Date.now() - 86400000 * 10).toISOString(),
-          totalAmount: 340,
-          status: 'Delivered',
-          paymentStatus: 'Paid',
-          itemsSummary: '1x Hydrating Glow Serum 30ml',
-        },
-      ],
-    },
-    {
-      id: 'ref-comm-102',
-      referrerId: 'usr-champ-1',
-      referrerName: 'Liam K.',
-      referrerEmail: 'liam.k@example.com',
-      referredClientId: 'usr-3',
-      referredClientName: 'Chidinma Vance',
-      referredClientEmail: 'chidinma.vance@example.com',
-      referralCodeUsed: 'LIAM-PLATINUM-7',
-      createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
-      evaluationMonth: '2026-08',
-      monthlyPurchasesCount: 2,
-      requiredMonthlyPurchases: 2,
-      isQualified: true,
-      status: 'ready_for_allocation',
-      commissionAmount: 50,
-      monthlyOrders: [
-        {
-          orderId: 'KUD-741982',
-          orderDate: new Date(Date.now() - 3600000 * 48).toISOString(),
-          totalAmount: 2200,
-          status: 'Delivered',
-          paymentStatus: 'Paid',
-          itemsSummary: '2x Minimalist Ceramic Vase Set',
-        },
-        {
-          orderId: 'KUD-738910',
-          orderDate: new Date(Date.now() - 86400000 * 8).toISOString(),
-          totalAmount: 680,
-          status: 'Delivered',
-          paymentStatus: 'Paid',
-          itemsSummary: '1x Wireless Noise Cancelling Earbuds',
-        },
-      ],
-    },
-    {
-      id: 'ref-comm-103',
-      referrerId: 'usr-1',
-      referrerName: 'Aisha Bello',
-      referrerEmail: 'aisha.bello@example.com',
-      referredClientId: 'usr-4',
-      referredClientName: 'Sipho Dlamini',
-      referredClientEmail: 'sipho.d@example.com',
-      referralCodeUsed: 'AISHA-KUD-88',
-      createdAt: new Date(Date.now() - 86400000 * 8).toISOString(),
-      evaluationMonth: '2026-08',
-      monthlyPurchasesCount: 1,
-      requiredMonthlyPurchases: 2,
-      isQualified: false,
-      status: 'pending_qualification',
-      commissionAmount: 50,
-      monthlyOrders: [
-        {
-          orderId: 'KUD-904128',
-          orderDate: new Date(Date.now() - 3600000 * 2).toISOString(),
-          totalAmount: 1450,
-          status: 'Pending',
-          paymentStatus: 'Paid',
-          itemsSummary: '2x Hydrating Glow Serum, 1x Earbuds',
-        },
-      ],
-    },
-    {
-      id: 'ref-comm-104',
-      referrerId: 'usr-champ-2',
-      referrerName: 'Zandile M.',
-      referrerEmail: 'zandile.m@example.com',
-      referredClientId: 'usr-5',
-      referredClientName: 'Brandon Meyer',
-      referredClientEmail: 'brandon.m@example.com',
-      referralCodeUsed: 'ZANDILE-VIP',
-      createdAt: new Date(Date.now() - 86400000 * 18).toISOString(),
-      evaluationMonth: '2026-08',
-      monthlyPurchasesCount: 0,
-      requiredMonthlyPurchases: 2,
-      isQualified: false,
-      status: 'pending_qualification',
-      commissionAmount: 50,
-      monthlyOrders: [],
-    },
-    {
-      id: 'ref-comm-105',
-      referrerId: 'usr-1',
-      referrerName: 'Aisha Bello',
-      referrerEmail: 'aisha.bello@example.com',
-      referredClientId: 'usr-6',
-      referredClientName: 'Chloe Van Zyl',
-      referredClientEmail: 'chloe.v@example.com',
-      referralCodeUsed: 'AISHA-KUD-88',
-      createdAt: new Date(Date.now() - 86400000 * 45).toISOString(),
-      evaluationMonth: '2026-07',
-      monthlyPurchasesCount: 2,
-      requiredMonthlyPurchases: 2,
-      isQualified: true,
-      status: 'allocated',
-      commissionAmount: 50,
-      allocatedAt: new Date(Date.now() - 86400000 * 25).toISOString(),
-      allocatedByAdmin: 'admin@kudstore.com',
-      adminNotes: 'Verified 2 qualifying purchases in July. Commission credited to Aisha Bello.',
-      monthlyOrders: [
-        {
-          orderId: 'KUD-699120',
-          orderDate: new Date(Date.now() - 86400000 * 35).toISOString(),
-          totalAmount: 520,
-          status: 'Delivered',
-          paymentStatus: 'Paid',
-          itemsSummary: '1x Organic Argan Oil Shampoo',
-        },
-        {
-          orderId: 'KUD-701445',
-          orderDate: new Date(Date.now() - 86400000 * 26).toISOString(),
-          totalAmount: 780,
-          status: 'Delivered',
-          paymentStatus: 'Paid',
-          itemsSummary: '2x Matte Liquid Lipstick Duo',
-        },
-      ],
-    },
-  ];
-}

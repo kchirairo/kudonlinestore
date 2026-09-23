@@ -21,6 +21,7 @@ import {
   ProductVariantItem,
   ProductVideoItem,
   Product,
+  ProductCustomizationConfig,
 } from '../../types';
 import { useShop } from '../../context/ShopContext';
 import { generateUniqueSku } from '../../utils/skuGenerator';
@@ -29,6 +30,7 @@ import { convertImageToWebP } from '../../utils/imageUpload';
 // Subcomponents
 import { ProductBasicInfoSection } from '../../components/admin/product-editor/ProductBasicInfoSection';
 import { ProductPricingInventorySection } from '../../components/admin/product-editor/ProductPricingInventorySection';
+import { ProductCustomizationSection } from '../../components/admin/product-editor/ProductCustomizationSection';
 import { ProductVariantsManager } from '../../components/admin/product-editor/ProductVariantsManager';
 import {
   ProductMediaManager,
@@ -103,6 +105,9 @@ export const AdminAddProductPage: React.FC = () => {
 
   // Category Specific Attributes
   const [categoryAttributes, setCategoryAttributes] = useState<Record<string, any>>({});
+
+  // Customization & Personalized Printing Rules
+  const [customizationConfig, setCustomizationConfig] = useState<ProductCustomizationConfig | undefined>(undefined);
 
   // SEO
   const [seoTitle, setSeoTitle] = useState<string>('');
@@ -560,6 +565,7 @@ export const AdminAddProductPage: React.FC = () => {
         videos: finalVideoItems,
         variants,
         categoryAttributes,
+        customizationConfig: customizationConfig?.isCustomizable ? customizationConfig : undefined,
         weight: parseFloat(weight) || 0.5,
         dimensions: dimObj,
         shippingClass,
@@ -766,6 +772,12 @@ export const AdminAddProductPage: React.FC = () => {
               setTrackInventory={setTrackInventory}
               allowBackorders={allowBackorders}
               setAllowBackorders={setAllowBackorders}
+            />
+
+            {/* 3b. Customization, Printing & Personalization Rules */}
+            <ProductCustomizationSection
+              config={customizationConfig}
+              onChange={setCustomizationConfig}
             />
 
             {/* 4. Product Variants Manager */}
