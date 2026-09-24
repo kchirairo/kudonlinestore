@@ -1359,15 +1359,15 @@ export const AccountPage: React.FC = () => {
 
             <button
               id="account-favourites-btn"
-              onClick={() => navigate('/favourites')}
+              onClick={() => navigate('/wishlist')}
               className="bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800/80 rounded-2xl p-4 sm:p-5 border border-gray-100 dark:border-slate-800 text-left flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 transition-all group cursor-pointer shadow-2xs"
             >
               <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-[#ff6452] flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
                 <Heart className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
               <div className="min-w-0">
-                <h3 className="font-bold text-gray-900 dark:text-white text-sm sm:text-base">Favourites</h3>
-                <p className="text-xs text-gray-400 dark:text-slate-400 truncate">Saved items</p>
+                <h3 className="font-bold text-gray-900 dark:text-white text-sm sm:text-base">My Wishlist</h3>
+                <p className="text-xs text-gray-400 dark:text-slate-400 truncate">Saved items & favorites</p>
               </div>
             </button>
 

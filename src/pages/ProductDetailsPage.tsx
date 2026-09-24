@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { productService } from '../services/productService';
 import { useShop } from '../context/ShopContext';
-import { Product } from '../types';
+import { Product, CustomerCustomizationData } from '../types';
 import { STORE_CONFIG } from '../constants/config';
 import { DetailSkeleton } from '../components/LoadingSkeleton';
 import { DatabaseErrorBanner } from '../components/DatabaseErrorBanner';
@@ -28,6 +28,8 @@ import { marketingService } from '../services/marketingService';
 import { getCurrentAttribution } from '../utils/utmTracker';
 import { ProductSocialPromoModal } from '../components/social/ProductSocialPromoModal';
 import { ProductReviewsSection } from '../components/ProductReviewsSection';
+import { ProductCustomizer } from '../components/product/ProductCustomizer';
+import { calculateCustomizedUnitPrice, validateQuantityRules } from '../utils/customizationPricing';
 
 export const ProductDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -49,6 +51,7 @@ export const ProductDetailsPage: React.FC = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [selectedVariant, setSelectedVariant] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
+  const [customizationData, setCustomizationData] = useState<CustomerCustomizationData | null>(null);
   const [isPromoModalOpen, setIsPromoModalOpen] = useState<boolean>(false);
   const [attribution] = useState(getCurrentAttribution());
 
@@ -63,6 +66,9 @@ export const ProductDetailsPage: React.FC = () => {
         setProduct(res);
         if (res?.sizeOrVariant) {
           setSelectedVariant(res.sizeOrVariant);
+        }
+        if (res?.customizationConfig?.minOrderQuantity) {
+          setQuantity(Math.max(1, res.customizationConfig.minOrderQuantity));
         }
         setIsLoading(false);
 
@@ -148,6 +154,14 @@ export const ProductDetailsPage: React.FC = () => {
       ? `${product.description.slice(0, 140)}... Buy ${product.name} for R${product.price} at ${STORE_CONFIG.STORE_NAME}. Fast courier delivery across South Africa.`
       : `Buy ${product.name} (${product.brand || 'KUD'}) online at ${STORE_CONFIG.STORE_NAME} South Africa for R${product.price}. Nationwide fast courier delivery & secure Yoco checkout.`;
 
+  const isCustomizable = Boolean(product.customizationConfig?.isCustomizable);
+  const minOrderQty = Math.max(1, product.customizationConfig?.minOrderQuantity || 1);
+  const maxOrderQty = product.customizationConfig?.maxOrderQuantity && product.customizationConfig.maxOrderQuantity > 0 ? product.customizationConfig.maxOrderQuantity : 9999;
+  const quantityStep = Math.max(1, product.customizationConfig?.quantityStep || 1);
+
+  // Dynamic calculated pricing
+  const currentPricing = calculateCustomizedUnitPrice(product, customizationData, quantity);
+
   const handleAddToCart = () => {
     if (!user) {
       showToast('Please sign in to add items to your cart', 'info');
@@ -163,7 +177,14 @@ export const ProductDetailsPage: React.FC = () => {
       );
       return;
     }
-    addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
+
+    const valResult = validateQuantityRules(product, quantity);
+    if (!valResult.isValid && valResult.error) {
+      showToast(valResult.error, 'error');
+      if (valResult.clampedQuantity <= 0) return;
+    }
+
+    addToCart(product, quantity, selectedVariant || product.sizeOrVariant, customizationData || undefined);
     marketingService.trackAddToCart(product, quantity, user);
   };
 
@@ -182,9 +203,31 @@ export const ProductDetailsPage: React.FC = () => {
       );
       return;
     }
-    addToCart(product, quantity, selectedVariant || product.sizeOrVariant);
+
+    const valResult = validateQuantityRules(product, quantity);
+    if (!valResult.isValid && valResult.error) {
+      showToast(valResult.error, 'error');
+      if (valResult.clampedQuantity <= 0) return;
+    }
+
+    addToCart(product, quantity, selectedVariant || product.sizeOrVariant, customizationData || undefined);
     marketingService.trackAddToCart(product, quantity, user);
     navigate('/cart');
+  };
+
+  const handleDecreaseQty = () => {
+    setQuantity((q) => Math.max(minOrderQty, q - quantityStep));
+  };
+
+  const handleIncreaseQty = () => {
+    const stockLimit = !product.customizationConfig?.disableStockLimits && product.trackInventory && typeof product.stock === 'number'
+      ? product.stock
+      : maxOrderQty;
+    const maxAllowed = Math.min(maxOrderQty, stockLimit);
+    setQuantity((q) => {
+      const next = q + quantityStep;
+      return next > maxAllowed ? maxAllowed : next;
+    });
   };
 
   const handleShare = async () => {
@@ -327,11 +370,17 @@ export const ProductDetailsPage: React.FC = () => {
               {/* Price Area */}
               <div className="flex items-baseline gap-3 py-1">
                 <span className="text-3xl font-black text-gray-900 dark:text-white">
-                  {STORE_CONFIG.STORE_CURRENCY}{product.price.toLocaleString()}
+                  {STORE_CONFIG.STORE_CURRENCY}
+                  {currentPricing.finalUnitPrice.toLocaleString()}
                 </span>
                 {product.originalPrice && (
                   <span className="text-lg text-gray-400 dark:text-slate-500 line-through font-semibold">
                     {STORE_CONFIG.STORE_CURRENCY}{product.originalPrice.toLocaleString()}
+                  </span>
+                )}
+                {isCustomizable && (currentPricing.sizeAdjustment > 0 || currentPricing.customizationCharge > 0) && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                    Customized Unit Price
                   </span>
                 )}
               </div>
@@ -444,45 +493,73 @@ export const ProductDetailsPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Product Customizer (Upload design, select print sizes/dimensions, custom text, variants) */}
+            {isCustomizable && product && (
+              <ProductCustomizer
+                product={product}
+                quantity={quantity}
+                initialCustomization={customizationData}
+                onChange={(customData) => setCustomizationData(customData)}
+              />
+            )}
+
             {/* Main Action Buttons */}
-            <div className="flex items-center gap-3 pt-4 border-t border-gray-100 dark:border-slate-800">
-              {/* Quantity Controls */}
-              <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-2xl p-1">
+            <div className="space-y-3 pt-4 border-t border-gray-100 dark:border-slate-800">
+              {/* Quantity Helper & Limits */}
+              {(minOrderQty > 1 || quantityStep > 1) && (
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-slate-400 px-1">
+                  <span>Minimum Order: {minOrderQty} units</span>
+                  {quantityStep > 1 && <span>Quantity Increment: +{quantityStep}</span>}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                {/* Quantity Controls */}
+                <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-2xl p-1">
+                  <button
+                    type="button"
+                    onClick={handleDecreaseQty}
+                    disabled={quantity <= minOrderQty}
+                    className="w-9 h-9 flex items-center justify-center font-bold text-gray-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Decrease quantity"
+                  >
+                    -
+                  </button>
+                  <span className="w-10 text-center text-sm font-bold text-gray-900 dark:text-white">
+                    {quantity}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleIncreaseQty}
+                    className="w-9 h-9 flex items-center justify-center font-bold text-gray-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
+                    aria-label="Increase quantity"
+                  >
+                    +
+                  </button>
+                </div>
+
+                {/* Add to Cart */}
                 <button
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-9 h-9 flex items-center justify-center font-bold text-gray-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
-                  aria-label="Decrease quantity"
+                  type="button"
+                  onClick={handleAddToCart}
+                  className="flex-1 py-3.5 px-4 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white font-bold rounded-2xl flex items-center justify-center gap-2 text-sm shadow-sm transition-all active:scale-[0.98] cursor-pointer border border-transparent dark:border-slate-700"
                 >
-                  -
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>
+                    Add to Cart • {STORE_CONFIG.STORE_CURRENCY}
+                    {currentPricing.subtotal.toLocaleString()}
+                  </span>
                 </button>
-                <span className="w-8 text-center text-sm font-bold text-gray-900 dark:text-white">
-                  {quantity}
-                </span>
+
+                {/* Buy Now */}
                 <button
-                  onClick={() => setQuantity((q) => q + 1)}
-                  className="w-9 h-9 flex items-center justify-center font-bold text-gray-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
-                  aria-label="Increase quantity"
+                  type="button"
+                  onClick={handleBuyNow}
+                  className="py-3.5 px-5 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl text-sm shadow-md shadow-[#ff6452]/20 transition-all active:scale-[0.98] cursor-pointer"
                 >
-                  +
+                  Buy Now
                 </button>
               </div>
-
-              {/* Add to Cart */}
-              <button
-                onClick={handleAddToCart}
-                className="flex-1 py-3.5 px-4 bg-gray-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white font-bold rounded-2xl flex items-center justify-center gap-2 text-sm shadow-sm transition-all active:scale-[0.98] cursor-pointer border border-transparent dark:border-slate-700"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>Add to Cart</span>
-              </button>
-
-              {/* Buy Now */}
-              <button
-                onClick={handleBuyNow}
-                className="flex-1 py-3.5 px-4 bg-[#ff6452] hover:bg-[#ff523d] text-white font-bold rounded-2xl text-sm shadow-md shadow-[#ff6452]/20 transition-all active:scale-[0.98] cursor-pointer"
-              >
-                Buy Now
-              </button>
             </div>
           </div>
         </div>

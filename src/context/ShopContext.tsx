@@ -17,6 +17,7 @@ import { DEFAULT_AUTH_APPEARANCE, AUTH_APPEARANCE_STORAGE_KEY } from '../constan
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import { adminService } from '../services/adminService';
+import { wishlistService } from '../services/wishlistService';
 import {
   calculateCustomizedUnitPrice,
   generateCartItemId,
@@ -56,10 +57,16 @@ interface ShopContextType {
   updateGeneralSettings: (settings: GeneralStoreSettings) => Promise<{ success: boolean; error?: string; data?: GeneralStoreSettings }>;
   reloadGeneralSettings: () => Promise<void>;
 
-  // Favourites
+  // Favourites & Wishlist
   favourites: string[]; // product IDs
+  wishlist: string[]; // Aliased to favourites
   toggleFavourite: (productId: string) => void;
   isFavourite: (productId: string) => boolean;
+  addToWishlist: (productId: string) => Promise<void>;
+  removeFromWishlist: (productId: string) => Promise<void>;
+  toggleWishlist: (productId: string) => Promise<void>;
+  isInWishlist: (productId: string) => boolean;
+  clearWishlist: () => Promise<void>;
 
   // Navigation & Category Filters
   selectedCategory: ProductCategory | 'All';
@@ -640,46 +647,70 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return cartSubtotal >= freeDeliveryThreshold || cartSubtotal === 0 ? 0 : fee;
   }, [cartSubtotal, freeDeliveryThreshold, generalSettings.deliveryFee]);
 
-  // Favourites Functions
+  // Favourites & Wishlist Functions
   const toggleFavourite = useCallback(async (productId: string) => {
     const isCurrentlyFav = favourites.includes(productId);
 
     setFavourites((prev) => {
       const exists = prev.includes(productId);
       if (exists) {
-        showToast('Removed from favourites', 'info');
+        showToast('Removed from wishlist', 'info');
         return prev.filter((id) => id !== productId);
       } else {
-        showToast('Saved to favourites', 'success');
+        showToast('Saved to wishlist', 'success');
         return [...prev, productId];
       }
     });
 
-    // If authenticated in Supabase, sync with the `favourites` table
-    if (isSupabaseConfigured() && supabase && user?.id) {
+    // If authenticated in Supabase, sync with the Supabase favourites/wishlist table
+    if (user?.id) {
       try {
         if (isCurrentlyFav) {
-          // Remove from Supabase favourites
-          await supabase
-            .from('favourites')
-            .delete()
-            .match({ user_id: user.id, product_id: productId });
+          await wishlistService.removeFromWishlist(user.id, productId);
         } else {
-          // Insert into Supabase favourites
-          await supabase
-            .from('favourites')
-            .upsert(
-              { user_id: user.id, product_id: productId, created_at: new Date().toISOString() },
-              { onConflict: 'user_id,product_id' }
-            );
+          await wishlistService.addToWishlist(user.id, productId);
         }
       } catch (err) {
-        console.warn('Failed to sync favourite with Supabase:', err);
+        console.warn('Failed to sync wishlist with Supabase:', err);
       }
     }
   }, [favourites, showToast, user]);
 
   const isFavourite = useCallback((productId: string) => favourites.includes(productId), [favourites]);
+
+  const addToWishlist = useCallback(async (productId: string) => {
+    if (!favourites.includes(productId)) {
+      setFavourites((prev) => [...prev, productId]);
+      showToast('Saved to wishlist', 'success');
+      if (user?.id) {
+        await wishlistService.addToWishlist(user.id, productId);
+      }
+    }
+  }, [favourites, showToast, user]);
+
+  const removeFromWishlist = useCallback(async (productId: string) => {
+    if (favourites.includes(productId)) {
+      setFavourites((prev) => prev.filter((id) => id !== productId));
+      showToast('Removed from wishlist', 'info');
+      if (user?.id) {
+        await wishlistService.removeFromWishlist(user.id, productId);
+      }
+    }
+  }, [favourites, showToast, user]);
+
+  const toggleWishlist = useCallback(async (productId: string) => {
+    await toggleFavourite(productId);
+  }, [toggleFavourite]);
+
+  const isInWishlist = useCallback((productId: string) => favourites.includes(productId), [favourites]);
+
+  const clearWishlist = useCallback(async () => {
+    setFavourites([]);
+    showToast('Wishlist cleared', 'info');
+    if (user?.id) {
+      await wishlistService.clearWishlist(user.id);
+    }
+  }, [showToast, user]);
 
   const resetFilters = useCallback(() => {
     setSelectedCategory('All');
@@ -1088,8 +1119,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       reloadGeneralSettings,
 
       favourites,
+      wishlist: favourites,
       toggleFavourite,
       isFavourite,
+      addToWishlist,
+      removeFromWishlist,
+      toggleWishlist,
+      isInWishlist,
+      clearWishlist,
 
       selectedCategory,
       setSelectedCategory,
@@ -1143,6 +1180,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       favourites,
       toggleFavourite,
       isFavourite,
+      addToWishlist,
+      removeFromWishlist,
+      toggleWishlist,
+      isInWishlist,
+      clearWishlist,
       selectedCategory,
       searchQuery,
       filters,

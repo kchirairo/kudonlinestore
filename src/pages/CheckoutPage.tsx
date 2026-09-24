@@ -10,6 +10,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SEOHead } from '../components/SEOHead';
 import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
 import { marketingService } from '../services/marketingService';
+import { calculateCustomizedUnitPrice, generateCartItemId } from '../utils/customizationPricing';
 
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
@@ -308,9 +309,22 @@ export const CheckoutPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      // Validate inventory again during checkout to prevent overselling
+      for (const item of cart) {
+        const config = item.product.customizationConfig;
+        const disableLimits = config?.disableStockLimits || !item.product.trackInventory || item.product.allowBackorders;
+        if (!disableLimits && typeof item.product.stock === 'number' && item.product.stock > 0 && item.quantity > item.product.stock) {
+          showToast(`Cannot place order: "${item.product.name}" only has ${item.product.stock} units in stock. Please adjust your cart.`, 'error');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const orderItems = cart.map((item) => {
-        const img = item.product.images?.[0];
-        const cleanImage = img && typeof img === 'string' && !img.startsWith('data:') && img.length < 300 ? img : null;
+        const img = item.customization?.designImageUrl || item.product.images?.[0];
+        const cleanImage = img && typeof img === 'string' && !img.startsWith('data:') && img.length < 500 ? img : null;
+        const pricing = calculateCustomizedUnitPrice(item.product, item.customization, item.quantity);
+
         return {
           id: Math.random().toString(36).substring(2, 9),
           product_id: item.product.id,
@@ -318,9 +332,10 @@ export const CheckoutPage: React.FC = () => {
           product_brand: item.product.brand,
           product_image: cleanImage,
           quantity: item.quantity,
-          unit_price: item.product.price,
-          total_price: item.product.price * item.quantity,
+          unit_price: pricing.finalUnitPrice,
+          total_price: pricing.subtotal,
           variant: item.selectedSizeOrVariant || item.product.sizeOrVariant || null,
+          customization: item.customization || undefined,
         };
       });
 
@@ -802,7 +817,10 @@ export const CheckoutPage: React.FC = () => {
 
             <div className="space-y-3 max-h-60 overflow-y-auto no-scrollbar pr-1">
               {cart.map((item, idx) => {
+                const pricing = calculateCustomizedUnitPrice(item.product, item.customization, item.quantity);
+                const custom = item.customization;
                 const checkoutImg =
+                  custom?.designImageUrl ||
                   (Array.isArray(item.product.images) &&
                     item.product.images.find(
                       (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
@@ -844,13 +862,16 @@ export const CheckoutPage: React.FC = () => {
                     <p className="font-semibold text-gray-900 dark:text-white truncate">
                       {item.product.name}
                     </p>
-                    <p className="text-xs text-gray-400 dark:text-slate-400">
-                      Qty: {item.quantity} {item.selectedSizeOrVariant && `• ${item.selectedSizeOrVariant}`}
+                    <p className="text-xs text-gray-400 dark:text-slate-400 truncate">
+                      Qty: {item.quantity}
+                      {custom?.selectedSizeOption && ` • ${custom.selectedSizeOption.name}`}
+                      {custom?.customText && ` • "${custom.customText}"`}
+                      {!custom && item.selectedSizeOrVariant && ` • ${item.selectedSizeOrVariant}`}
                     </p>
                   </div>
                   <span className="font-bold text-gray-900 dark:text-white">
                     {STORE_CONFIG.STORE_CURRENCY}
-                    {(item.product.price * item.quantity).toLocaleString()}
+                    {pricing.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               );

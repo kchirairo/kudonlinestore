@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag, CheckCircle2, AlertTriangle, Ban, PauseCircle, ImageOff } from 'lucide-react';
+import { Trash2, ShoppingBag, ArrowRight, ShieldCheck, Tag, CheckCircle2, AlertTriangle, Ban, PauseCircle, ImageOff, Sparkles, FileText } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 import { EmptyState } from '../components/EmptyState';
@@ -8,6 +8,7 @@ import { SEOHead } from '../components/SEOHead';
 import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
 import { referralService } from '../services/referralService';
 import { adminService } from '../services/adminService';
+import { calculateCustomizedUnitPrice, generateCartItemId } from '../utils/customizationPricing';
 
 export const CartPage: React.FC = () => {
   const navigate = useNavigate();
@@ -146,59 +147,69 @@ export const CartPage: React.FC = () => {
         <div className="lg:col-span-2 space-y-4">
           {cart.map((item, index) => {
             const variantKey = item.selectedSizeOrVariant || item.product.sizeOrVariant || '';
+            const cartItemId = item.id || generateCartItemId(item.product.id, variantKey, item.customization);
+            const pricing = calculateCustomizedUnitPrice(item.product, item.customization, item.quantity);
+            const custom = item.customization;
+            const minQty = Math.max(1, item.product.customizationConfig?.minOrderQuantity || 1);
+            const step = Math.max(1, item.product.customizationConfig?.quantityStep || 1);
+
             return (
               <div
-                key={`${item.product.id}-${variantKey}-${index}`}
-                className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-gray-100 dark:border-slate-800 flex items-center gap-4 shadow-xs hover:border-gray-200 dark:hover:border-slate-700 transition-all"
+                key={cartItemId || `${item.product.id}-${variantKey}-${index}`}
+                className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-gray-100 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center gap-4 shadow-xs hover:border-gray-200 dark:hover:border-slate-700 transition-all"
               >
-                {/* Product Thumbnail */}
-                {(() => {
-                  const cartImg =
-                    (Array.isArray(item.product.images) &&
-                      item.product.images.find(
-                        (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
-                      )) ||
-                    (typeof (item.product as any).image_url === 'string' &&
-                      !(item.product as any).image_url.trim().startsWith('data:image') &&
-                      (item.product as any).image_url.trim()) ||
-                    (typeof (item.product as any).image === 'string' &&
-                      !(item.product as any).image.trim().startsWith('data:image') &&
-                      (item.product as any).image.trim()) ||
-                    null;
+                {/* Product / Custom Design Thumbnail */}
+                <div className="flex items-center gap-3 shrink-0">
+                  <div
+                    onClick={() => navigate(`/product/${item.product.id}`)}
+                    className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800 cursor-pointer border border-gray-100 dark:border-slate-800 flex items-center justify-center"
+                  >
+                    {custom?.designImageUrl ? (
+                      <img
+                        src={custom.designImageUrl}
+                        alt="Custom design"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      (() => {
+                        const cartImg =
+                          (Array.isArray(item.product.images) &&
+                            item.product.images.find(
+                              (u) => typeof u === 'string' && u.trim().length > 0 && !u.trim().startsWith('data:image')
+                            )) ||
+                          (typeof (item.product as any).image_url === 'string' &&
+                            !(item.product as any).image_url.trim().startsWith('data:image') &&
+                            (item.product as any).image_url.trim()) ||
+                          (typeof (item.product as any).image === 'string' &&
+                            !(item.product as any).image.trim().startsWith('data:image') &&
+                            (item.product as any).image.trim()) ||
+                          null;
 
-                  return (
-                    <div
-                      onClick={() => navigate(`/product/${item.product.id}`)}
-                      className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800 cursor-pointer shrink-0 border border-gray-100 dark:border-slate-800 flex items-center justify-center"
-                    >
-                      {cartImg ? (
-                        <img
-                          src={cartImg}
-                          alt={item.product.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            el.style.display = 'none';
-                            if (el.parentElement) {
-                              const placeholder = document.createElement('div');
-                              placeholder.className = 'w-full h-full flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-2 select-none';
-                              placeholder.innerHTML = '<span class="text-[9px] font-medium text-center leading-tight">Image unavailable</span>';
-                              el.parentElement.appendChild(placeholder);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-2 select-none">
-                          <ImageOff className="w-5 h-5 text-gray-400 dark:text-slate-500 mb-1" />
-                          <span className="text-[9px] font-medium text-center leading-tight">Image unavailable</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
+                        return cartImg ? (
+                          <img
+                            src={cartImg}
+                            alt={item.product.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 p-2 select-none">
+                            <ImageOff className="w-5 h-5 text-gray-400 dark:text-slate-500 mb-1" />
+                            <span className="text-[9px] font-medium text-center leading-tight">No image</span>
+                          </div>
+                        );
+                      })()
+                    )}
+
+                    {custom?.designImageUrl && (
+                      <span className="absolute bottom-1 right-1 bg-black/75 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Custom
+                      </span>
+                    )}
+                  </div>
+                </div>
 
                 {/* Details */}
-                <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex-1 min-w-0 w-full space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">
@@ -213,44 +224,139 @@ export const CartPage: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={() => removeFromCart(item.product.id, variantKey)}
-                      className="text-gray-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 p-1 rounded-lg transition-colors cursor-pointer"
+                      onClick={() => removeFromCart(cartItemId, variantKey)}
+                      className="text-gray-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 p-1.5 rounded-lg transition-colors cursor-pointer"
                       aria-label="Remove item"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
 
-                  {variantKey && (
+                  {/* Standard variant pill */}
+                  {variantKey && !custom && (
                     <span className="inline-block text-xs font-medium text-gray-500 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
                       {variantKey}
                     </span>
                   )}
 
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-base font-extrabold text-gray-900 dark:text-white">
-                      {STORE_CONFIG.STORE_CURRENCY}
-                      {(item.product.price * item.quantity).toLocaleString()}
-                    </span>
+                  {/* Customization Details Box */}
+                  {custom && (
+                    <div className="rounded-xl bg-gray-50 dark:bg-slate-800/80 p-2.5 text-xs text-gray-700 dark:text-slate-300 space-y-1 border border-gray-100 dark:border-slate-800">
+                      <div className="flex items-center gap-1.5 font-bold text-gray-900 dark:text-white text-[11px]">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Personalization Details</span>
+                      </div>
+
+                      {custom.selectedSizeOption && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">Size / Dimensions:</span>{' '}
+                          {custom.selectedSizeOption.name}{' '}
+                          {custom.selectedSizeOption.dimensionsCm ? `(${custom.selectedSizeOption.dimensionsCm})` : ''}
+                          {custom.selectedSizeOption.priceModifier > 0 && (
+                            <span className="text-emerald-600 font-semibold ml-1">
+                              (+R{custom.selectedSizeOption.priceModifier})
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {custom.customDimensions && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">Custom Dimensions:</span>{' '}
+                          {custom.customDimensions}
+                        </div>
+                      )}
+
+                      {custom.tshirtSize && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">T-Shirt Size:</span> {custom.tshirtSize}
+                          {custom.printPosition && ` • Position: ${custom.printPosition}`}
+                        </div>
+                      )}
+
+                      {custom.cupType && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">Cup Model:</span> {custom.cupType}
+                        </div>
+                      )}
+
+                      {custom.necklaceType && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">Finish:</span> {custom.necklaceType}
+                        </div>
+                      )}
+
+                      {custom.engravingFont && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold text-gray-800 dark:text-slate-200">Engraving Font:</span> {custom.engravingFont}
+                        </div>
+                      )}
+
+                      {custom.customText && (
+                        <div className="text-[11px] text-gray-900 dark:text-white font-medium">
+                          <span className="font-semibold text-gray-700 dark:text-slate-300">Custom Text:</span> &ldquo;{custom.customText}&rdquo;
+                        </div>
+                      )}
+
+                      {custom.designImageName && (
+                        <div className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Uploaded: {custom.designImageName}</span>
+                        </div>
+                      )}
+
+                      {custom.additionalInstructions && (
+                        <div className="text-[11px] text-gray-500 dark:text-slate-400 italic">
+                          <span>Note:</span> {custom.additionalInstructions}
+                        </div>
+                      )}
+
+                      {custom.customRequestNotes && (
+                        <div className="text-[11px] text-gray-600 dark:text-slate-400">
+                          <span className="font-semibold">Request:</span> {custom.customRequestNotes}
+                        </div>
+                      )}
+
+                      {pricing.customizationCharge > 0 && (
+                        <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 pt-0.5">
+                          Personalization Fee: +R{pricing.customizationCharge.toFixed(2)}/unit
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Pricing Breakdown: Unit Price x Quantity = Subtotal */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    <div>
+                      <div className="text-xs text-gray-500 dark:text-slate-400">
+                        {STORE_CONFIG.STORE_CURRENCY}{pricing.finalUnitPrice.toFixed(2)} × {item.quantity}
+                      </div>
+                      <span className="text-base font-extrabold text-gray-900 dark:text-white">
+                        {STORE_CONFIG.STORE_CURRENCY}{pricing.subtotal.toFixed(2)}
+                      </span>
+                    </div>
 
                     {/* Quantity Controls */}
                     <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-xl p-0.5">
                       <button
                         onClick={() =>
-                          updateQuantity(item.product.id, item.quantity - 1, variantKey)
+                          updateQuantity(cartItemId, item.quantity - step, variantKey)
                         }
-                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                        disabled={item.quantity <= minQty}
+                        className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        aria-label="Decrease quantity"
                       >
                         -
                       </button>
-                      <span className="w-7 text-center text-xs font-bold text-gray-900 dark:text-white">
+                      <span className="w-8 text-center text-xs font-bold text-gray-900 dark:text-white">
                         {item.quantity}
                       </span>
                       <button
                         onClick={() =>
-                          updateQuantity(item.product.id, item.quantity + 1, variantKey)
+                          updateQuantity(cartItemId, item.quantity + step, variantKey)
                         }
                         className="w-7 h-7 flex items-center justify-center font-bold text-gray-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                        aria-label="Increase quantity"
                       >
                         +
                       </button>

@@ -12,6 +12,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { CategoryDetailsPage } from './pages/CategoryDetailsPage';
 import { ProductDetailsPage } from './pages/ProductDetailsPage';
 import { FavouritesPage } from './pages/FavouritesPage';
+import { WishlistPage } from './pages/WishlistPage';
 import { SearchPage } from './pages/SearchPage';
 import { CartPage } from './pages/CartPage';
 import { CheckoutPage } from './pages/CheckoutPage';
@@ -61,6 +62,7 @@ function AppContent() {
           <Route path="/category/:slug" element={<CategoryDetailsPage />} />
           <Route path="/categories/:slug" element={<CategoryDetailsPage />} />
           <Route path="/product/:id" element={<ProductDetailsPage />} />
+          <Route path="/wishlist" element={<WishlistPage />} />
           <Route path="/favourites" element={<FavouritesPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/cart" element={<CartPage />} />

@@ -120,10 +120,10 @@ export const Header: React.FC = () => {
           {/* Desktop Quick Links */}
           <div className="hidden md:flex items-center gap-1.5 sm:gap-2">
             <button
-              onClick={() => navigate('/favourites')}
+              onClick={() => navigate('/wishlist')}
               className="p-2.5 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full relative transition-colors"
-              title="Favourites"
-              aria-label="Favourites"
+              title="My Wishlist"
+              aria-label="Wishlist"
             >
               <Heart className="w-5 h-5" />
               {favourites.length > 0 && (
