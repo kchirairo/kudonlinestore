@@ -1,3 +1,5 @@
+import type { ProductCustomizationConfig, CustomerCustomizationData } from './customization';
+
 export type ProductCategory = 
   | 'Technology'
   | 'Sports & Leisure'

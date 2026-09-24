@@ -1,0 +1,8 @@
+{
+	"appId": "za.co.kudstore.app",
+	"appName": "KUD Store",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}
