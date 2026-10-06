@@ -214,6 +214,125 @@ async function createAdminNotificationSafe({
 }
 
 /**
+ * Safe server-side helper to create customer notifications in public.notifications.
+ * - Respects public.notification_preferences for the customer.
+ * - Enforces idempotency via fingerprint to prevent duplicate notifications from repeated webhook calls.
+ * - Non-blocking: failures never break webhook or transactional checkout flows.
+ */
+async function createCustomerNotificationSafeServer({
+  userId,
+  type,
+  title,
+  message,
+  orderId = null,
+  link = null,
+  metadata = {},
+  fingerprint = null,
+}: {
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  orderId?: string | null;
+  link?: string | null;
+  metadata?: Record<string, any>;
+  fingerprint?: string | null;
+}): Promise<string | null> {
+  if (!userId) return null;
+
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return null;
+
+    // 1. Verify user preferences
+    const { data: prefs } = await supabase
+      .from('notification_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (prefs) {
+      if (prefs.in_app_notifications === false) {
+        console.log(`[CustomerNotifications Server] In-app notifications disabled for user ${userId}, skipping.`);
+        return null;
+      }
+      if (type === 'order_created' && prefs.order_updates === false) {
+        console.log(`[CustomerNotifications Server] Order updates disabled for user ${userId}, skipping.`);
+        return null;
+      }
+      if (
+        (type === 'payment_success' || type === 'payment_failed' || type === 'payment_cancelled') &&
+        prefs.payment_updates === false
+      ) {
+        console.log(`[CustomerNotifications Server] Payment updates disabled for user ${userId}, skipping.`);
+        return null;
+      }
+      if (type === 'order_status_change' && prefs.order_updates === false) {
+        console.log(`[CustomerNotifications Server] Status updates disabled for user ${userId}, skipping.`);
+        return null;
+      }
+      if ((type === 'shipping' || type === 'collection') && prefs.shipping_updates === false) {
+        console.log(`[CustomerNotifications Server] Shipping updates disabled for user ${userId}, skipping.`);
+        return null;
+      }
+      if (type === 'delivery' && prefs.delivery_updates === false) {
+        console.log(`[CustomerNotifications Server] Delivery updates disabled for user ${userId}, skipping.`);
+        return null;
+      }
+    }
+
+    const cleanFingerprint = fingerprint && typeof fingerprint === 'string' ? fingerprint.trim() : null;
+
+    // 2. Prevent duplicate notifications using fingerprint
+    if (cleanFingerprint) {
+      const { data: existing } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('fingerprint', cleanFingerprint)
+        .maybeSingle();
+
+      if (existing?.id) {
+        console.log(`[CustomerNotifications Server] Duplicate prevented via fingerprint: ${cleanFingerprint}`);
+        return existing.id;
+      }
+    }
+
+    // 3. Insert notification
+    const newNotif = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      type,
+      title,
+      message,
+      order_id: orderId || null,
+      link: link || (orderId ? `/orders/${orderId}` : null),
+      is_read: false,
+      metadata: metadata || {},
+      fingerprint: cleanFingerprint,
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('notifications')
+      .insert(newNotif)
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.warn('[CustomerNotifications Server] Notice inserting customer notification:', insertError.message);
+      return null;
+    }
+
+    console.log(`[CustomerNotifications Server] Customer notification "${title}" created for user ${userId} (${inserted?.id})`);
+    return inserted?.id || null;
+  } catch (err: any) {
+    console.warn('[CustomerNotifications Server] Error in createCustomerNotificationSafeServer:', err?.message);
+    return null;
+  }
+}
+
+/**
  * Checks product stock against thresholds and dispatches inventory notifications safely.
  * - stock <= 0 => critical / "Out of Stock" (fingerprint: inventory:<productId>:out-of-stock)
  * - stock <= threshold => warning / "Low Stock" (fingerprint: inventory:<productId>:low-stock)
@@ -1255,6 +1374,19 @@ async function startServer() {
         fingerprint: `order:${realOrderId}:created`,
       }).catch((err) => console.warn('[create-yoco-checkout] Order notification caught:', err));
 
+      if (userId && userId !== 'guest') {
+        createCustomerNotificationSafeServer({
+          userId,
+          type: 'order_created',
+          title: 'Order Placed',
+          message: `Your order #${createdOrder.order_number} for R${Number(calcTotal).toFixed(2)} has been placed successfully.`,
+          orderId: realOrderId,
+          link: `/orders/${realOrderId}`,
+          metadata: { orderId: realOrderId, orderNumber: createdOrder.order_number, total: calcTotal },
+          fingerprint: `order_created_${realOrderId}`,
+        }).catch((err) => console.warn('[create-yoco-checkout] Customer notification notice:', err));
+      }
+
       // Attempt Supabase Edge Function if provisioned (safely wrapped)
       try {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-yoco-checkout', {
@@ -1440,6 +1572,25 @@ async function startServer() {
           fingerprint: `payment:${orderId}:success`,
         }).catch((notifErr) => console.warn('[AdminNotifications] Yoco payment success notification notice:', notifErr));
 
+        // Dispatch customer notification for successful payment safely
+        if (existingOrder.user_id) {
+          createCustomerNotificationSafeServer({
+            userId: existingOrder.user_id,
+            type: 'payment_success',
+            title: 'Payment Successful',
+            message: `Payment of R${orderTotal.toFixed(2)} for order #${orderNum} was successful. We are processing your items.`,
+            orderId,
+            link: `/orders/${orderId}`,
+            metadata: {
+              orderId,
+              orderNumber: orderNum,
+              amount: orderTotal,
+              payment_reference: payload.id || payload.checkoutId || null,
+            },
+            fingerprint: `payment_success_${orderId}`,
+          }).catch((cNotifErr) => console.warn('[CustomerNotifications Server] Payment success notice:', cNotifErr));
+        }
+
         // Trigger order confirmation email dispatch
         let emailResult = null;
         let invoiceResult = null;
@@ -1524,6 +1675,27 @@ async function startServer() {
           },
           fingerprint: `payment:${orderId}:failed`,
         }).catch((notifErr) => console.warn('[AdminNotifications] Yoco payment warning notification notice:', notifErr));
+
+        // Dispatch customer notification for failed/cancelled payment safely
+        if (existingOrder.user_id) {
+          createCustomerNotificationSafeServer({
+            userId: existingOrder.user_id,
+            type: targetStatus === 'cancelled' ? 'payment_cancelled' : 'payment_failed',
+            title: 'Payment Failed',
+            message: targetStatus === 'cancelled'
+              ? `Payment for order #${orderNum} was cancelled. Your items remain safely in your cart.`
+              : `Payment for order #${orderNum} was unsuccessful. You may try again with another payment method.`,
+            orderId,
+            link: `/orders/${orderId}`,
+            metadata: {
+              orderId,
+              orderNumber: orderNum,
+              status: targetStatus,
+              event: eventType,
+            },
+            fingerprint: `payment_failed_${orderId}`,
+          }).catch((cNotifErr) => console.warn('[CustomerNotifications Server] Payment fail/cancel notice:', cNotifErr));
+        }
       }
 
       return res.json({ received: true, status: paymentStatus });
@@ -1578,6 +1750,24 @@ async function startServer() {
         },
         fingerprint: `order:${order.id}:created`,
       });
+
+      // 1.b Dispatch customer notification if authenticated
+      if (order.user_id) {
+        createCustomerNotificationSafeServer({
+          userId: order.user_id,
+          type: 'order_created',
+          title: 'Order Placed',
+          message: `Your order #${orderNumber} for R${totalAmount.toFixed(2)} has been placed successfully.`,
+          orderId: order.id,
+          link: `/orders/${order.id}`,
+          metadata: {
+            orderId: order.id,
+            orderNumber,
+            total: totalAmount,
+          },
+          fingerprint: `order_created_${order.id}`,
+        }).catch((cNotifErr) => console.warn('[CustomerNotifications Server] Order creation notice:', cNotifErr));
+      }
 
       // 2. Safely inspect order_items, decrement inventory, and check low/out-of-stock thresholds
       try {
@@ -2914,6 +3104,130 @@ async function startServer() {
     }
   });
 
+  // --- CUSTOMER SELF-SERVICE ACCOUNT & PERSONAL DATA DELETION ---
+  app.post('/api/account/delete', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required. Please sign in to delete your account.',
+        });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) {
+        return res.status(500).json({
+          success: false,
+          error: 'Database service unavailable.',
+        });
+      }
+
+      // Verify the user's JWT token so a user can strictly only delete their own account
+      const { data: authData, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !authData?.user?.id) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid or expired authentication session. Please sign in again.',
+        });
+      }
+
+      const userId = authData.user.id;
+      const userEmail = authData.user.email || 'Customer';
+
+      // 1. Delete customer wishlist / favourites
+      try {
+        await supabase.from('favourites').delete().eq('user_id', userId);
+      } catch (e) {
+        console.warn('[AccountDelete] Notice deleting favourites:', e);
+      }
+
+      // 2. Delete customer notification preferences, push subscriptions, and notifications
+      try {
+        await supabase.from('push_subscriptions').delete().eq('user_id', userId);
+        await supabase.from('notification_preferences').delete().eq('user_id', userId);
+        await supabase.from('notifications').delete().eq('user_id', userId);
+      } catch (e) {
+        console.warn('[AccountDelete] Notice deleting notifications data:', e);
+      }
+
+      // 3. Anonymize personal identifiers on historical orders while preserving financial/tax records
+      try {
+        await supabase
+          .from('orders')
+          .update({
+            customer_name: '[Deleted Customer]',
+            customer_email: '',
+            customer_phone: null,
+            delivery_address: '[Redacted per Account Deletion]',
+            customer_note: null,
+          })
+          .eq('user_id', userId);
+      } catch (e) {
+        console.warn('[AccountDelete] Notice anonymizing orders:', e);
+      }
+
+      // 4. Delete or anonymize customer profile row in public.profiles
+      try {
+        const { error: profDelErr } = await supabase.from('profiles').delete().eq('id', userId);
+        if (profDelErr) {
+          await supabase
+            .from('profiles')
+            .update({
+              full_name: '[Deleted Customer]',
+              email: `deleted_${userId.slice(0, 8)}@anonymized.local`,
+              phone: null,
+              age: null,
+              gender: null,
+              address_line: null,
+              city: null,
+              province: null,
+              postal_code: null,
+              account_status: 'disabled',
+              disabled_reason: 'Customer requested permanent account deletion',
+            })
+            .eq('id', userId);
+        }
+      } catch (e) {
+        console.warn('[AccountDelete] Notice deleting profile:', e);
+      }
+
+      // 5. If service-role privileges are configured on server, remove Auth identity
+      try {
+        if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          await supabase.auth.admin.deleteUser(userId);
+        }
+      } catch (e) {
+        console.warn('[AccountDelete] Notice removing auth user via admin API:', e);
+      }
+
+      // 6. Log non-blocking admin security notification
+      createAdminNotificationSafe({
+        type: 'security',
+        severity: 'info',
+        title: 'Customer Account Deleted',
+        message: `Customer account (${userEmail}) completed self-service account and personal data deletion.`,
+        userId: null,
+        metadata: { deleted_user_id: userId, deleted_at: new Date().toISOString() },
+        fingerprint: `account_deleted_${userId}`,
+      }).catch(() => {});
+
+      return res.json({
+        success: true,
+        message:
+          'Your account and personal data have been permanently deleted. Anonymized financial records are retained where required by tax law.',
+      });
+    } catch (err: any) {
+      console.error('[AccountDelete] Error processing account deletion:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to process account deletion request.',
+      });
+    }
+  });
+
   // --- STORE SETTINGS PERSISTENCE ENDPOINTS ---
   // Public GET settings row for customer storefront (single source of truth without exposing sensitive credentials)
   app.get('/api/settings/public-row', async (_req, res) => {
@@ -3346,6 +3660,168 @@ async function startServer() {
     } catch (err: any) {
       console.error('[Settings] Error saving setting:', err);
       return res.status(500).json({ success: false, error: err?.message || 'Internal error saving settings.' });
+    }
+  });
+
+  /**
+   * Customer Account & Personal Data Deletion Endpoint (POST /api/account/delete)
+   * Verifies the authenticated customer's JWT via Bearer token, deletes their personal data
+   * (profiles, notifications, notification_preferences, push_subscriptions, wishlists),
+   * anonymizes PII on historical orders for statutory tax compliance, and deletes the auth user
+   * if service_role credentials are available.
+   */
+  app.post('/api/account/delete', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication token is required to delete your account.',
+        });
+      }
+
+      const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+      const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+      if (!supabaseUrl || (!anonKey && !serviceRoleKey)) {
+        return res.status(500).json({
+          success: false,
+          error: 'Authentication service is not configured on the server.',
+        });
+      }
+
+      // 1. Authoritatively verify the caller's JWT token
+      const userClient = createClient(supabaseUrl, anonKey || serviceRoleKey, {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      });
+
+      const {
+        data: { user: verifiedUser },
+        error: authError,
+      } = await userClient.auth.getUser(token);
+
+      if (authError || !verifiedUser) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid or expired authentication session. Please sign in again.',
+        });
+      }
+
+      const userId = verifiedUser.id;
+      const userEmail = verifiedUser.email || null;
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : null;
+
+      // Use service-role client if available, otherwise fall back to the user's authenticated client
+      const dbClient = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : userClient;
+
+      // 2. Delete customer notifications, notification preferences, push subscriptions, and wishlists
+      await Promise.allSettled([
+        dbClient.from('notifications').delete().eq('user_id', userId),
+        dbClient.from('notification_preferences').delete().eq('user_id', userId),
+        dbClient.from('push_subscriptions').delete().eq('user_id', userId),
+        dbClient.from('wishlists').delete().eq('user_id', userId),
+      ]);
+
+      // 3. Anonymize personal data on historical orders (preserving financial totals for statutory SARS tax compliance)
+      try {
+        await dbClient
+          .from('orders')
+          .update({
+            user_id: null,
+            customer_name: 'Deleted Customer',
+            customer_email: null,
+            customer_phone: null,
+            shipping_address: {
+              fullName: 'Redacted (Account Deleted)',
+              addressLine: 'Redacted',
+              city: 'Redacted',
+              province: 'Redacted',
+              postalCode: '0000',
+              phone: 'Redacted',
+            },
+          })
+          .eq('user_id', userId);
+      } catch (orderAnonErr) {
+        console.warn('[AccountDelete] Non-fatal notice anonymizing historical orders:', orderAnonErr);
+      }
+
+      // 4. Delete customer profile row from public.profiles
+      const { error: profileDeleteError } = await dbClient.from('profiles').delete().eq('id', userId);
+      if (profileDeleteError) {
+        // Fallback: scrub personal fields and mark account deleted/disabled if FK constraints prevent row deletion
+        await dbClient
+          .from('profiles')
+          .update({
+            full_name: 'Deleted User',
+            phone: null,
+            age: null,
+            gender: null,
+            address_line: null,
+            address: null,
+            city: null,
+            province: null,
+            postal_code: null,
+            account_status: 'disabled',
+            disabled_reason: 'Customer requested permanent account deletion',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
+      }
+
+      // 5. If service_role key is configured, permanently remove user from auth.users
+      let authUserDeleted = false;
+      if (serviceRoleKey) {
+        try {
+          const adminAuthClient = createClient(supabaseUrl, serviceRoleKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+          });
+          const { error: deleteAuthErr } = await adminAuthClient.auth.admin.deleteUser(userId);
+          if (!deleteAuthErr) {
+            authUserDeleted = true;
+          } else {
+            console.warn('[AccountDelete] auth.admin.deleteUser notice:', deleteAuthErr.message);
+          }
+        } catch (adminErr) {
+          console.warn('[AccountDelete] Exception calling auth.admin.deleteUser:', adminErr);
+        }
+      }
+
+      // 6. Log an administrative notification so store admins have an audit record if needed
+      await createAdminNotificationSafe({
+        type: 'security',
+        severity: 'info',
+        title: 'Customer Account Deleted',
+        message: `Customer account (${userEmail || userId.slice(0, 8)}) completed self-service account and personal data deletion.${
+          reason ? ` Reason: ${reason}` : ''
+        }`,
+        userId: null,
+        metadata: {
+          deleted_user_id: userId,
+          auth_user_deleted: authUserDeleted,
+          reason: reason || 'Customer self-service deletion',
+          deleted_at: new Date().toISOString(),
+        },
+        fingerprint: `account_deleted:${userId}`,
+      });
+
+      return res.json({
+        success: true,
+        authUserDeleted,
+        message: 'Your account and associated personal data have been permanently deleted.',
+      });
+    } catch (err: any) {
+      console.error('[AccountDelete] Unexpected error:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'An unexpected error occurred while processing your account deletion.',
+      });
     }
   });
 

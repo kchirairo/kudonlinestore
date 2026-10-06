@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   User,
   ShoppingBag,
@@ -36,6 +36,9 @@ import {
   Snowflake,
   Send,
   ShieldCheck,
+  Trash2,
+  FileText,
+  Scale,
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { useAuth } from '../hooks/useAuth';
@@ -208,6 +211,103 @@ export const AccountPage: React.FC = () => {
   // Expiration notifications state
   const [hasDismissedExpiryBanner, setHasDismissedExpiryBanner] = useState<boolean>(false);
   const [hasTriggeredExpiryToast, setHasTriggeredExpiryToast] = useState<boolean>(false);
+
+  // Customer Account Deletion Modal & Confirmation State
+  const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState<boolean>(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState<string>('');
+  const [deleteReason, setDeleteReason] = useState<string>('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState<boolean>(false);
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
+
+  // Scroll to #delete-account section if present in URL hash
+  useEffect(() => {
+    if (location.hash === '#delete-account' && user) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('delete-account');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [location.hash, user]);
+
+  // Permanently delete customer account and associated personal data
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || isDeletingAccount) return;
+
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      setDeleteAccountError('Please type DELETE in uppercase to confirm permanent account deletion.');
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    setDeleteAccountError(null);
+
+    try {
+      let accessToken = '';
+      if (isSupabaseConfigured() && supabase) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        accessToken = sessionData?.session?.access_token || '';
+      }
+
+      let serverSuccess = false;
+      if (accessToken) {
+        try {
+          const response = await fetch('/api/account/delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              reason: deleteReason.trim() || 'Customer requested self-service account deletion',
+            }),
+          });
+          const result = await response.json();
+          if (response.ok && result?.success) {
+            serverSuccess = true;
+          } else if (result?.error) {
+            console.warn('[AccountDelete] Server endpoint warning, running client RLS fallback:', result.error);
+          }
+        } catch (fetchErr) {
+          console.warn('[AccountDelete] Server endpoint unreachable, running client RLS fallback:', fetchErr);
+        }
+      }
+
+      // Client-side RLS fallback cleanup if server endpoint was not used or partially completed
+      if (!serverSuccess && isSupabaseConfigured() && supabase) {
+        await Promise.allSettled([
+          supabase.from('notifications').delete().eq('user_id', user.id),
+          supabase.from('notification_preferences').delete().eq('user_id', user.id),
+          supabase.from('push_subscriptions').delete().eq('user_id', user.id),
+          supabase.from('wishlists').delete().eq('user_id', user.id),
+          supabase.from('profiles').delete().eq('id', user.id),
+        ]);
+      }
+
+      // Clear local customer caches
+      try {
+        localStorage.removeItem(`kud_store_user_profile_${user.id}`);
+        localStorage.removeItem('kud_store_user_profile');
+        localStorage.removeItem('kud_store_cart_items');
+        localStorage.removeItem('kud_store_favourite_items');
+        sessionStorage.removeItem('kud_pending_checkout_order_id');
+      } catch {
+        // Ignore storage errors
+      }
+
+      setIsDeleteAccountModalOpen(false);
+      await signOut();
+      showToast('Your account and associated personal data have been permanently deleted.', 'success');
+      navigate('/', { replace: true });
+    } catch (err: any) {
+      setDeleteAccountError(err?.message || 'Failed to complete account deletion. Please try again or contact support.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
 
   // Effective referral permissions and visibility
   const effectiveReferral = getEffectiveCustomerReferralSettings(userRewards, globalReferralConfig);
@@ -1434,7 +1534,209 @@ export const AccountPage: React.FC = () => {
 
           {/* Dynamic Customer Order Help & Support Card */}
           <CustomerOrderHelpCard />
+
+          {/* Privacy, Legal & Account Deletion Section */}
+          <section
+            id="delete-account"
+            aria-label="Privacy, Legal and Account Deletion"
+            className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-gray-100 dark:border-slate-800 shadow-xs space-y-5 scroll-mt-24"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 dark:border-slate-800 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-[#ff6452]" />
+                  <h2 className="text-base font-black text-gray-900 dark:text-white">
+                    Privacy, Legal &amp; Account Deletion
+                  </h2>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  Review our official store policies or request permanent deletion of your account and personal data.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  to="/privacy-policy"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-50 dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-xs font-bold text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700 transition-colors"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#ff6452]" />
+                  <span>Privacy Policy</span>
+                </Link>
+                <Link
+                  to="/terms-and-conditions"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-50 dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-xs font-bold text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700 transition-colors"
+                >
+                  <Scale className="w-3.5 h-3.5 text-[#ff6452]" />
+                  <span>Terms &amp; Conditions</span>
+                </Link>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1 max-w-xl">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                  <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
+                    Delete Account &amp; Personal Data
+                  </h3>
+                </div>
+                <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                  Permanently remove your customer profile, saved delivery address, wishlist, notifications, and
+                  preferences. Financial order amounts are anonymized for statutory tax records. This action cannot be
+                  undone.
+                </p>
+              </div>
+
+              <button
+                id="open-delete-account-modal-btn"
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmText('');
+                  setDeleteReason('');
+                  setDeleteAccountError(null);
+                  setIsDeleteAccountModalOpen(true);
+                }}
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-colors inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Account</span>
+              </button>
+            </div>
+          </section>
         </div>
+
+        {/* Delete Account Confirmation Modal */}
+        {isDeleteAccountModalOpen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn"
+          >
+            <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 sm:p-7 border border-gray-200 dark:border-slate-800 shadow-2xl space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3
+                      id="delete-account-modal-title"
+                      className="text-base sm:text-lg font-black text-gray-900 dark:text-white"
+                    >
+                      Delete Your Account?
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-slate-400">
+                      Permanent personal data erasure ({user.email})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !isDeletingAccount && setIsDeleteAccountModalOpen(false)}
+                  disabled={isDeletingAccount}
+                  aria-label="Close modal"
+                  className="p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50 text-xs text-rose-900 dark:text-rose-200 space-y-1.5 leading-relaxed">
+                <p className="font-bold">What happens when you confirm:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Your profile name, phone number, age, gender, and saved delivery address are deleted.</li>
+                  <li>Your wishlist, notifications, and notification preferences are permanently erased.</li>
+                  <li>Personal details on past orders are redacted and anonymized.</li>
+                  <li>You will be immediately signed out of {STORE_CONFIG.STORE_NAME}.</li>
+                </ul>
+              </div>
+
+              {deleteAccountError && (
+                <div
+                  role="alert"
+                  className="p-3 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-xs font-semibold text-red-700 dark:text-red-300 flex items-center gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{deleteAccountError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleDeleteAccount} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="delete-account-reason"
+                    className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1"
+                  >
+                    Reason for leaving (optional)
+                  </label>
+                  <input
+                    id="delete-account-reason"
+                    type="text"
+                    placeholder="e.g. No longer using this account"
+                    value={deleteReason}
+                    onChange={(e) => setDeleteReason(e.target.value)}
+                    disabled={isDeletingAccount}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-xs text-gray-900 dark:text-white placeholder-gray-400 focus:border-rose-500 outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="delete-account-confirm-input"
+                    className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1"
+                  >
+                    Type <span className="font-mono font-black text-rose-600 dark:text-rose-400">DELETE</span> to
+                    confirm <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="delete-account-confirm-input"
+                    type="text"
+                    required
+                    autoComplete="off"
+                    placeholder="DELETE"
+                    value={deleteConfirmText}
+                    onChange={(e) => {
+                      setDeleteConfirmText(e.target.value);
+                      if (deleteAccountError) setDeleteAccountError(null);
+                    }}
+                    disabled={isDeletingAccount}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono font-bold text-gray-900 dark:text-white placeholder-gray-400 focus:border-rose-500 outline-hidden"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeleteAccountModalOpen(false)}
+                    disabled={isDeletingAccount}
+                    className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-xs font-bold text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="confirm-delete-account-submit-btn"
+                    type="submit"
+                    disabled={isDeletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+                    className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isDeletingAccount ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Deleting Account...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Permanently Delete</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Modals - Accessible inside customer profile */}
         <TrackOrderModal
@@ -2162,6 +2464,24 @@ export const AccountPage: React.FC = () => {
                     <span>{isSignUp ? 'Sign Up' : 'Sign In'}</span>
                   )}
                 </button>
+
+                <p className="text-[11px] text-center text-gray-500 dark:text-slate-400 leading-relaxed pt-1">
+                  By continuing, you agree to our{' '}
+                  <Link
+                    to="/terms-and-conditions"
+                    className="font-semibold text-[#ff6452] hover:underline"
+                  >
+                    Terms &amp; Conditions
+                  </Link>{' '}
+                  and acknowledge our{' '}
+                  <Link
+                    to="/privacy-policy"
+                    className="font-semibold text-[#ff6452] hover:underline"
+                  >
+                    Privacy Policy
+                  </Link>
+                  .
+                </p>
               </form>
 
               {isSignUpAllowed && isLoginAllowed && (

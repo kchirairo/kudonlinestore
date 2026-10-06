@@ -3,6 +3,7 @@ import { supabase, isSupabaseConfigured, executeWithColumnFallback } from '../li
 import { safeSetItem, safeGetItem } from '../utils/storage';
 import { calculateOrderFinancials } from '../utils/taxUtils';
 import { getCurrentAttribution } from '../utils/utmTracker';
+import { customerNotificationService } from './customerNotificationService';
 
 const LOCAL_ORDERS_KEY = 'kud_store_orders_history';
 
@@ -485,6 +486,20 @@ export const orderService = {
     }
 
     const formattedOrder = mapSupabaseOrder(createdOrderRow, items);
+
+    // Asynchronously notify customer of order placement (respects notification_preferences)
+    if (authUserId) {
+      try {
+        customerNotificationService.notifyOrderPlaced({
+          userId: authUserId,
+          orderId: createdOrderId,
+          orderNumber: uniqueOrderNumber,
+          total: calcTotal,
+        }).catch((cErr) => console.warn('[orderService] Customer notification notice:', cErr));
+      } catch (cErr) {
+        console.warn('[orderService] Customer notification caught:', cErr);
+      }
+    }
 
     // Asynchronously notify admin of new order creation (server-side, trusted, non-blocking)
     try {

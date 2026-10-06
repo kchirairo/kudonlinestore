@@ -1223,4 +1223,6 @@ export interface AdminNotificationFilters {
   limit?: number;
 }
 
+export * from './customerNotification';
+
 

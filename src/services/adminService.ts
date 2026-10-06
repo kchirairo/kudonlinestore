@@ -49,6 +49,7 @@ import { DEFAULT_AUTH_APPEARANCE } from '../constants/authAppearance';
 import { mapSupabaseProduct, productService } from './productService';
 import { mapSupabaseOrder, orderService } from './orderService';
 import { categoryService } from './categoryService';
+import { customerNotificationService } from './customerNotificationService';
 import { encryptGatewayPayload, decryptGatewayPayload } from '../utils/encryption';
 import {
   STORE_CONFIG,
@@ -590,6 +591,62 @@ export const adminService = {
       } catch (autoErr) {
         console.warn('Auto invoice dispatch check notice:', autoErr);
       }
+    }
+
+    // Dispatch customer notifications for order status changes, shipping, collection, delivery, and payment
+    try {
+      const targetOrder = updatedOrder || (await this.getOrderById(orderId));
+      if (targetOrder && targetOrder.user_id) {
+        const orderNum = targetOrder.order_number || targetOrder.id.slice(0, 8);
+        const normalizedStatus = String(status).toLowerCase();
+
+        // Map status to appropriate customer notification type
+        if (normalizedStatus === 'shipped') {
+          await customerNotificationService.notifyOrderShipped({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+          });
+        } else if (normalizedStatus === 'packed' || normalizedStatus === 'ready_for_pickup') {
+          await customerNotificationService.notifyOrderReadyForCollection({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+          });
+        } else if (normalizedStatus === 'delivered') {
+          await customerNotificationService.notifyOrderDelivered({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+          });
+        } else if (status) {
+          await customerNotificationService.notifyOrderStatusChanged({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+            newStatus: String(status),
+          });
+        }
+
+        // Also notify if payment status changed
+        if (paymentStatus === 'Paid' || paymentStatus === 'paid') {
+          await customerNotificationService.notifyPaymentSuccessful({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+            amount: Number(targetOrder.total_amount || 0),
+          });
+        } else if (paymentStatus === 'failed' || paymentStatus === 'cancelled') {
+          await customerNotificationService.notifyPaymentFailed({
+            userId: targetOrder.user_id,
+            orderId: targetOrder.id,
+            orderNumber: orderNum,
+            isCancelled: paymentStatus === 'cancelled',
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.warn('[adminService] Customer notification dispatch note:', notifErr);
     }
 
     return { success, error: success ? undefined : 'Failed to update order status in database.' };

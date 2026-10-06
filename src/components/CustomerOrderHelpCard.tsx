@@ -1,5 +1,6 @@
 import React from 'react';
-import { Mail, MessageSquare, Phone, HelpCircle, ArrowUpRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Mail, MessageSquare, Phone, HelpCircle, ArrowUpRight, ShieldCheck, FileText, Trash2 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 
@@ -115,6 +116,34 @@ export const CustomerOrderHelpCard: React.FC<CustomerOrderHelpCardProps> = ({
               <span>Call</span>
             </a>
           )}
+        </div>
+      </div>
+
+      {/* Help & Legal Policy Quick Links */}
+      <div className="mt-4 pt-3.5 border-t border-blue-200/60 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500 dark:text-slate-400">
+        <span>Policies &amp; Account Privacy</span>
+        <div className="flex flex-wrap items-center gap-4">
+          <Link
+            to="/privacy-policy"
+            className="inline-flex items-center gap-1 font-semibold text-gray-700 dark:text-slate-300 hover:text-[#ff6452] dark:hover:text-[#ff6452] transition-colors"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-[#ff6452]" />
+            <span>Privacy Policy</span>
+          </Link>
+          <Link
+            to="/terms-and-conditions"
+            className="inline-flex items-center gap-1 font-semibold text-gray-700 dark:text-slate-300 hover:text-[#ff6452] dark:hover:text-[#ff6452] transition-colors"
+          >
+            <FileText className="w-3.5 h-3.5 text-[#ff6452]" />
+            <span>Terms &amp; Conditions</span>
+          </Link>
+          <Link
+            to="/account#delete-account"
+            className="inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400 hover:underline transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Account</span>
+          </Link>
         </div>
       </div>
     </div>

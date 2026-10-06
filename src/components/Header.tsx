@@ -5,6 +5,7 @@ import { useShop } from '../context/ShopContext';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { STORE_CONFIG } from '../constants/config';
 import { ThemeToggle } from './ThemeToggle';
+import { CustomerNotificationBell } from './CustomerNotificationBell';
 
 export const Header: React.FC = () => {
   const navigate = useNavigate();
@@ -114,6 +115,9 @@ export const Header: React.FC = () => {
 
         {/* Actions & Theme Toggle */}
         <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          {/* Customer Notifications for authenticated users */}
+          {user && <CustomerNotificationBell user={user} />}
+
           {/* Global Theme Toggle */}
           <ThemeToggle />
 

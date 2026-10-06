@@ -10,6 +10,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SEOHead } from '../components/SEOHead';
 import { AccountStatusCheckoutGuard } from '../components/AccountStatusCheckoutGuard';
 import { marketingService } from '../services/marketingService';
+import { customerNotificationService } from '../services/customerNotificationService';
 import { calculateCustomizedUnitPrice, generateCartItemId } from '../utils/customizationPricing';
 
 export const CheckoutPage: React.FC = () => {
@@ -140,8 +141,24 @@ export const CheckoutPage: React.FC = () => {
     const status = searchParams.get('status');
     if (status === 'cancelled') {
       setCancelNotice('Your payment was cancelled. Your items remain safely in your cart.');
+      if (user?.id) {
+        const cachedPendingId = sessionStorage.getItem('kud_pending_checkout_order_id');
+        customerNotificationService.notifyPaymentFailed({
+          userId: user.id,
+          orderId: cachedPendingId || undefined,
+          isCancelled: true,
+        }).catch(() => {});
+      }
     } else if (status === 'failed') {
       setCancelNotice('Your payment attempt was unsuccessful. You may try again with another method.');
+      if (user?.id) {
+        const cachedPendingId = sessionStorage.getItem('kud_pending_checkout_order_id');
+        customerNotificationService.notifyPaymentFailed({
+          userId: user.id,
+          orderId: cachedPendingId || undefined,
+          isCancelled: false,
+        }).catch(() => {});
+      }
     }
 
     return () => {
@@ -404,6 +421,17 @@ export const CheckoutPage: React.FC = () => {
         throw new Error('Order creation failed. Database order ID was not returned.');
       }
 
+      // Dispatch order creation notification to customer
+      const targetUserId = user?.id || createdOrder.user_id;
+      if (targetUserId) {
+        customerNotificationService.notifyOrderPlaced({
+          userId: targetUserId,
+          orderId: createdOrder.id,
+          orderNumber: createdOrder.order_number || createdOrder.id.slice(0, 8),
+          total: Number(createdOrder.total_amount) || 0,
+        }).catch((err) => console.warn('[CheckoutPage] Notification notice:', err));
+      }
+
       // Handle Yoco Hosted Checkout
       if (paymentMethod === 'yoco') {
         showToast('Connecting to Yoco Hosted Checkout...', 'info');
@@ -427,6 +455,15 @@ export const CheckoutPage: React.FC = () => {
           const errMsg = yocoError?.message || yocoData?.error || 'Failed to initialize Yoco Hosted Checkout.';
           setPaymentError(errMsg);
           showToast(`Yoco Checkout Error: ${errMsg}`, 'error');
+          if (targetUserId) {
+            customerNotificationService.notifyPaymentFailed({
+              userId: targetUserId,
+              orderId: createdOrder.id,
+              orderNumber: createdOrder.order_number || createdOrder.id.slice(0, 8),
+              reason: errMsg,
+              isCancelled: false,
+            }).catch(() => {});
+          }
           setIsSubmitting(false);
           return;
         }
@@ -435,6 +472,17 @@ export const CheckoutPage: React.FC = () => {
           const errMsg = yocoData?.error || 'Yoco Checkout Error: orderId parameter is required or invalid response';
           setPaymentError(errMsg);
           showToast(`Yoco Checkout Error: ${errMsg}`, 'error');
+          if (targetUserId) {
+            customerNotificationService.createNotificationSafe({
+              userId: targetUserId,
+              type: 'payment_failed',
+              title: `Payment Setup Failed - Order #${createdOrder.order_number || createdOrder.id.slice(0, 8)}`,
+              message: `Yoco Checkout Error: ${errMsg}`,
+              orderId: createdOrder.id,
+              link: `/orders/${createdOrder.id}`,
+              fingerprint: `yoco_url_err_${createdOrder.id}`,
+            }).catch(() => {});
+          }
           setIsSubmitting(false);
           return;
         }

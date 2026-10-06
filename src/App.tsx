@@ -21,6 +21,9 @@ import { OrdersPage } from './pages/OrdersPage';
 import { OrderDetailsPage } from './pages/OrderDetailsPage';
 import { UpdatePasswordPage } from './pages/UpdatePasswordPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
+import { TermsAndConditionsPage } from './pages/TermsAndConditionsPage';
+import { StoreFooter } from './components/StoreFooter';
 
 // Admin Layout & Pages
 import { AdminLayout } from './components/admin/AdminLayout';
@@ -78,6 +81,8 @@ function AppContent() {
           <Route path="/reset-password" element={<UpdatePasswordPage />} />
           <Route path="/orders" element={<OrdersPage />} />
           <Route path="/orders/:id" element={<OrderDetailsPage />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms-and-conditions" element={<TermsAndConditionsPage />} />
 
           {/* Protected Admin Portal Routes */}
           <Route
@@ -106,6 +111,9 @@ function AppContent() {
           </Route>
         </Routes>
       </main>
+
+      {/* Store Footer with Legal, Privacy Policy & Terms Links (Hidden on Admin routes) */}
+      {!isAdminRoute && <StoreFooter />}
 
       {/* Fixed 5-Item Bottom Navigation (Hidden on Admin routes) */}
       {!isAdminRoute && <BottomNavigation />}

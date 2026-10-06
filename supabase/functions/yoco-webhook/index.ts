@@ -253,6 +253,106 @@ async function dispatchIdempotentAdminNotification({
   }
 }
 
+/**
+ * Authoritatively creates customer notification in public.notifications from Edge Function.
+ * - Respects public.notification_preferences
+ * - Deduplicates via fingerprint to prevent duplicate events from repeated webhook attempts
+ * - Non-blocking
+ */
+async function dispatchCustomerNotificationSafe({
+  supabase,
+  userId,
+  type,
+  title,
+  message,
+  orderId,
+  link,
+  metadata = {},
+  fingerprint,
+}: {
+  supabase: any;
+  userId: string | null;
+  type: string;
+  title: string;
+  message: string;
+  orderId: string;
+  link?: string | null;
+  metadata?: Record<string, any>;
+  fingerprint: string;
+}): Promise<string | null> {
+  if (!userId) return null;
+
+  try {
+    // 1. Verify user notification preferences
+    const { data: prefs } = await supabase
+      .from('notification_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (prefs) {
+      if (prefs.in_app_notifications === false) {
+        console.log(`[YOCO WEBHOOK] Customer ${userId} disabled in-app notifications, skipping.`);
+        return null;
+      }
+      if (type === 'order_created' && prefs.order_updates === false) return null;
+      if (
+        (type === 'payment_success' || type === 'payment_failed' || type === 'payment_cancelled') &&
+        prefs.payment_updates === false
+      ) {
+        console.log(`[YOCO WEBHOOK] Customer ${userId} disabled payment notifications, skipping.`);
+        return null;
+      }
+      if (type === 'order_status_change' && prefs.order_updates === false) return null;
+      if ((type === 'shipping' || type === 'collection') && prefs.shipping_updates === false) return null;
+      if (type === 'delivery' && prefs.delivery_updates === false) return null;
+    }
+
+    const cleanFingerprint = fingerprint.trim();
+
+    // 2. Prevent duplicate notifications using fingerprint
+    const { data: existing } = await supabase
+      .from('notifications')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('fingerprint', cleanFingerprint)
+      .maybeSingle();
+
+    if (existing?.id) {
+      console.log(`[YOCO WEBHOOK] Duplicate customer notification prevented via fingerprint: ${cleanFingerprint}`);
+      return existing.id;
+    }
+
+    // 3. Insert notification
+    const { data: inserted, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: userId,
+        type,
+        title,
+        message,
+        order_id: orderId,
+        link: link || `/orders/${orderId}`,
+        is_read: false,
+        metadata,
+        fingerprint: cleanFingerprint,
+        created_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (!error && inserted) {
+      console.log(`[YOCO WEBHOOK] Customer notification dispatched: "${title}" (${inserted.id})`);
+      return inserted.id;
+    }
+
+    return null;
+  } catch (err: any) {
+    console.warn('[YOCO WEBHOOK] Customer notification dispatch caught:', err?.message);
+    return null;
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -608,6 +708,30 @@ serve(async (req) => {
         console.warn('[YOCO WEBHOOK] Non-blocking admin notification error:', notifErr?.message);
       }
 
+      // Dispatch customer notification for successful payment safely
+      if (existingOrder.user_id) {
+        try {
+          await dispatchCustomerNotificationSafe({
+            supabase,
+            userId: existingOrder.user_id,
+            type: 'payment_success',
+            title: 'Payment Successful',
+            message: `Payment of R${paymentTotal.toFixed(2)} for order #${orderNumber} was successful. We are processing your items.`,
+            orderId: orderId,
+            link: `/orders/${orderId}`,
+            metadata: {
+              orderId,
+              orderNumber,
+              amount: paymentTotal,
+              payment_reference: verifiedPaymentReference,
+            },
+            fingerprint: `payment_success_${orderId}`,
+          });
+        } catch (cNotifErr: any) {
+          console.warn('[YOCO WEBHOOK] Non-blocking customer notification error:', cNotifErr?.message);
+        }
+      }
+
       // 10. Asynchronously trigger purchase confirmation email if not yet sent
       if (!existingOrder.confirmation_email_sent) {
         try {
@@ -686,6 +810,32 @@ serve(async (req) => {
         console.log(`[YOCO WEBHOOK] Admin warning notification dispatched for ${targetPaymentStatus} payment on order ${orderId}`);
       } catch (notifErr: any) {
         console.warn('[YOCO WEBHOOK] Non-blocking admin notification warning error:', notifErr?.message);
+      }
+
+      // Dispatch customer notification for failed or cancelled payment safely
+      if (existingOrder.user_id) {
+        try {
+          await dispatchCustomerNotificationSafe({
+            supabase,
+            userId: existingOrder.user_id,
+            type: isCancelledEvent ? 'payment_cancelled' : 'payment_failed',
+            title: 'Payment Failed',
+            message: isCancelledEvent
+              ? `Payment for order #${orderNumber} was cancelled. Your items remain safely in your cart.`
+              : `Payment for order #${orderNumber} was unsuccessful. You may try again with another payment method.`,
+            orderId: orderId,
+            link: `/orders/${orderId}`,
+            metadata: {
+              orderId,
+              orderNumber,
+              status: targetPaymentStatus,
+              event: eventType,
+            },
+            fingerprint: `payment_failed_${orderId}`,
+          });
+        } catch (cNotifErr: any) {
+          console.warn('[YOCO WEBHOOK] Non-blocking customer warning notification error:', cNotifErr?.message);
+        }
       }
 
       return new Response(

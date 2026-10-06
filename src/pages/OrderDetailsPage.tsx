@@ -12,6 +12,7 @@ import { generateOrderInvoicePDF } from '../utils/invoiceGenerator';
 import { calculateOrderFinancials, formatCurrency, VAT_RATE } from '../utils/taxUtils';
 import { adminService } from '../services/adminService';
 import { marketingService } from '../services/marketingService';
+import { customerNotificationService } from '../services/customerNotificationService';
 
 export const OrderDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +57,16 @@ export const OrderDetailsPage: React.FC = () => {
       console.error('[Retry Payment] Error:', err);
       showToast(err.message || 'Failed to initialize payment. Please try again.', 'error');
       setIsRetryingPayment(false);
+      const targetUid = order.user_id || user?.id;
+      if (targetUid) {
+        customerNotificationService.notifyPaymentFailed({
+          userId: targetUid,
+          orderId: order.id,
+          orderNumber: order.order_number || order.id.slice(0, 8),
+          reason: err.message || 'Payment retry initialization failed.',
+          isCancelled: false,
+        }).catch(() => {});
+      }
     }
   };
 
@@ -129,6 +140,17 @@ export const OrderDetailsPage: React.FC = () => {
           if (sessionStorage.getItem(trackedKey) !== 'true') {
             sessionStorage.setItem(trackedKey, 'true');
             marketingService.trackPurchase(currentOrder, user);
+          }
+
+          // Dispatch verified payment notification to customer
+          const customerUserId = currentOrder.user_id || user?.id;
+          if (customerUserId) {
+            customerNotificationService.notifyPaymentSuccessful({
+              userId: customerUserId,
+              orderId: currentOrder.id,
+              orderNumber: currentOrder.order_number || currentOrder.id.slice(0, 8),
+              amount: Number(currentOrder.total_amount) || 0,
+            }).catch((notifErr) => console.warn('[OrderDetailsPage] Notification notice:', notifErr));
           }
 
           // Clean query parameters from URL safely
