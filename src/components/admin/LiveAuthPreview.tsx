@@ -583,16 +583,16 @@ export const LiveAuthPreview: React.FC<LiveAuthPreviewProps> = ({
               }}
             >
               {/* Store Logo Header */}
-              {showLogo && (
-                <div className="w-12 h-12 rounded-2xl bg-white shadow-md flex items-center justify-center mx-auto border border-gray-100 overflow-hidden transform hover:scale-105 transition-transform duration-300">
-                  {storeBranding?.logoUrl ? (
+              {showLogo && effectiveConfig.customLogoUrl !== '' && effectiveConfig.custom_logo_url !== '' && (
+                <div className="inline-flex items-center justify-center p-2 rounded-2xl bg-white shadow-md mx-auto border border-gray-100 overflow-hidden transform hover:scale-105 transition-transform duration-300">
+                  {effectiveConfig.customLogoUrl || effectiveConfig.custom_logo_url || storeBranding?.logoImageUrl || (storeBranding as any)?.logoUrl ? (
                     <img
-                      src={storeBranding.logoUrl}
-                      alt={storeBranding.storeName || 'Store Logo'}
-                      className="w-8 h-8 object-contain"
+                      src={effectiveConfig.customLogoUrl || effectiveConfig.custom_logo_url || storeBranding?.logoImageUrl || (storeBranding as any)?.logoUrl}
+                      alt={storeBranding?.storeName || 'Store Logo'}
+                      className="h-9 max-w-[140px] w-auto object-contain mx-auto"
                     />
                   ) : (
-                    <div className="w-full h-full bg-[#ff6452] flex items-center justify-center text-white font-black text-base">
+                    <div className="w-8 h-8 rounded-xl bg-[#ff6452] flex items-center justify-center text-white font-black text-base">
                       {storeBranding?.logoText || 'K'}
                     </div>
                   )}

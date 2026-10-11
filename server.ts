@@ -2957,7 +2957,7 @@ async function startServer() {
   });
 
   // --- PUBLIC PRODUCT STOREFRONT ENDPOINTS ---
-  // Public GET all active products (supports optional ?include_inactive=true or ?all=true)
+  // Public GET all products for storefront & admin
   app.get('/api/products', async (req, res) => {
     try {
       const supabase = getServerSupabase();
@@ -2965,13 +2965,13 @@ async function startServer() {
         return res.status(500).json({ success: false, error: 'Database not configured.' });
       }
 
-      const includeInactive = req.query.include_inactive === 'true' || req.query.all === 'true';
+      const activeOnly = req.query.active_only === 'true';
 
       let query = supabase
         .from('products')
         .select('*');
 
-      if (!includeInactive) {
+      if (activeOnly) {
         query = query.eq('is_active', true);
       }
 

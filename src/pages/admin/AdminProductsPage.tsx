@@ -30,6 +30,8 @@ import {
   UploadCloud,
   Copy,
   ImageOff,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { Product, ProductCategory } from '../../types';
@@ -87,6 +89,8 @@ export const AdminProductsPage: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [pendingBulkVisibilityAction, setPendingBulkVisibilityAction] = useState<'show' | 'hide' | null>(null);
+  const [isApplyingBulkVisibility, setIsApplyingBulkVisibility] = useState<boolean>(false);
 
   // Duplication state
   const [duplicatingProductId, setDuplicatingProductId] = useState<string | null>(null);
@@ -345,24 +349,37 @@ export const AdminProductsPage: React.FC = () => {
     }
   };
 
-  // Bulk Status Toggle
-  const handleBulkStatusChange = async (newStatus: boolean) => {
+  // Bulk Status Toggle (opens confirmation modal)
+  const handleRequestBulkVisibility = (action: 'show' | 'hide') => {
     if (selectedIds.size === 0) return;
-    const idsList = Array.from(selectedIds) as string[];
-    const updates = idsList.map((id) => ({
-      id,
-      changes: { isActive: newStatus },
-    }));
+    setPendingBulkVisibilityAction(action);
+  };
 
-    const result = await adminService.bulkUpdateProducts(updates);
-    if (result.success) {
-      showToast(
-        `Updated status to ${newStatus ? 'Active' : 'Inactive'} for ${result.updatedCount} products`,
-        'success'
-      );
-      fetchProducts();
-    } else {
-      showToast(result.error || 'Failed to bulk update status.', 'error');
+  const handleConfirmBulkVisibilityChange = async () => {
+    if (selectedIds.size === 0 || !pendingBulkVisibilityAction) return;
+    setIsApplyingBulkVisibility(true);
+    const newStatus = pendingBulkVisibilityAction === 'show';
+
+    try {
+      const idsList = Array.from(selectedIds) as string[];
+      const updates = idsList.map((id) => ({
+        id,
+        changes: { isActive: newStatus, productStatus: (newStatus ? 'active' : 'draft') as 'active' | 'draft' },
+      }));
+
+      const result = await adminService.bulkUpdateProducts(updates);
+      if (result.success) {
+        showToast(
+          `${newStatus ? 'Shown (Active)' : 'Hidden from storefront'} for ${result.updatedCount} selected product${result.updatedCount === 1 ? '' : 's'}`,
+          'success'
+        );
+        setPendingBulkVisibilityAction(null);
+        fetchProducts();
+      } else {
+        showToast(result.error || 'Failed to bulk update product visibility.', 'error');
+      }
+    } finally {
+      setIsApplyingBulkVisibility(false);
     }
   };
 
@@ -759,7 +776,7 @@ export const AdminProductsPage: React.FC = () => {
         {/* Quick Batch Actions & Selection Indicator inside filter bar */}
         {products.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100 text-xs">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <label className="flex items-center gap-2 cursor-pointer text-gray-700 font-bold select-none">
                 <input
                   type="checkbox"
@@ -775,18 +792,56 @@ export const AdminProductsPage: React.FC = () => {
                     ? `All ${products.length} Selected`
                     : selectedIds.size > 0
                     ? `${selectedIds.size} of ${products.length} Selected`
-                    : 'Select All Visible'}
+                    : 'Select All'}
                 </span>
               </label>
 
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set(products.map((p) => p.id)))}
+                disabled={allVisibleSelected}
+                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold rounded-lg transition-colors"
+              >
+                Select All
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearSelection}
+                disabled={selectedIds.size === 0}
+                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold rounded-lg transition-colors"
+              >
+                Deselect All
+              </button>
+
               {selectedIds.size > 0 && (
-                <button
-                  type="button"
-                  onClick={handleClearSelection}
-                  className="text-gray-400 hover:text-gray-700 font-bold underline"
-                >
-                  Clear Selection
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleRequestBulkVisibility('hide')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold rounded-xl transition-colors"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Bulk Hide Selected ({selectedIds.size})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRequestBulkVisibility('show')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold rounded-xl transition-colors"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Bulk Show Selected ({selectedIds.size})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClearSelection}
+                    className="text-gray-400 hover:text-gray-700 font-bold underline px-1"
+                  >
+                    Clear Selection
+                  </button>
+                </>
               )}
             </div>
 
@@ -1357,22 +1412,23 @@ export const AdminProductsPage: React.FC = () => {
               <span>Zero Stock</span>
             </button>
 
-            {/* Bulk Activate / Inactivate */}
+            {/* Bulk Show / Hide Selected */}
             <button
-              onClick={() => handleBulkStatusChange(true)}
-              className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-emerald-300 font-bold rounded-2xl text-xs transition-colors"
-              title="Activate selected"
+              onClick={() => handleRequestBulkVisibility('show')}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-emerald-300 font-bold rounded-2xl text-xs transition-colors"
+              title="Bulk Show Selected products on storefront"
             >
-              <Power className="w-3.5 h-3.5" />
-              <span>Activate</span>
+              <Eye className="w-3.5 h-3.5" />
+              <span>Bulk Show Selected</span>
             </button>
 
             <button
-              onClick={() => handleBulkStatusChange(false)}
-              className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 font-bold rounded-2xl text-xs transition-colors"
-              title="Hide / Inactivate selected"
+              onClick={() => handleRequestBulkVisibility('hide')}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-amber-300 font-bold rounded-2xl text-xs transition-colors"
+              title="Bulk Hide Selected products from storefront"
             >
-              <span>Hide</span>
+              <EyeOff className="w-3.5 h-3.5" />
+              <span>Bulk Hide Selected</span>
             </button>
 
             {/* Delete Selected */}
@@ -1389,11 +1445,35 @@ export const AdminProductsPage: React.FC = () => {
               onClick={handleClearSelection}
               className="px-2.5 py-2 text-gray-400 hover:text-white font-bold text-xs"
             >
-              Deselect
+              Clear Selection
             </button>
           </div>
         </div>
       )}
+
+      {/* Confirmation Modal for Bulk Show / Hide Visibility */}
+      <ConfirmationModal
+        isOpen={pendingBulkVisibilityAction !== null}
+        title={
+          pendingBulkVisibilityAction === 'hide'
+            ? `Bulk Hide ${selectedIds.size} Selected Product${selectedIds.size === 1 ? '' : 's'}?`
+            : `Bulk Show ${selectedIds.size} Selected Product${selectedIds.size === 1 ? '' : 's'}?`
+        }
+        message={
+          pendingBulkVisibilityAction === 'hide'
+            ? `Are you sure you want to hide ${selectedIds.size} selected product${selectedIds.size === 1 ? '' : 's'} from customers? Hidden products will not appear in customer listings, categories, search results, new arrivals, or recommendations, and will remain safely stored in Supabase for admin editing or restoring at any time.`
+            : `Are you sure you want to make ${selectedIds.size} selected product${selectedIds.size === 1 ? '' : 's'} visible to customers across all store listings, categories, and search results?`
+        }
+        confirmText={
+          pendingBulkVisibilityAction === 'hide'
+            ? `Hide ${selectedIds.size} Product${selectedIds.size === 1 ? '' : 's'}`
+            : `Show ${selectedIds.size} Product${selectedIds.size === 1 ? '' : 's'}`
+        }
+        isDangerous={false}
+        isLoading={isApplyingBulkVisibility}
+        onConfirm={handleConfirmBulkVisibilityChange}
+        onClose={() => setPendingBulkVisibilityAction(null)}
+      />
 
       {/* Bulk Edit Modal Component */}
       <BulkEditModal

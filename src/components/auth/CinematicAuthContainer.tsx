@@ -13,7 +13,7 @@ export const CinematicAuthContainer: React.FC<CinematicAuthContainerProps> = ({
   children,
   isSignUp = false,
 }) => {
-  const { authAppearance, storeBranding } = useShop();
+  const { authAppearance, storeBranding, user } = useShop();
   const config: AuthAppearanceConfig = authAppearance || DEFAULT_AUTH_APPEARANCE;
 
   // Determine if active preset's name should be visible on the customer frontend
@@ -183,6 +183,14 @@ export const CinematicAuthContainer: React.FC<CinematicAuthContainerProps> = ({
       'Sign in to access your orders, delivery tracker, and exclusive member discounts.';
 
   const showLogo = config.show_logo ?? config.showLogoBadge ?? true;
+  const resolvedAuthLogoUrl =
+    config.customLogoUrl !== undefined && config.customLogoUrl !== null
+      ? config.customLogoUrl
+      : config.custom_logo_url !== undefined && config.custom_logo_url !== null
+      ? config.custom_logo_url
+      : storeBranding?.logoImageUrl || (storeBranding as any)?.logoUrl || '';
+  const hasExplicitRemovedLogo =
+    config.customLogoUrl === '' || config.custom_logo_url === '';
 
   return (
     <div
@@ -271,17 +279,17 @@ export const CinematicAuthContainer: React.FC<CinematicAuthContainerProps> = ({
         >
           {/* Card Header: Brand Logo Badge & Headline */}
           <div className="text-center space-y-2 mb-6">
-            {showLogo && (
-              <div className="inline-flex items-center justify-center p-2 rounded-2xl bg-white/90 dark:bg-slate-900/90 shadow-md border border-white/60 mb-1">
-                {storeBranding?.logoUrl ? (
+            {showLogo && !hasExplicitRemovedLogo && (
+              <div className="inline-flex items-center justify-center p-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 shadow-md border border-white/60 mb-1">
+                {resolvedAuthLogoUrl ? (
                   <img
-                    src={storeBranding.logoUrl}
+                    src={resolvedAuthLogoUrl}
                     alt="Store Logo"
-                    className="w-10 h-10 object-contain"
+                    className="h-11 max-w-[160px] w-auto object-contain mx-auto"
                   />
                 ) : (
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ff6452] to-rose-600 text-white flex items-center justify-center font-black text-base shadow-xs">
-                    KUD
+                    {storeBranding?.logoText || 'KUD'}
                   </div>
                 )}
               </div>
@@ -323,14 +331,14 @@ export const CinematicAuthContainer: React.FC<CinematicAuthContainerProps> = ({
         {activeImages.length > 1 && (
           <div className="mt-4 flex items-center justify-between px-2 text-white/80 text-xs">
             <div className="flex items-center gap-2">
-              {isPresetNameVisible && displayedPresetName && (
+              {Boolean(user) && isPresetNameVisible && displayedPresetName && (
                 <span className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] font-bold uppercase tracking-wider text-white border border-white/25 shadow-xs flex items-center gap-1">
                   <Sparkles className="w-2.5 h-2.5 text-[#ff6452]" />
                   {displayedPresetName}
                 </span>
               )}
               <div className="flex items-center gap-1.5">
-                {(!isPresetNameVisible || !displayedPresetName) && <Sparkles className="w-3.5 h-3.5 text-white/90" />}
+                {(!user || !isPresetNameVisible || !displayedPresetName) && <Sparkles className="w-3.5 h-3.5 text-white/90" />}
                 <span className="text-[11px] font-bold text-white/90 drop-shadow-sm truncate max-w-[180px] sm:max-w-xs">
                   {activeImages[currentIndex]?.title || 'South African Lifestyle'}
                 </span>
@@ -376,7 +384,7 @@ export const CinematicAuthContainer: React.FC<CinematicAuthContainerProps> = ({
         )}
 
         {/* Preset name pill for single background */}
-        {activeImages.length <= 1 && isPresetNameVisible && displayedPresetName && (
+        {Boolean(user) && activeImages.length <= 1 && isPresetNameVisible && displayedPresetName && (
           <div className="mt-3 flex items-center justify-center px-2">
             <span className="px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] font-bold uppercase tracking-wider text-white border border-white/25 shadow-xs flex items-center gap-1">
               <Sparkles className="w-2.5 h-2.5 text-[#ff6452]" />

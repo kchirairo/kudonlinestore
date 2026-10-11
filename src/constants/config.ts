@@ -92,6 +92,10 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralStoreSettings = {
     'Premium South African marketplace delivering beauty, technology, home goods, and lifestyle products.',
   enableGoogleAuth: true,
   isGoogleAuthEnabled: true,
+  holidayModeEnabled: false,
+  holidayMessage: 'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!',
+  holidayStartDate: null,
+  holidayEndDate: null,
 };
 
 export const DEFAULT_COUPONS: Coupon[] = [

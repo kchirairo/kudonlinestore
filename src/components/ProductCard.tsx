@@ -1,26 +1,46 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Star, Flame, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
+import { Star, Heart, Flame, ChevronLeft, ChevronRight, ImageOff, ShoppingCart, Check } from 'lucide-react';
 import { Product } from '../types';
 import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 
 interface ProductCardProps {
   product: Product;
+  compact?: boolean;
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
-  const { isFavourite, toggleFavourite } = useShop();
+export const ProductCard: React.FC<ProductCardProps> = ({ product, compact = false }) => {
+  const { isFavourite, toggleFavourite, addToCart } = useShop();
+  const [justAdded, setJustAdded] = useState(false);
 
   const isFav = isFavourite(product.id);
 
   const isOutOfStock = !product.inStock || (product.stock !== undefined && product.stock <= 0);
   const isLowStock = !isOutOfStock && product.stock !== undefined && product.stock > 0 && product.stock < 5;
 
+  const computedDiscount =
+    product.discountPercentage && product.discountPercentage > 0
+      ? product.discountPercentage
+      : product.originalPrice && product.originalPrice > product.price
+      ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)
+      : 0;
+
   const handleFavouriteClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     toggleFavourite(product.id);
+  };
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isOutOfStock) return;
+    addToCart(product, 1);
+    setJustAdded(true);
+    setTimeout(() => {
+      setJustAdded(false);
+    }, 1400);
   };
 
   const imageAltText = `${product.name} - ${product.brand || 'KUD'} ${product.category} South Africa`;
@@ -451,47 +471,47 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
         {/* Condition / Discount / Low Stock Badges */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 items-start pointer-events-none z-10">
+          {computedDiscount > 0 && !isOutOfStock && (
+            <span className="bg-[#ef4444] text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow-xs">
+              -{computedDiscount}%
+            </span>
+          )}
           {isLowStock && (
             <span
               id={`low-stock-badge-${product.id}`}
-              className="bg-amber-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 animate-pulse"
+              className="bg-amber-500 text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1"
             >
               <Flame className="w-3 h-3 fill-current" />
-              <span>Low stock ({product.stock} left)</span>
+              <span>{product.stock} left</span>
             </span>
           )}
           {isOutOfStock && (
             <span
               id={`out-of-stock-badge-${product.id}`}
-              className="bg-gray-800/90 dark:bg-slate-800/90 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs"
+              className="bg-slate-900/90 text-white text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs"
             >
               Out of stock
             </span>
           )}
-          {product.discountPercentage && !isOutOfStock && (
-            <span className="bg-[#ff6452] text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs">
-              -{product.discountPercentage}%
-            </span>
-          )}
           {product.condition && (
-            <span className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-gray-800 dark:text-slate-200 text-[11px] font-medium px-2 py-0.5 rounded-full border border-gray-200/50 dark:border-slate-700 shadow-xs">
+            <span className="bg-white/95 dark:bg-slate-900/90 backdrop-blur-md text-slate-700 dark:text-slate-200 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-slate-200/60 dark:border-slate-700 shadow-2xs">
               {product.condition}
             </span>
           )}
         </div>
 
-        {/* Coral Star/Heart Favourite Button (Top-Right) */}
+        {/* Heart Favourite Button (Top-Right) */}
         <button
           type="button"
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
           onClick={handleFavouriteClick}
-          className="absolute top-2.5 right-2.5 z-20 w-8 h-8 rounded-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex items-center justify-center text-[#ff6452] hover:bg-white dark:hover:bg-slate-800 transition-all shadow-xs active:scale-90 cursor-pointer"
+          className="absolute top-2.5 right-2.5 z-20 w-8 h-8 rounded-full bg-white/95 dark:bg-slate-900/90 backdrop-blur-md flex items-center justify-center text-[#ef4444] hover:bg-white dark:hover:bg-slate-800 transition-all shadow-xs active:scale-90 cursor-pointer border border-slate-100 dark:border-slate-700/60"
           aria-label={isFav ? `Remove ${product.name} from favourites` : `Add ${product.name} to favourites`}
         >
-          <Star
+          <Heart
             className={`w-4 h-4 transition-colors ${
-              isFav ? 'fill-[#ff6452] text-[#ff6452]' : 'text-gray-400 dark:text-slate-400 hover:text-[#ff6452]'
+              isFav ? 'fill-[#ef4444] text-[#ef4444]' : 'text-slate-400 dark:text-slate-400 hover:text-[#ef4444]'
             }`}
           />
         </button>
@@ -548,8 +568,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                   onClick={(e) => handleDotClick(idx, e)}
                   className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
                     idx === safeIndex
-                      ? 'w-3.5 bg-[#ff6452]'
-                      : 'w-1.5 bg-white/70 hover:bg-white dark:bg-slate-400'
+                      ? 'w-3.5 bg-white'
+                      : 'w-1.5 bg-white/60 hover:bg-white dark:bg-slate-400'
                   }`}
                   aria-label={`Go to slide ${idx + 1}`}
                 />
@@ -560,36 +580,90 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       </div>
 
       {/* Product Information Body */}
-      <div className="p-3.5 flex flex-col gap-1.5 flex-1 justify-between">
-        {/* Row 1: Price and Size/Variant Aligned Right */}
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-base font-extrabold text-gray-900 dark:text-white">
+      <div className="p-3 sm:p-3.5 flex flex-col gap-1.5 flex-1 justify-between">
+        <div className="space-y-1">
+          {/* Brand / Variant Meta */}
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider truncate">
+              {product.brand || product.category}
+            </span>
+            {product.sizeOrVariant && (
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md shrink-0">
+                {product.sizeOrVariant}
+              </span>
+            )}
+          </div>
+
+          {/* Product Name (Strict 2-line clamp so long names never break card layout) */}
+          <h3 className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 line-clamp-2 min-h-[2rem] sm:min-h-[2.35rem] leading-snug group-hover:text-[#1d4ed8] dark:group-hover:text-blue-400 transition-colors">
+            {product.name}
+          </h3>
+
+          {/* Star Rating Row */}
+          <div className="flex items-center gap-1 pt-0.5">
+            <div className="flex items-center text-amber-400">
+              {[...Array(5)].map((_, i) => {
+                const ratingVal = product.rating || 4.8;
+                const filled = i < Math.round(ratingVal);
+                return (
+                  <Star
+                    key={i}
+                    className={`w-3 h-3 ${
+                      filled ? 'fill-amber-400 text-amber-400' : 'text-slate-300 dark:text-slate-600'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              {(product.rating || 4.8).toFixed(1)}
+              {product.reviewsCount ? ` (${product.reviewsCount})` : ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Price + Add to Cart Action */}
+        <div className="pt-1.5 mt-auto space-y-2">
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <span className="text-sm sm:text-base font-extrabold text-[#08224a] dark:text-white">
               {STORE_CONFIG.STORE_CURRENCY}{product.price.toLocaleString()}
             </span>
-            {product.originalPrice && (
-              <span className="text-xs text-gray-400 dark:text-slate-500 line-through">
+            {product.originalPrice && product.originalPrice > product.price && (
+              <span className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 line-through font-medium">
                 {STORE_CONFIG.STORE_CURRENCY}{product.originalPrice.toLocaleString()}
               </span>
             )}
           </div>
 
-          {product.sizeOrVariant && (
-            <span className="text-xs font-semibold text-gray-500 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-              {product.sizeOrVariant}
-            </span>
-          )}
+          <button
+            type="button"
+            disabled={isOutOfStock}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={handleAddToCart}
+            className={`w-full py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-2xs ${
+              isOutOfStock
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                : justAdded
+                ? 'bg-emerald-600 text-white cursor-pointer'
+                : 'bg-[#0d3166] hover:bg-[#1d4ed8] text-white active:scale-95 cursor-pointer'
+            }`}
+          >
+            {isOutOfStock ? (
+              <span>Out of Stock</span>
+            ) : justAdded ? (
+              <>
+                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Added</span>
+              </>
+            ) : (
+              <>
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Add to Cart</span>
+              </>
+            )}
+          </button>
         </div>
-
-        {/* Row 2: Brand Name */}
-        <span className="text-xs font-medium text-gray-400 dark:text-slate-400 uppercase tracking-wider">
-          {product.brand}
-        </span>
-
-        {/* Row 3: Product Name */}
-        <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-200 line-clamp-1 group-hover:text-[#ff6452] transition-colors">
-          {product.name}
-        </h3>
       </div>
     </Link>
   );

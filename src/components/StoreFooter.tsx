@@ -5,7 +5,11 @@ import { useShop } from '../context/ShopContext';
 import { STORE_CONFIG } from '../constants/config';
 
 export const StoreFooter: React.FC = () => {
-  const { generalSettings } = useShop();
+  const { generalSettings, user } = useShop();
+
+  if (!user) {
+    return null;
+  }
 
   const storeName = generalSettings?.storeName || STORE_CONFIG.STORE_NAME || 'KUD Store';
   const contactEmail = generalSettings?.contactEmail || STORE_CONFIG.CONTACT_EMAIL;

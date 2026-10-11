@@ -18,11 +18,16 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
-import { PromotionalBannerItem, PromoBannerConfig } from '../types';
-import { isBannerActive, calculateTimeRemaining, calculateCtr } from '../utils/bannerMediaHelper';
+import { PromotionalBannerItem, PromoBannerConfig, Product } from '../types';
+import { isBannerActive, calculateTimeRemaining } from '../utils/bannerMediaHelper';
 import { adminService } from '../services/adminService';
+import { categoryToSlug } from '../utils/seo';
 
-export const PromoBanner: React.FC = () => {
+interface PromoBannerProps {
+  products?: Product[];
+}
+
+export const PromoBanner: React.FC<PromoBannerProps> = ({ products = [] }) => {
   const navigate = useNavigate();
   const { promoBanner } = useShop();
 
@@ -30,6 +35,7 @@ export const PromoBanner: React.FC = () => {
   const [isPlayingVideo, setIsPlayingVideo] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
+  const [isTouchInteracting, setIsTouchInteracting] = useState(false);
   const [videoErrorMap, setVideoErrorMap] = useState<Record<string, boolean>>({});
   const [imageErrorMap, setImageErrorMap] = useState<Record<string, boolean>>({});
 
@@ -112,23 +118,73 @@ export const PromoBanner: React.FC = () => {
     }
   }, [isIntersecting, isPlayingVideo, currentIndex]);
 
-  // Derive active banners list strictly from Admin-saved banners in Supabase
+  // Derive active banners list from Admin-saved banners in Supabase, or dynamically from live products
   const activeBanners: PromotionalBannerItem[] = useMemo(() => {
-    // Single source of truth: promotional_banner_enabled must be explicitly true
     const isGloballyActive = promoBanner?.promotional_banner_enabled === true && promoBanner?.enabled === true;
-    if (!isGloballyActive) return [];
-
-    // Modern banners array saved by Admin in Supabase
-    if (promoBanner.banners && Array.isArray(promoBanner.banners)) {
+    if (isGloballyActive && promoBanner.banners && Array.isArray(promoBanner.banners)) {
       const active = promoBanner.banners
         .filter(isBannerActive)
         .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
-      return active;
+      if (active.length > 0) {
+        return active;
+      }
     }
 
-    return [];
-  }, [promoBanner]);
+    // Dynamic fallback using existing live product/promotional data from the database
+    const validProducts = products.filter((p) => {
+      const firstImg = Array.isArray(p.images) && p.images.length > 0 ? p.images[0] : '';
+      return typeof firstImg === 'string' && firstImg.trim().length > 0 && !firstImg.startsWith('data:image');
+    });
+
+    if (validProducts.length === 0) return [];
+
+    // Prioritize discounted items first, then in-stock items across distinct categories
+    const discounted = validProducts.filter(
+      (p) => (p.discountPercentage && p.discountPercentage > 0) || (p.originalPrice && p.originalPrice > p.price)
+    );
+    const others = validProducts.filter((p) => !discounted.some((d) => d.id === p.id));
+    const pool = [...discounted, ...others].slice(0, 4);
+
+    const ctaLabels = ['Shop Now', 'View Deal', 'Explore', 'Shop Now'];
+    const badgeLabels = ['HOT DEAL 🔥', 'LIMITED OFFER', 'FEATURED PICK', 'TOP VALUE'];
+    const bgColors = ['#0b2b5e', '#103778', '#0d3166', '#153e85'];
+
+    return pool.map((prod, idx) => {
+      const computedDiscount =
+        prod.discountPercentage ||
+        (prod.originalPrice && prod.originalPrice > prod.price
+          ? Math.round(((prod.originalPrice - prod.price) / prod.originalPrice) * 100)
+          : undefined);
+
+      return {
+        id: `dynamic-hero-${prod.id}`,
+        enabled: true,
+        title: prod.name,
+        subtitle: prod.category ? `${prod.brand ? `${prod.brand} • ` : ''}${prod.category}` : prod.brand || 'Verified Quality',
+        description: prod.description || 'Fast nationwide delivery & secure Yoco checkout across South Africa.',
+        ctaText: ctaLabels[idx % ctaLabels.length],
+        ctaLink: `/product/${prod.id}`,
+        targetProductId: prod.id,
+        targetCategory: prod.category,
+        mediaType: 'image',
+        mediaUrl: prod.images[0],
+        mediaAltText: prod.name,
+        aspectRatio: '1:1',
+        backgroundColor: bgColors[idx % bgColors.length],
+        showBadge: true,
+        badgeType: 'HOT DEAL',
+        badgeCustomText: computedDiscount ? `SAVE ${computedDiscount}%` : badgeLabels[idx % badgeLabels.length],
+        badgeColor: '#ff6452',
+        showDiscount: Boolean(computedDiscount),
+        discountPercentage: computedDiscount,
+        promotionalPrice: prod.price,
+        originalPrice: prod.originalPrice,
+        showCta: true,
+        displayOrder: idx,
+      } as PromotionalBannerItem;
+    });
+  }, [promoBanner, products]);
 
   // Keep index within bounds
   useEffect(() => {
@@ -145,7 +201,12 @@ export const PromoBanner: React.FC = () => {
   const pauseOnHover = promoBanner?.pauseOnHover !== false;
 
   useEffect(() => {
-    if (!isAutoplay || activeBanners.length <= 1 || (pauseOnHover && isHovered)) {
+    if (
+      !isAutoplay ||
+      activeBanners.length <= 1 ||
+      (pauseOnHover && isHovered) ||
+      isTouchInteracting
+    ) {
       return;
     }
 
@@ -154,11 +215,11 @@ export const PromoBanner: React.FC = () => {
     }, Math.max(3, intervalSeconds) * 1000);
 
     return () => clearInterval(timer);
-  }, [isAutoplay, activeBanners.length, intervalSeconds, pauseOnHover, isHovered]);
+  }, [isAutoplay, activeBanners.length, intervalSeconds, pauseOnHover, isHovered, isTouchInteracting]);
 
-  // Track banner impression when viewed
+  // Track banner impression when viewed (only for admin-saved banners)
   useEffect(() => {
-    if (!currentBanner?.id) return;
+    if (!currentBanner?.id || currentBanner.id.startsWith('dynamic-hero-')) return;
     if (!recordedImpressionsRef.current.has(currentBanner.id)) {
       recordedImpressionsRef.current.add(currentBanner.id);
       adminService.recordBannerImpression(currentBanner.id).catch(() => {});
@@ -173,15 +234,15 @@ export const PromoBanner: React.FC = () => {
       }
       if (!currentBanner) return;
 
-      // Record click analytics
-      if (currentBanner.id) {
+      // Record click analytics for admin banners
+      if (currentBanner.id && !currentBanner.id.startsWith('dynamic-hero-')) {
         adminService.recordBannerClick(currentBanner.id).catch(() => {});
       }
 
       const targetUrl = currentBanner.ctaLink;
       if (!targetUrl) {
         if (currentBanner.targetCategory) {
-          navigate(`/categories/${encodeURIComponent(currentBanner.targetCategory.toLowerCase())}`);
+          navigate(`/category/${categoryToSlug(currentBanner.targetCategory)}`);
         } else if (currentBanner.targetProductId) {
           navigate(`/product/${currentBanner.targetProductId}`);
         } else {
@@ -218,6 +279,7 @@ export const PromoBanner: React.FC = () => {
 
   // Touch Swipe Handlers for Mobile
   const handleTouchStart = (e: React.TouchEvent) => {
+    setIsTouchInteracting(true);
     touchStartXRef.current = e.targetTouches[0].clientX;
   };
 
@@ -226,26 +288,25 @@ export const PromoBanner: React.FC = () => {
   };
 
   const handleTouchEnd = () => {
-    if (!touchStartXRef.current || !touchEndXRef.current) return;
-    const distance = touchStartXRef.current - touchEndXRef.current;
-    const minSwipeDistance = 45; // Minimum px for swipe
+    if (touchStartXRef.current && touchEndXRef.current) {
+      const distance = touchStartXRef.current - touchEndXRef.current;
+      const minSwipeDistance = 40; // Minimum px for swipe
 
-    if (distance > minSwipeDistance) {
-      // Swiped Left -> Next
-      handleNext();
-    } else if (distance < -minSwipeDistance) {
-      // Swiped Right -> Prev
-      handlePrev();
+      if (distance > minSwipeDistance) {
+        // Swiped Left -> Next
+        handleNext();
+      } else if (distance < -minSwipeDistance) {
+        // Swiped Right -> Prev
+        handlePrev();
+      }
     }
 
     touchStartXRef.current = null;
     touchEndXRef.current = null;
+    setTimeout(() => setIsTouchInteracting(false), 1500);
   };
 
-  // Single source of truth: promotional_banner_enabled must be explicitly true
-  const isGloballyActive = promoBanner?.promotional_banner_enabled === true && promoBanner?.enabled === true;
-
-  if (!isGloballyActive || activeBanners.length === 0 || !currentBanner) {
+  if (activeBanners.length === 0 || !currentBanner) {
     return null;
   }
 
@@ -318,11 +379,17 @@ export const PromoBanner: React.FC = () => {
       ? promoBanner.aspectRatio
       : '1:1';
 
+  const isDarkHeroBg =
+    !currentBanner.backgroundColor ||
+    currentBanner.backgroundColor.startsWith('#0') ||
+    currentBanner.backgroundColor.startsWith('#1') ||
+    currentBanner.id.startsWith('dynamic-hero-');
+
   return (
     <div
       ref={bannerRef}
       id="storefront-promotional-banner-container"
-      className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 transition-all duration-300"
+      className="w-full max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-3 pb-2 transition-all duration-300"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onTouchStart={handleTouchStart}
@@ -332,22 +399,31 @@ export const PromoBanner: React.FC = () => {
       <div
         id={`promo-card-${currentBanner.id}`}
         style={{
-          backgroundColor: currentBanner.backgroundColor || '#eff6ff',
+          backgroundColor: currentBanner.backgroundColor || '#0d3166',
         }}
-        className="relative overflow-hidden rounded-3xl sm:rounded-[32px] border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-300 group"
+        className={`relative overflow-hidden rounded-2xl sm:rounded-3xl border shadow-md hover:shadow-lg transition-all duration-300 group ${
+          isDarkHeroBg
+            ? 'bg-gradient-to-br from-[#08224a] via-[#103778] to-[#1d56b8] border-blue-900/40 text-white'
+            : 'border-slate-200/80 dark:border-slate-800'
+        }`}
       >
+        {/* Decorative subtle glow accents for dark blue hero */}
+        {isDarkHeroBg && (
+          <div className="pointer-events-none absolute -right-12 -top-12 w-56 h-56 rounded-full bg-blue-400/15 blur-2xl" />
+        )}
+
         {/* Render Banner based on layout: Split Card (Default) or Overlaid Hero */}
         {currentBanner.textPosition?.startsWith('overlay-') ? (
           /* OVERLAY HERO FULL VISUAL MODE */
           <div
             className={`relative w-full flex items-center overflow-hidden transition-all duration-300 ${
               isMobileViewport && isDedicatedMobileVideo
-                ? 'min-h-[420px] sm:min-h-[460px]'
+                ? 'min-h-[340px] sm:min-h-[420px]'
                 : currentRatio === '16:9'
-                ? 'min-h-[290px] sm:min-h-[380px] md:min-h-[440px]'
+                ? 'min-h-[240px] sm:min-h-[340px] md:min-h-[400px]'
                 : currentRatio === '4:3'
-                ? 'min-h-[330px] sm:min-h-[410px] md:min-h-[460px]'
-                : 'min-h-[360px] sm:min-h-[440px] md:min-h-[480px]'
+                ? 'min-h-[260px] sm:min-h-[360px] md:min-h-[420px]'
+                : 'min-h-[280px] sm:min-h-[380px] md:min-h-[440px]'
             }`}
           >
             {/* Background Media */}
@@ -379,7 +455,7 @@ export const PromoBanner: React.FC = () => {
               ) : (
                 <div
                   className="w-full h-full"
-                  style={{ backgroundColor: currentBanner.backgroundColor || '#1e293b' }}
+                  style={{ backgroundColor: currentBanner.backgroundColor || '#0d3166' }}
                 />
               )}
             </div>
@@ -395,21 +471,21 @@ export const PromoBanner: React.FC = () => {
                 background:
                   currentBanner.overlayStyle !== 'solid'
                     ? currentBanner.textPosition === 'overlay-right'
-                      ? `linear-gradient(to left, rgba(15,23,42,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.5) / 100)}) 0%, rgba(15,23,42,${((currentBanner.overlayDimming ?? 45) * 0.8) / 100}) 55%, transparent 100%)`
+                      ? `linear-gradient(to left, rgba(8,34,74,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.5) / 100)}) 0%, rgba(8,34,74,${((currentBanner.overlayDimming ?? 45) * 0.8) / 100}) 55%, transparent 100%)`
                       : currentBanner.textPosition === 'overlay-center'
-                      ? `radial-gradient(circle, rgba(15,23,42,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.4) / 100)}) 0%, rgba(15,23,42,${((currentBanner.overlayDimming ?? 45) * 0.9) / 100}) 70%, rgba(15,23,42,0.6) 100%)`
+                      ? `radial-gradient(circle, rgba(8,34,74,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.4) / 100)}) 0%, rgba(8,34,74,${((currentBanner.overlayDimming ?? 45) * 0.9) / 100}) 70%, rgba(8,34,74,0.6) 100%)`
                       : currentBanner.textPosition === 'overlay-bottom'
-                      ? `linear-gradient(to top, rgba(15,23,42,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.6) / 100)}) 0%, rgba(15,23,42,${((currentBanner.overlayDimming ?? 45) * 0.7) / 100}) 60%, transparent 100%)`
+                      ? `linear-gradient(to top, rgba(8,34,74,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.6) / 100)}) 0%, rgba(8,34,74,${((currentBanner.overlayDimming ?? 45) * 0.7) / 100}) 60%, transparent 100%)`
                       : currentBanner.textPosition === 'overlay-top'
-                      ? `linear-gradient(to bottom, rgba(15,23,42,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.6) / 100)}) 0%, rgba(15,23,42,${((currentBanner.overlayDimming ?? 45) * 0.7) / 100}) 60%, transparent 100%)`
-                      : `linear-gradient(to right, rgba(15,23,42,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.5) / 100)}) 0%, rgba(15,23,42,${((currentBanner.overlayDimming ?? 45) * 0.8) / 100}) 55%, transparent 100%)`
+                      ? `linear-gradient(to bottom, rgba(8,34,74,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.6) / 100)}) 0%, rgba(8,34,74,${((currentBanner.overlayDimming ?? 45) * 0.7) / 100}) 60%, transparent 100%)`
+                      : `linear-gradient(to right, rgba(8,34,74,${Math.min(0.95, ((currentBanner.overlayDimming ?? 45) * 1.5) / 100)}) 0%, rgba(8,34,74,${((currentBanner.overlayDimming ?? 45) * 0.8) / 100}) 55%, transparent 100%)`
                     : undefined,
               }}
             />
 
             {/* Overlaid Content */}
             <div
-              className={`relative z-10 w-full p-6 sm:p-10 md:p-14 flex ${
+              className={`relative z-10 w-full p-5 sm:p-8 md:p-12 pb-9 flex ${
                 currentBanner.textPosition === 'overlay-center'
                   ? 'justify-center text-center'
                   : currentBanner.textPosition === 'overlay-right'
@@ -421,19 +497,14 @@ export const PromoBanner: React.FC = () => {
                   : 'justify-start text-left'
               }`}
             >
-              <div className="max-w-xl space-y-4">
+              <div className="max-w-xl space-y-3">
                 <BannerBadgeRow banner={currentBanner} isOverlaid={true} />
-                <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight drop-shadow-sm">
+                <h2 className="text-xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight drop-shadow-sm">
                   {currentBanner.title}
                 </h2>
                 {currentBanner.subtitle && (
-                  <p className="text-base sm:text-lg text-slate-100 font-medium leading-relaxed drop-shadow-xs">
+                  <p className="text-sm sm:text-lg text-blue-100 font-medium leading-snug drop-shadow-xs">
                     {currentBanner.subtitle}
-                  </p>
-                )}
-                {currentBanner.description && (
-                  <p className="text-xs sm:text-sm text-slate-200/90 leading-normal line-clamp-2">
-                    {currentBanner.description}
                   </p>
                 )}
 
@@ -442,12 +513,12 @@ export const PromoBanner: React.FC = () => {
 
                 {/* Action CTA Button */}
                 {currentBanner.showCta !== false && (
-                  <div className="pt-2 flex items-center gap-3">
+                  <div className="pt-1 flex items-center gap-3">
                     <button
                       id={`cta-btn-${currentBanner.id}`}
                       type="button"
                       onClick={handleCtaClick}
-                      className="inline-flex items-center justify-center gap-2.5 px-6 sm:px-8 py-3 sm:py-3.5 rounded-2xl font-bold text-sm sm:text-base bg-[#ff6452] text-white hover:bg-[#e85340] active:scale-98 transition-all shadow-lg hover:shadow-xl cursor-pointer"
+                      className="inline-flex items-center justify-center gap-2 px-5 sm:px-7 py-2.5 sm:py-3 rounded-full font-bold text-xs sm:text-sm bg-[#2563eb] hover:bg-[#1d4ed8] text-white border border-blue-400/30 active:scale-95 transition-all shadow-lg cursor-pointer"
                     >
                       <span>{currentBanner.ctaText || 'Shop Now'}</span>
                       <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
@@ -480,100 +551,76 @@ export const PromoBanner: React.FC = () => {
             )}
           </div>
         ) : (
-          /* DYNAMIC SPLIT SHOWCASE (1:1 Square, 4:3 Standard, or 16:9 Widescreen) */
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-center p-4 sm:p-6 md:p-8 lg:p-10">
+          /* MODERN MOBILE-FIRST HORIZONTAL HERO SHOWCASE */
+          <div className="grid grid-cols-12 gap-3 sm:gap-6 md:gap-8 items-center p-4 pb-8 sm:p-6 sm:pb-10 md:p-8 lg:p-10">
             {/* Left Promotional Content & Text */}
             <div
-              className={`space-y-4 sm:space-y-5 ${
+              className={`space-y-2 sm:space-y-3.5 ${
                 hasValidMedia
-                  ? currentRatio === '16:9'
-                    ? 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-5'
-                    : currentRatio === '4:3'
-                    ? 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-6'
-                    : 'order-2 lg:order-1 flex flex-col justify-center lg:col-span-7'
-                  : 'order-1 col-span-12 max-w-4xl mx-auto'
+                  ? 'col-span-7 sm:col-span-7 lg:col-span-7 flex flex-col justify-center'
+                  : 'col-span-12 max-w-3xl mx-auto'
               }`}
             >
               {/* Badges & Flash Tag */}
-              <BannerBadgeRow banner={currentBanner} isOverlaid={false} />
+              <BannerBadgeRow banner={currentBanner} isOverlaid={isDarkHeroBg} />
 
               {/* Title & Headline */}
-              <div className="space-y-2">
-                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-[40px] font-black text-slate-900 dark:text-white tracking-tight leading-[1.15]">
+              <div className="space-y-1">
+                <h2
+                  className={`text-base sm:text-2xl md:text-3xl lg:text-4xl font-black tracking-tight leading-tight line-clamp-2 ${
+                    isDarkHeroBg ? 'text-white' : 'text-slate-900 dark:text-white'
+                  }`}
+                >
                   {currentBanner.title}
                 </h2>
                 {currentBanner.subtitle && (
-                  <p className="text-base sm:text-lg md:text-xl font-semibold text-slate-700 dark:text-slate-300 leading-snug">
+                  <p
+                    className={`text-[11px] sm:text-sm md:text-base font-semibold leading-snug line-clamp-1 ${
+                      isDarkHeroBg ? 'text-blue-100/90' : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
                     {currentBanner.subtitle}
                   </p>
                 )}
               </div>
 
-              {/* Description */}
+              {/* Description (Hidden on compact mobile to keep hero sleek) */}
               {currentBanner.description && (
-                <p className="text-xs sm:text-sm md:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
+                <p
+                  className={`hidden sm:block text-xs md:text-sm leading-relaxed line-clamp-2 ${
+                    isDarkHeroBg ? 'text-blue-100/80' : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
                   {currentBanner.description}
                 </p>
               )}
 
               {/* Pricing, Discount %, & Live Countdown */}
-              <BannerOfferMeta banner={currentBanner} isOverlaid={false} />
+              <BannerOfferMeta banner={currentBanner} isOverlaid={isDarkHeroBg} />
 
               {/* Call-to-Action Action Buttons */}
               {currentBanner.showCta !== false && (
-                <div className="pt-2 flex flex-wrap items-center gap-3">
+                <div className="pt-1 flex flex-wrap items-center gap-2.5">
                   <button
                     id={`cta-btn-${currentBanner.id}`}
                     type="button"
                     onClick={handleCtaClick}
-                    className="inline-flex items-center justify-center gap-2.5 px-6 sm:px-8 py-3 sm:py-3.5 rounded-2xl font-bold text-sm sm:text-base bg-[#ff6452] text-white hover:bg-[#e85340] active:scale-98 transition-all shadow-md hover:shadow-lg cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-bold text-xs sm:text-sm bg-[#2563eb] hover:bg-[#1d4ed8] text-white border border-blue-400/40 active:scale-95 transition-all shadow-md hover:shadow-lg cursor-pointer"
                   >
                     <span>{currentBanner.ctaText || 'Shop Now'}</span>
-                    <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                    <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 transition-transform group-hover:translate-x-1" />
                   </button>
-
-                  {/* Secondary Quick Category / Catalog Tag */}
-                  {currentBanner.targetCategory && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigate(
-                          `/categories/${encodeURIComponent(currentBanner.targetCategory!.toLowerCase())}`
-                        )
-                      }
-                      className="inline-flex items-center gap-1.5 px-4 py-3 rounded-2xl text-xs sm:text-sm font-semibold bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-700 transition-colors"
-                    >
-                      <ShoppingBag className="w-3.5 h-3.5 text-[#ff6452]" />
-                      <span>{currentBanner.targetCategory}</span>
-                    </button>
-                  )}
                 </div>
               )}
             </div>
 
-            {/* Right Media Showcase with dynamic Aspect Ratio (1:1, 4:3, or 16:9) - only rendered when valid saved media exists */}
+            {/* Right Media Showcase */}
             {hasValidMedia && (
-              <div
-                className={`order-1 lg:order-2 flex items-center justify-center ${
-                  currentRatio === '16:9'
-                    ? 'lg:col-span-7'
-                    : currentRatio === '4:3'
-                    ? 'lg:col-span-6'
-                    : 'lg:col-span-5'
-                }`}
-              >
+              <div className="col-span-5 sm:col-span-5 lg:col-span-5 flex items-center justify-center">
                 <div
-                  className={`relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-md bg-slate-900 border border-slate-200/60 dark:border-slate-800 group/media transition-all duration-300 ${
-                    isMobileViewport && isDedicatedMobileVideo
-                      ? 'max-w-[320px] aspect-[4/5]'
-                      : currentRatio === '16:9'
-                      ? 'max-w-[460px] sm:max-w-[520px] md:max-w-[580px] lg:max-w-[640px] aspect-[16/9]'
-                      : currentRatio === '4:3'
-                      ? 'max-w-[380px] sm:max-w-[440px] md:max-w-[480px] lg:max-w-[520px] aspect-[4/3]'
-                      : 'max-w-[340px] sm:max-w-[380px] md:max-w-[420px] lg:max-w-[460px] aspect-square'
-                  }`}
+                  onClick={handleCtaClick}
+                  className="relative w-full max-w-[140px] sm:max-w-[220px] md:max-w-[280px] lg:max-w-[320px] aspect-square rounded-2xl sm:rounded-3xl overflow-hidden shadow-lg bg-white/95 dark:bg-slate-900 border border-white/25 group/media transition-all duration-300 cursor-pointer"
                 >
-                  {/* Media Container */}
                   {isVideo && activeVideoUrl ? (
                     <video
                       ref={videoRef}
@@ -587,7 +634,7 @@ export const PromoBanner: React.FC = () => {
                       preload="metadata"
                       onError={() => handleVideoError(currentBanner.id)}
                       style={{ objectPosition: videoObjectPosition }}
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover/media:scale-105"
                     />
                   ) : activeImageUrl ? (
                     <img
@@ -596,36 +643,41 @@ export const PromoBanner: React.FC = () => {
                       loading={currentIndex === 0 ? 'eager' : 'lazy'}
                       fetchPriority={currentIndex === 0 ? 'high' : 'auto'}
                       onError={() => handleImageError(currentBanner.id)}
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover/media:scale-105"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover/media:scale-105"
                     />
                   ) : null}
 
                   {/* Floating Discount Tag on image if applicable */}
                   {currentBanner.showDiscount && currentBanner.discountPercentage && (
-                    <div className="absolute top-3 left-3 bg-[#ff6452] text-white text-xs sm:text-sm font-black px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-1">
-                      <Percent className="w-3.5 h-3.5" />
-                      <span>{currentBanner.discountPercentage}% OFF</span>
+                    <div className="absolute top-2 left-2 bg-[#ef4444] text-white text-[10px] sm:text-xs font-extrabold px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5">
+                      <span>-{currentBanner.discountPercentage}%</span>
                     </div>
                   )}
 
                   {/* Video controls */}
                   {isVideo && showControls && (
-                    <div className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full text-white text-xs border border-white/10 z-10">
+                    <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/70 backdrop-blur-md px-2 py-1 rounded-full text-white text-xs border border-white/10 z-10">
                       <button
                         type="button"
-                        onClick={() => setIsPlayingVideo(!isPlayingVideo)}
-                        className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsPlayingVideo(!isPlayingVideo);
+                        }}
+                        className="p-0.5 hover:text-[#38bdf8] transition-colors cursor-pointer"
                         aria-label={isPlayingVideo ? 'Pause video' : 'Play video'}
                       >
-                        {isPlayingVideo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                        {isPlayingVideo ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setIsMuted(!isMuted)}
-                        className="p-1 hover:text-[#ff6452] transition-colors cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsMuted(!isMuted);
+                        }}
+                        className="p-0.5 hover:text-[#38bdf8] transition-colors cursor-pointer"
                         aria-label={isMuted ? 'Unmute video' : 'Mute video'}
                       >
-                        {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                        {isMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
                       </button>
                     </div>
                   )}
@@ -643,7 +695,7 @@ export const PromoBanner: React.FC = () => {
               type="button"
               onClick={handlePrev}
               aria-label="Previous promotional slide"
-              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-white/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 hover:bg-white dark:hover:bg-slate-800 shadow-md flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-200 z-20 cursor-pointer border border-slate-200 dark:border-slate-700 hover:scale-105"
+              className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 hover:bg-white shadow-md items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-200 z-20 cursor-pointer border border-slate-200 dark:border-slate-700 hover:scale-105"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -652,7 +704,7 @@ export const PromoBanner: React.FC = () => {
               type="button"
               onClick={handleNext}
               aria-label="Next promotional slide"
-              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-white/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 hover:bg-white dark:hover:bg-slate-800 shadow-md flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-200 z-20 cursor-pointer border border-slate-200 dark:border-slate-700 hover:scale-105"
+              className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 hover:bg-white shadow-md items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-200 z-20 cursor-pointer border border-slate-200 dark:border-slate-700 hover:scale-105"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
@@ -661,17 +713,17 @@ export const PromoBanner: React.FC = () => {
 
         {/* Carousel Indicators / Dots (Bottom Center) */}
         {showIndicators && (
-          <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 sm:gap-2 z-20 bg-slate-900/40 backdrop-blur-md px-3 py-1.5 rounded-full">
+          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-20">
             {activeBanners.map((banner, idx) => (
               <button
                 key={banner.id}
                 type="button"
                 onClick={() => setCurrentIndex(idx)}
                 aria-label={`Go to slide ${idx + 1}: ${banner.title}`}
-                className={`h-2 rounded-full transition-all duration-300 cursor-pointer ${
+                className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
                   currentIndex === idx
-                    ? 'w-6 bg-[#ff6452]'
-                    : 'w-2 bg-white/60 hover:bg-white'
+                    ? 'w-5 bg-white shadow-xs'
+                    : 'w-1.5 bg-white/45 hover:bg-white/75'
                 }`}
               />
             ))}

@@ -668,6 +668,8 @@ export interface AuthAppearanceConfig {
   
   // Branding display
   showLogoBadge?: boolean;
+  customLogoUrl?: string | null;
+  custom_logo_url?: string | null;
   showFeaturesPill?: boolean;
   
   // Cinematic Preset Management & Visibility
@@ -865,6 +867,13 @@ export interface CouponsConfig {
   lastUpdated?: string;
 }
 
+export interface HolidayModeSettings {
+  enabled: boolean;
+  message: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
 export interface GeneralStoreSettings {
   storeName: string;
   currency: string;
@@ -883,6 +892,10 @@ export interface GeneralStoreSettings {
   storeDescription: string;
   enableGoogleAuth?: boolean;
   isGoogleAuthEnabled?: boolean;
+  holidayModeEnabled?: boolean;
+  holidayMessage?: string;
+  holidayStartDate?: string | null;
+  holidayEndDate?: string | null;
   lastUpdated?: string;
 }
 

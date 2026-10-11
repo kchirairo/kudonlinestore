@@ -15,13 +15,13 @@ export const MainTabs: React.FC = () => {
           onClick={() => navigate('/')}
           className={`py-3 relative transition-colors cursor-pointer ${
             !isWishlistPage
-              ? 'text-gray-900 dark:text-white font-bold'
-              : 'text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200'
+              ? 'text-[#08224a] dark:text-white font-bold'
+              : 'text-slate-400 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
           }`}
         >
           Discover
           {!isWishlistPage && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ff6452] rounded-full" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1d4ed8] rounded-full" />
           )}
         </button>
 
@@ -30,13 +30,13 @@ export const MainTabs: React.FC = () => {
           onClick={() => navigate('/wishlist')}
           className={`py-3 relative transition-colors cursor-pointer ${
             isWishlistPage
-              ? 'text-gray-900 dark:text-white font-bold'
-              : 'text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200'
+              ? 'text-[#08224a] dark:text-white font-bold'
+              : 'text-slate-400 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
           }`}
         >
           Wishlist
           {isWishlistPage && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ff6452] rounded-full" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1d4ed8] rounded-full" />
           )}
         </button>
       </div>

@@ -28,6 +28,10 @@
   scrollbar-width: none;  /* Firefox */
 }
 
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
 @keyframes shimmer {
   100% {
     transform: translateX(100%);

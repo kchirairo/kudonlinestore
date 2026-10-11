@@ -40,6 +40,7 @@ export const ProductDetailsPage: React.FC = () => {
     toggleFavourite,
     showToast,
     user,
+    role,
     isAccountDisabled,
     accountStatus,
   } = useShop();
@@ -130,7 +131,7 @@ export const ProductDetailsPage: React.FC = () => {
         />
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">Product not found</h2>
         <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">
-          The requested product does not exist or may have been removed.
+          The requested product does not exist or is currently unavailable.
         </p>
         <Link
           to="/"

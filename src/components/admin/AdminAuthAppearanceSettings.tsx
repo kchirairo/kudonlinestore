@@ -101,6 +101,60 @@ export const AdminAuthAppearanceSettings: React.FC = () => {
   const [isPreviewRotating, setIsPreviewRotating] = useState<boolean>(true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState<boolean>(false);
+
+  const handleAuthLogoFileUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const validation = adminService.validateStoreLogoFile(file);
+    if (!validation.valid) {
+      showToast(validation.error || 'Invalid logo file.', 'error');
+      return;
+    }
+
+    setIsUploadingLogo(true);
+    try {
+      const uploadedUrl = await adminService.uploadMedia(file, 'branding');
+      if (uploadedUrl) {
+        setConfig((prev) => ({
+          ...prev,
+          show_logo: true,
+          showLogoBadge: true,
+          customLogoUrl: uploadedUrl,
+          custom_logo_url: uploadedUrl,
+        }));
+        showToast('Sign-In Card logo uploaded! Click "Save Appearance" to persist.', 'success');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to upload logo', 'error');
+    } finally {
+      setIsUploadingLogo(false);
+      if (logoFileInputRef.current) logoFileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveAuthLogo = () => {
+    setConfig((prev) => ({
+      ...prev,
+      show_logo: false,
+      showLogoBadge: false,
+      customLogoUrl: '',
+      custom_logo_url: '',
+    }));
+    showToast('Logo removed from Sign-In card preview. Click "Save Appearance" to persist.', 'info');
+  };
+
+  const handleRestoreDefaultAuthLogo = () => {
+    setConfig((prev) => ({
+      ...prev,
+      show_logo: true,
+      showLogoBadge: true,
+      customLogoUrl: null,
+      custom_logo_url: null,
+    }));
+    showToast('Restored default store logo on Sign-In card preview.', 'info');
+  };
 
   // Synchronize when context updates
   useEffect(() => {
@@ -1431,6 +1485,117 @@ export const AdminAuthAppearanceSettings: React.FC = () => {
                     }
                     className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 bg-white focus:border-[#ff6452] outline-hidden"
                   />
+                </div>
+              </div>
+            </div>
+
+            {/* Sign-In Card Logo Management */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-gray-200/80 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-black text-gray-900 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-[#ff6452]" />
+                    <span>Sign-In / Create Account Card Logo</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Upload, replace, or remove the logo displayed at the top-center of the authentication card. Preview before saving.
+                  </p>
+                </div>
+
+                <label className="inline-flex items-center gap-2 text-xs font-bold text-gray-800 cursor-pointer shrink-0">
+                  <span>Show Logo on Card</span>
+                  <input
+                    type="checkbox"
+                    checked={(config.show_logo ?? config.showLogoBadge ?? true) && config.customLogoUrl !== ''}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        show_logo: e.target.checked,
+                        showLogoBadge: e.target.checked,
+                        customLogoUrl: e.target.checked && prev.customLogoUrl === '' ? null : prev.customLogoUrl,
+                        custom_logo_url: e.target.checked && prev.custom_logo_url === '' ? null : prev.custom_logo_url,
+                      }))
+                    }
+                    className="w-4 h-4 text-[#ff6452] rounded-md focus:ring-0 cursor-pointer"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                {/* Centered Proportional Logo Preview Box */}
+                <div className="w-24 h-20 rounded-2xl bg-white border border-gray-200 shadow-2xs flex items-center justify-center p-2 shrink-0">
+                  {(config.show_logo ?? config.showLogoBadge ?? true) && config.customLogoUrl !== '' ? (
+                    config.customLogoUrl || config.custom_logo_url || storeBranding?.logoImageUrl || (storeBranding as any)?.logoUrl ? (
+                      <img
+                        src={(config.customLogoUrl || config.custom_logo_url || storeBranding?.logoImageUrl || (storeBranding as any)?.logoUrl) as string}
+                        alt="Sign-In Card Logo Preview"
+                        className="max-h-14 max-w-full w-auto object-contain mx-auto"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ff6452] to-rose-600 text-white flex items-center justify-center font-black text-sm shadow-xs">
+                        {storeBranding?.logoText || 'KUD'}
+                      </div>
+                    )
+                  ) : (
+                    <span className="text-[10px] font-bold text-gray-400 text-center leading-tight">
+                      Logo Removed
+                    </span>
+                  )}
+                </div>
+
+                {/* Upload / Replace / Remove Controls */}
+                <div className="flex-1 space-y-2.5 w-full">
+                  <input
+                    ref={logoFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp"
+                    onChange={(e) => handleAuthLogoFileUpload(e.target.files)}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isUploadingLogo}
+                      onClick={() => logoFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-900 hover:bg-black text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isUploadingLogo ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Upload className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {config.customLogoUrl || storeBranding?.logoImageUrl
+                          ? 'Replace Logo'
+                          : 'Upload New Logo'}
+                      </span>
+                    </button>
+
+                    {((config.show_logo ?? config.showLogoBadge ?? true) && config.customLogoUrl !== '') && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveAuthLogo}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove Logo</span>
+                      </button>
+                    )}
+
+                    {(config.customLogoUrl !== undefined && config.customLogoUrl !== null) && (
+                      <button
+                        type="button"
+                        onClick={handleRestoreDefaultAuthLogo}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>Use Default Badge</span>
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    Supports PNG, JPG, WEBP (max 5MB). Automatically centered and scaled on the Sign In / Create Account card.
+                  </p>
                 </div>
               </div>
             </div>

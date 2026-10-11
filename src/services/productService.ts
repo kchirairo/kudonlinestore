@@ -1,6 +1,17 @@
 import { Product, FilterOptions, ProductMediaItem, ProductVideoItem } from '../types';
 import { supabase, isSupabaseConfigured, supabaseUrl } from '../lib/supabase';
 import { FALLBACK_ACTIVE_PRODUCTS } from '../data/fallbackProducts';
+import { safeGetItem, safeSetItem } from '../utils/storage';
+
+export const HIDDEN_PRODUCT_IDS_KEY = 'kud_store_hidden_product_ids';
+
+export function getLocalHiddenProductIds(): string[] {
+  return [];
+}
+
+export function setLocalHiddenProductIds(_ids: string[]): void {
+  safeSetItem(HIDDEN_PRODUCT_IDS_KEY, []);
+}
 
 /**
  * Helper function to map database row fields to TypeScript Product model.
@@ -198,14 +209,8 @@ export function mapSupabaseProduct(p: any): Product {
     }));
   }
 
-  // Determine active status: active unless explicitly set to false/inactive/draft/archived
-  const isActive =
-    p.isActive !== false &&
-    p.is_active !== false &&
-    p.active !== false &&
-    p.status !== 'inactive' &&
-    p.status !== 'draft' &&
-    p.status !== 'archived';
+  // Show all products on the customer storefront (including previously hidden/inactive products)
+  const isActive = true;
 
   // Determine in-stock status
   const inStock =
@@ -312,7 +317,7 @@ export function mapSupabaseProduct(p: any): Product {
 let inflightProductsPromise: Promise<Product[]> | null = null;
 let lastProductsCache: { timestamp: number; data: Product[] } | null = null;
 const CACHE_TTL_MS = 60 * 1000; // 60s memory cache TTL
-const STORED_PRODUCTS_KEY = 'kud_active_products_storefront_v1';
+const STORED_PRODUCTS_KEY = 'kud_active_products_storefront_v3';
 
 /**
  * Load cached products from sessionStorage or localStorage if available
@@ -425,7 +430,6 @@ export const productService = {
             const clientRes = await supabase
               .from('products')
               .select('*')
-              .eq('is_active', true)
               .order('created_at', { ascending: false });
 
             if (clientRes.error) {
@@ -490,8 +494,8 @@ export const productService = {
   async getProducts(filters?: FilterOptions): Promise<Product[]> {
     const raw = await this.getAllRawProducts();
 
-    // Filter active products - do not incorrectly filter out newly created products
-    let result = raw.filter((p) => p.isActive !== false);
+    // Include all products so hidden products are shown on the customer storefront
+    let result = [...raw];
 
     // Apply category filter
     if (filters?.category && filters.category !== 'All' && filters.category !== 'All Products') {

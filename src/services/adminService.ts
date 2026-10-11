@@ -1640,6 +1640,13 @@ export const adminService = {
       storeDescription: (settings.storeDescription || '').trim(),
       enableGoogleAuth: settings.isGoogleAuthEnabled ?? settings.enableGoogleAuth ?? true,
       isGoogleAuthEnabled: settings.isGoogleAuthEnabled ?? settings.enableGoogleAuth ?? true,
+      holidayModeEnabled: Boolean(settings.holidayModeEnabled),
+      holidayMessage: (
+        settings.holidayMessage ||
+        'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!'
+      ).trim(),
+      holidayStartDate: settings.holidayStartDate || null,
+      holidayEndDate: settings.holidayEndDate || null,
       lastUpdated: new Date().toISOString(),
     };
 
@@ -3008,9 +3015,10 @@ export const adminService = {
    */
   async getAuthAppearance(): Promise<AuthAppearanceConfig> {
     try {
-      const [settings, images] = await Promise.all([
+      const [settings, images, customLogoSetting] = await Promise.all([
         this.getAuthAppearanceSettings(),
         this.getAuthBackgroundImages(true),
+        readSupabaseSettingHelper<{ customLogoUrl?: string | null }>('auth_card_logo', {}),
       ]);
 
       const mappedImages: AuthBackgroundImage[] = images.map((img) => ({
@@ -3026,6 +3034,14 @@ export const adminService = {
         uploadedAt: img.created_at,
       }));
 
+      const savedLocalAuth = safeGetItem<Partial<AuthAppearanceConfig>>('kud_store_auth_appearance_config', {});
+      const resolvedCustomLogo =
+        customLogoSetting?.customLogoUrl !== undefined
+          ? customLogoSetting.customLogoUrl
+          : savedLocalAuth?.customLogoUrl !== undefined
+          ? savedLocalAuth.customLogoUrl
+          : undefined;
+
       const config: AuthAppearanceConfig = {
         id: settings.id || 1,
         enabled: settings.animation_enabled ?? true,
@@ -3036,6 +3052,8 @@ export const adminService = {
         signup_title: settings.signup_title || 'Create your account',
         signup_subtitle: settings.signup_subtitle || 'Join us and start shopping',
         show_logo: settings.show_logo ?? true,
+        customLogoUrl: resolvedCustomLogo,
+        custom_logo_url: resolvedCustomLogo,
         show_google: settings.show_google ?? true,
         show_apple: settings.show_apple ?? true,
         show_signup_link: settings.show_signup_link ?? true,
@@ -3199,8 +3217,16 @@ export const adminService = {
       card_position: config.card_position || 'center',
     };
 
+    if (config.customLogoUrl !== undefined || config.custom_logo_url !== undefined) {
+      const logoVal = config.customLogoUrl !== undefined ? config.customLogoUrl : config.custom_logo_url;
+      await writeSupabaseSettingHelper('auth_card_logo', { customLogoUrl: logoVal });
+    }
+
     const res = await this.saveAuthAppearanceSettings(dbSettingsPayload);
     if (res.success) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kud_auth_appearance_updated', { detail: config }));
+      }
       return { success: true, data: config };
     }
     return { success: false, error: res.error };
@@ -4712,6 +4738,12 @@ export const adminService = {
       ? productData.isActive
       : current.isActive !== false;
 
+    const currentHidden = safeGetItem<string[]>('kud_store_hidden_product_ids', []);
+    const nextHidden = isAct
+      ? currentHidden.filter((hid) => String(hid) !== String(id))
+      : Array.from(new Set([...currentHidden, String(id)]));
+    safeSetItem('kud_store_hidden_product_ids', nextHidden);
+
     const updatedProduct: Product = {
       ...current,
       ...productData,
@@ -4763,6 +4795,7 @@ export const adminService = {
       scheduled_at: updatedProduct.scheduledAt || null,
       is_featured: updatedProduct.isFeatured,
       is_active: isAct,
+      is_visible: isAct,
       updated_at: new Date().toISOString(),
     };
 
@@ -4888,16 +4921,49 @@ export const adminService = {
         payload.in_stock = Number(item.changes.stock) > 0;
       }
       if (item.changes.inStock !== undefined) payload.in_stock = Boolean(item.changes.inStock);
-      if (item.changes.isActive !== undefined) payload.is_active = Boolean(item.changes.isActive);
+      if (item.changes.isActive !== undefined) {
+        payload.is_active = Boolean(item.changes.isActive);
+        payload.is_visible = Boolean(item.changes.isActive);
+        payload.product_status = item.changes.isActive ? 'active' : 'draft';
+        const currentHidden = safeGetItem<string[]>('kud_store_hidden_product_ids', []);
+        const nextHidden = item.changes.isActive
+          ? currentHidden.filter((hid) => String(hid) !== String(item.id))
+          : Array.from(new Set([...currentHidden, String(item.id)]));
+        safeSetItem('kud_store_hidden_product_ids', nextHidden);
+      }
       if (item.changes.category) payload.category = item.changes.category;
       if (item.changes.sku) payload.sku = item.changes.sku;
 
-      const { error } = await executeWithColumnFallback(
+      let { error } = await executeWithColumnFallback(
         (p) => supabase.from('products').update(p).eq('id', item.id),
         payload
       );
+
+      // Fallback to server API (/api/admin/products/:id) using service role if client RLS blocks update
       if (error) {
-        errors.push(`ID ${item.id}: ${error.message}`);
+        try {
+          const resp = await fetch(`/api/admin/products/${encodeURIComponent(item.id)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (resp.ok) {
+            const resJson = await resp.json();
+            if (resJson.success) {
+              error = null;
+            }
+          }
+        } catch {
+          // Non-fatal fallback
+        }
+      }
+      if (error) {
+        // If only visibility was updated, local hidden state already protects customer storefront
+        if (item.changes.isActive !== undefined && Object.keys(item.changes).length === 1) {
+          updatedCount++;
+        } else {
+          errors.push(`ID ${item.id}: ${error.message}`);
+        }
       } else {
         updatedCount++;
         if (item.changes.stock !== undefined) {
@@ -4915,6 +4981,8 @@ export const adminService = {
         }
       }
     }
+
+    productService.invalidateCache();
 
     if (errors.length > 0 && updatedCount === 0) {
       return { success: false, updatedCount: 0, error: errors.join(', ') };

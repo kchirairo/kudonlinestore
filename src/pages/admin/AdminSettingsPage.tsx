@@ -33,6 +33,7 @@ import {
   CheckCircle,
   Gift,
   MessageSquare,
+  Calendar,
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
 import { useAuth } from '../../context/AuthContext';
@@ -131,6 +132,15 @@ export const AdminSettingsPage: React.FC = () => {
     message: string;
   } | null>(null);
 
+  // Holiday Mode State
+  const [holidayModeEnabled, setHolidayModeEnabled] = useState<boolean>(false);
+  const [holidayMessage, setHolidayMessage] = useState<string>(
+    'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!'
+  );
+  const [holidayStartDate, setHolidayStartDate] = useState<string>('');
+  const [holidayEndDate, setHolidayEndDate] = useState<string>('');
+  const [isSavingHoliday, setIsSavingHoliday] = useState<boolean>(false);
+
   // Validation State
   const [isLoadingSettings, setIsLoadingSettings] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -205,6 +215,13 @@ export const AdminSettingsPage: React.FC = () => {
           setSupportSubtext(genConfig.supportSubtext || 'Contact KUD Store support team via email or WhatsApp');
           setStoreDescription(genConfig.storeDescription || '');
           setEnableGoogleAuth(genConfig.enableGoogleAuth ?? true);
+          setHolidayModeEnabled(Boolean(genConfig.holidayModeEnabled));
+          setHolidayMessage(
+            genConfig.holidayMessage ||
+              'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!'
+          );
+          setHolidayStartDate(genConfig.holidayStartDate || '');
+          setHolidayEndDate(genConfig.holidayEndDate || '');
         }
       } catch (err) {
         console.warn('Error fetching settings from Supabase:', err);
@@ -284,6 +301,12 @@ export const AdminSettingsPage: React.FC = () => {
         storeDescription: storeDescription.trim(),
         enableGoogleAuth,
         isGoogleAuthEnabled: enableGoogleAuth,
+        holidayModeEnabled,
+        holidayMessage:
+          holidayMessage.trim() ||
+          'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!',
+        holidayStartDate: holidayStartDate || null,
+        holidayEndDate: holidayEndDate || null,
       };
 
       const res = await updateGeneralSettings(payload);
@@ -309,6 +332,13 @@ export const AdminSettingsPage: React.FC = () => {
           const isGoogleAuth = reloaded.isGoogleAuthEnabled ?? reloaded.enableGoogleAuth ?? true;
           setEnableGoogleAuth(isGoogleAuth);
           setIsGoogleAuthEnabled(isGoogleAuth);
+          setHolidayModeEnabled(Boolean(reloaded.holidayModeEnabled));
+          setHolidayMessage(
+            reloaded.holidayMessage ||
+              'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!'
+          );
+          setHolidayStartDate(reloaded.holidayStartDate || '');
+          setHolidayEndDate(reloaded.holidayEndDate || '');
         }
         await reloadGeneralSettings();
         showToast('Store settings & delivery logistics updated successfully.', 'success');
@@ -1241,6 +1271,191 @@ export const AdminSettingsPage: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* CARD 4C: STORE HOLIDAY MODE & TEMPORARY SCHEDULE NOTICE */}
+          <div className="bg-white p-5 sm:p-7 rounded-3xl border border-gray-200/80 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shadow-2xs">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    <span>Holiday Mode &amp; Temporary Notice</span>
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Inform customers when KUD Store is operating in Holiday Mode with a custom banner and optional automatic start/end schedule.
+                  </p>
+                </div>
+              </div>
+
+              <div className="self-start sm:self-auto flex items-center gap-2">
+                {holidayModeEnabled ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/80 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    Holiday Mode ON
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-gray-100 text-gray-600 border border-gray-200 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-gray-400" />
+                    Holiday Mode OFF
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Toggle Switch Row */}
+            <div className="bg-gray-50/80 border border-gray-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-gray-900 block">
+                  Enable Store Holiday Mode Notice
+                </span>
+                <p className="text-xs text-gray-500 leading-relaxed max-w-xl">
+                  When enabled, a clean, unobtrusive notice appears at the top of the store to inform customers. Browsing, cart, authentication, and Yoco checkout remain fully functional. If an end date is configured, the notice automatically stops displaying once the end date has passed.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
+                <span className="text-xs font-bold text-gray-600">
+                  {holidayModeEnabled ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={holidayModeEnabled}
+                  onClick={() => {
+                    setHolidayModeEnabled(!holidayModeEnabled);
+                    setIsGeneralTouched(true);
+                  }}
+                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    holidayModeEnabled ? 'bg-amber-500' : 'bg-gray-300'
+                  }`}
+                >
+                  <span className="sr-only">Toggle Holiday Mode</span>
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                      holidayModeEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  >
+                    {holidayModeEnabled ? (
+                      <Check className="w-3.5 h-3.5 text-amber-600 stroke-[3]" />
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                    )}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Holiday Message & Optional Dates */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2 space-y-1.5">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <Megaphone className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Custom Holiday / Temporary Closure Message</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={holidayMessage}
+                  onChange={(e) => {
+                    setHolidayMessage(e.target.value);
+                    setIsGeneralTouched(true);
+                  }}
+                  placeholder="We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!"
+                  className="w-full px-4 py-3 rounded-2xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-900 focus:border-[#ff6452] focus:ring-2 focus:ring-[#ff6452]/10 transition-all focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                  <span>Start Date (Optional)</span>
+                </label>
+                <input
+                  type="date"
+                  value={holidayStartDate}
+                  onChange={(e) => {
+                    setHolidayStartDate(e.target.value);
+                    setIsGeneralTouched(true);
+                  }}
+                  className="w-full px-4 py-2.5 rounded-2xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-900 focus:border-[#ff6452] focus:outline-none"
+                />
+                <p className="text-[10px] text-gray-400">
+                  Leave blank to start showing immediately when Holiday Mode is ON.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                  <span>End Date (Optional — Auto-Expires)</span>
+                </label>
+                <input
+                  type="date"
+                  value={holidayEndDate}
+                  onChange={(e) => {
+                    setHolidayEndDate(e.target.value);
+                    setIsGeneralTouched(true);
+                  }}
+                  className="w-full px-4 py-2.5 rounded-2xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-900 focus:border-[#ff6452] focus:outline-none"
+                />
+                <p className="text-[10px] text-gray-400">
+                  Automatically stops showing the holiday notice once this date has passed.
+                </p>
+              </div>
+            </div>
+
+            {/* Live Holiday Banner Preview */}
+            <div className="border border-gray-200/70 rounded-2xl p-4 bg-slate-50/70 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Customer Storefront Holiday Notice Preview</span>
+                </span>
+                {(holidayStartDate || holidayEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHolidayStartDate('');
+                      setHolidayEndDate('');
+                    }}
+                    className="text-[10px] font-bold text-gray-500 hover:text-rose-600 cursor-pointer"
+                  >
+                    Clear Dates
+                  </button>
+                )}
+              </div>
+
+              <div className="rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-orange-500/15 border border-amber-300/80 px-4 py-3 flex items-start sm:items-center justify-between gap-3">
+                <div className="flex items-start sm:items-center gap-2.5">
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-extrabold uppercase tracking-wider shrink-0 mt-0.5 sm:mt-0">
+                    Holiday Mode
+                  </span>
+                  <p className="text-xs font-semibold text-amber-950 leading-snug">
+                    {holidayMessage.trim() ||
+                      'We are currently operating in Holiday Mode. You can still browse and place orders, and dispatches will resume as soon as we return!'}
+                    {holidayEndDate && (
+                      <span className="ml-1.5 font-bold text-amber-800">
+                        (Until {holidayEndDate})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end">
+              <button
+                type="submit"
+                disabled={isSaving || !isGeneralFormValid}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-black rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSaving ? 'Saving Holiday Settings...' : 'Save Holiday Settings'}</span>
+              </button>
             </div>
           </div>
 
